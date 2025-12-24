@@ -1,4 +1,5 @@
 import pyqtgraph as pg
+from pyqtgraph.exporters import ImageExporter
 import numpy as np
 from pyqtgraph.Qt import QtCore, QtWidgets
 import sys
@@ -554,6 +555,28 @@ class Window(QtWidgets.QWidget):  # defines the window class (main window)
                                                      "to include zero, use a lowpass filter.",
                                                      QtWidgets.QMessageBox.Ok)
 
+        elif 'PyHFOImportError' in error:
+            self.choice = QtWidgets.QMessageBox.question(
+                self,
+                "pyHFO Not Installed",
+                "The pyHFO-based automated detector requires the pyHFO library and its dependencies.\n\n"
+                "Please install them:\n\n"
+                "conda activate pyhfogui\n"
+                "cd C:\\Users\\Abid\\Documents\\Code\\Python\\pyhfo_repo\n"
+                "pip install -e .\n\n"
+                "After installation, try 'Find EOIs' again.",
+                QtWidgets.QMessageBox.Ok,
+            )
+
+        elif 'PyHFOAPIError' in error:
+            self.choice = QtWidgets.QMessageBox.question(
+                self,
+                "pyHFO Detection Error",
+                "Could not run pyHFO detection. The detector interface may have changed.\n"
+                "Please ensure pyHFO is correctly installed.",
+                QtWidgets.QMessageBox.Ok,
+            )
+
     def changeEventTimes(self):
         '''
         This method will change the Start Time and Stop Time fields, as well as plot these locations as a vertical
@@ -858,8 +881,12 @@ class Window(QtWidgets.QWidget):  # defines the window class (main window)
             layout = QtWidgets.QVBoxLayout(self.pos_plot_window)
             self.pos_plot_widget = pg.PlotWidget()
             layout.addWidget(self.pos_plot_widget)
+            btn_row = QtWidgets.QHBoxLayout()
             self.save_bins_btn = QtWidgets.QPushButton("Save Binned Events")
-            layout.addWidget(self.save_bins_btn)
+            self.save_pos_img_btn = QtWidgets.QPushButton("Save Trajectory Image (JPG)")
+            btn_row.addWidget(self.save_bins_btn)
+            btn_row.addWidget(self.save_pos_img_btn)
+            layout.addLayout(btn_row)
         else:
             self.pos_plot_window.setWindowTitle(title_ppm)
 
@@ -980,6 +1007,10 @@ class Window(QtWidgets.QWidget):  # defines the window class (main window)
             self.save_bins_btn.clicked.disconnect()
         except TypeError:
             pass
+        try:
+            self.save_pos_img_btn.clicked.disconnect()
+        except TypeError:
+            pass
 
         def _save_bins():
             if H_events is None:
@@ -987,8 +1018,10 @@ class Window(QtWidgets.QWidget):  # defines the window class (main window)
                 return
             
             start_dir = os.path.dirname(self.current_set_filename) if hasattr(self, 'current_set_filename') and self.current_set_filename else ""
+            base = os.path.splitext(os.path.basename(self.current_set_filename))[0] if getattr(self, 'current_set_filename', None) else "binned_events"
+            default_name = f"{base}_binned_events.csv"
             path, _ = QtWidgets.QFileDialog.getSaveFileName(self.pos_plot_window, "Save Binned Events", 
-                                                          os.path.join(start_dir, "binned_events.csv"), 
+                                                          os.path.join(start_dir, default_name), 
                                                           "CSV (*.csv)")
             if path:
                 if arena_shape == "circle":
@@ -1000,7 +1033,23 @@ class Window(QtWidgets.QWidget):  # defines the window class (main window)
                 
                 np.savetxt(path, matrix, delimiter=",", fmt='%d')
 
+        def _save_pos_image():
+            start_dir = os.path.dirname(self.current_set_filename) if hasattr(self, 'current_set_filename') and self.current_set_filename else ""
+            base = os.path.splitext(os.path.basename(self.current_set_filename))[0] if getattr(self, 'current_set_filename', None) else "trajectory"
+            default_name = f"{base}_trajectory.jpg"
+            path, _ = QtWidgets.QFileDialog.getSaveFileName(
+                self.pos_plot_window,
+                "Save Trajectory Image",
+                os.path.join(start_dir, default_name),
+                "JPEG Image (*.jpg);;PNG Image (*.png)"
+            )
+            if path:
+                exporter = ImageExporter(self.pos_plot_widget.plotItem)
+                exporter.parameters()['antialias'] = True
+                exporter.export(path)
+
         self.save_bins_btn.clicked.connect(_save_bins)
+        self.save_pos_img_btn.clicked.connect(_save_pos_image)
 
         self.pos_plot_window.show()
         self.pos_plot_window.raise_()

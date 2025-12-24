@@ -141,7 +141,12 @@ class ScoreWindow(QtWidgets.QWidget):
                         'Artifact',
                         'Other']
 
-        self.id_abbreviations = {'manual': 'MAN', 'hilbert': 'HIL', 'unknown': 'UNK'}
+        self.id_abbreviations = {
+            'manual': 'MAN', 
+            'hilbert': 'HIL', 
+            'pyhfo': 'PYH',
+            'unknown': 'UNK'
+        }
 
         for score in score_values:
             self.score.addItem(score)
@@ -217,7 +222,7 @@ class ScoreWindow(QtWidgets.QWidget):
         eoi_method_label = QtWidgets.QLabel("EOI Detection Method:")
         self.eoi_method = QtWidgets.QComboBox()
         self.eoi_method.currentIndexChanged.connect(self.setEOIfilename)
-        methods = ['Hilbert']
+        methods = ['Hilbert', 'pyHFO']
 
         events_detected_label = QtWidgets.QLabel('Events Detected:')
         self.events_detected = QtWidgets.QLineEdit()
@@ -293,6 +298,7 @@ class ScoreWindow(QtWidgets.QWidget):
                 window_layout.addWidget(item)
 
         self.hilbert_thread = QtCore.QThread()
+        self.pyhfo_thread = QtCore.QThread()
         self.setLayout(window_layout)
 
     def closeEvent(self, event):
@@ -300,6 +306,9 @@ class ScoreWindow(QtWidgets.QWidget):
         if hasattr(self, 'hilbert_thread') and self.hilbert_thread.isRunning():
             self.hilbert_thread.quit()
             self.hilbert_thread.wait(1000)  # Wait up to 1 second for thread to finish
+        if hasattr(self, 'pyhfo_thread') and self.pyhfo_thread.isRunning():
+            self.pyhfo_thread.quit()
+            self.pyhfo_thread.wait(1000)
         super().closeEvent(event)
 
     def initialize_attributes(self):
@@ -735,6 +744,9 @@ class ScoreWindow(QtWidgets.QWidget):
         if 'Hilbert' in self.eoi_method.currentText():
             # make sure to have the windows have a self. in front of them otherwise they will run and close
             self.hilbert_window = HilbertParametersWindow(self.mainWindow, self)
+        elif 'pyHFO' in self.eoi_method.currentText():
+            # Open pyHFO parameters window
+            self.pyhfo_window = PyHFOParametersWindow(self.mainWindow, self)
 
     def changeEventText(self, source):
         """This method will move the plot to the current selection"""
@@ -982,7 +994,7 @@ class ScoreWindow(QtWidgets.QWidget):
         set_directory = os.path.dirname(self.mainWindow.current_set_filename)
         set_basename = os.path.basename(os.path.splitext(self.mainWindow.current_set_filename)[0])
         method = self.eoi_method.currentText()
-        method = self.id_abbreviations[method.lower()]
+        method = self.id_abbreviations.get(method.lower(), 'UNK')
         filename = os.path.join(set_directory, 'HFOScores',
                                 set_basename,
                                 '%s_%s.txt' % (set_basename, method))
@@ -1326,6 +1338,228 @@ def HilbertDetection(self):
         import traceback
         traceback.print_exc()
         return
+
+
+def _convert_pyhfo_results_to_eois(hfos, Fs):
+    """Attempt to convert pyHFO results into Nx2 array of [start_ms, stop_ms].
+    This handles a few common structures; falls back to empty on failure."""
+    import numpy as np
+
+    # Case 1: list of dicts with seconds
+    if isinstance(hfos, (list, tuple)) and len(hfos) and isinstance(hfos[0], dict):
+        start_keys = ['start', 'start_time', 't_start', 'onset']
+        stop_keys = ['end', 'stop_time', 't_end', 'offset']
+        rows = []
+        for ev in hfos:
+            s = None
+            e = None
+            for k in start_keys:
+                if k in ev:
+                    s = ev[k]
+                    break
+            for k in stop_keys:
+                if k in ev:
+                    e = ev[k]
+                    break
+            if s is None or e is None:
+                continue
+            # Many libs report seconds; if clearly too small, assume seconds
+            if max(abs(s), abs(e)) < 1e6:  # not already in ms
+                s_ms = float(s) * 1000.0
+                e_ms = float(e) * 1000.0
+            else:
+                s_ms = float(s)
+                e_ms = float(e)
+            rows.append([s_ms, e_ms])
+        if rows:
+            return np.asarray(rows, dtype=float)
+
+    # Case 1.5: tuple like (array, channel_name)
+    if isinstance(hfos, tuple) and len(hfos) >= 1:
+        hfos = hfos[0]
+
+    # Case 2: dict with numpy arrays in samples
+    if isinstance(hfos, dict):
+        s = None
+        e = None
+        for k in ['start_samples', 'starts', 'start_idx']:
+            if k in hfos:
+                s = hfos[k]
+                break
+        for k in ['end_samples', 'ends', 'stop_idx']:
+            if k in hfos:
+                e = hfos[k]
+                break
+        if s is not None and e is not None:
+            s = np.asarray(s)
+            e = np.asarray(e)
+            ms = 1000.0 * s / float(Fs)
+            me = 1000.0 * e / float(Fs)
+            return np.column_stack([ms, me]).astype(float)
+
+    # Case 3: Nx2 numpy array in seconds or samples
+    try:
+        arr = np.asarray(hfos)
+        if arr.ndim == 2 and arr.shape[1] >= 2:
+            first_two = arr[:, :2]
+            # Heuristic: if values look like small (<1e6), could be seconds; if integers and large, samples
+            if np.issubdtype(first_two.dtype, np.integer):
+                ms = 1000.0 * first_two[:, 0] / float(Fs)
+                me = 1000.0 * first_two[:, 1] / float(Fs)
+                return np.column_stack([ms, me]).astype(float)
+            else:
+                # assume seconds
+                return (first_two.astype(float) * 1000.0)
+    except Exception:
+        pass
+
+    return np.asarray([])
+
+
+def PyHFODetection(self):
+    try:
+        if not hasattr(self, 'source_filename'):
+            return
+        if not os.path.exists(self.source_filename):
+            return
+
+        raw_data, Fs = self.settingsWindow.loaded_sources[self.source_filename]
+
+        try:
+            # Add pyHFO repo to path for imports
+            import sys
+            pyhfo_path = r'C:\Users\Abid\Documents\Code\Python\pyhfo_repo'
+            if pyhfo_path not in sys.path:
+                sys.path.insert(0, pyhfo_path)
+
+            # Import from pyHFO's utils (the actual implementation)
+            from src.utils.utils_detector import set_HIL_detector
+            from src.param.param_detector import ParamHIL
+        except ImportError as e:
+            # Show helpful message to user via main window dialog
+            print(f"PyHFO import error: {e}")
+            self.mainWindow.ErrorDialogue.myGUI_signal.emit("PyHFOImportError")
+            return
+
+        # Use the Hilbert detector from pyHFO as the automated method
+        # This is one of the proven detection methods in pyHFO
+        try:
+            # Get parameters from the window (set by PyHFOParametersWindow)
+            epoch_time = int(getattr(self, 'pyhfo_epoch', 10*60))
+            sd_threshold = float(getattr(self, 'pyhfo_sd_num', 5))
+            min_window = float(getattr(self, 'pyhfo_min_duration', 0.01))
+            pass_band = int(getattr(self, 'pyhfo_min_freq', 80))
+            stop_band = int(getattr(self, 'pyhfo_max_freq', 500))
+            n_jobs = int(getattr(self, 'pyhfo_n_jobs', 1))
+
+            # Build detector parameters
+            args = ParamHIL(
+                sample_freq=float(Fs),
+                pass_band=pass_band,
+                stop_band=stop_band,
+                epoch_time=epoch_time,
+                sd_threshold=sd_threshold,
+                min_window=min_window,
+                n_jobs=n_jobs,
+            )
+
+            print(f"pyHFO detection starting: {pass_band}-{stop_band} Hz, {n_jobs} cores, {epoch_time}s epochs...")
+
+            detector = set_HIL_detector(args)
+
+            # Ensure float data
+            signal = np.asarray(raw_data, dtype=np.float32)
+
+            # Run detection on single channel; HFODetector expects channel name as str
+            detection_results = detector.detect(signal, 'chn1')
+
+            # HFODetector returns (HFOs, channel_name); take the HFOs array
+            if isinstance(detection_results, tuple) and len(detection_results) >= 1:
+                detection_results = detection_results[0]
+
+            # Convert results to EOI format [start_ms, stop_ms]
+            EOIs = _convert_pyhfo_results_to_eois(detection_results, Fs)
+
+        except AttributeError:
+            # If the detector doesn't have a simple .detect() method, 
+            # fall back to a simpler approach or notify user
+            print('pyHFO detector interface not compatible with automated calling')
+            self.mainWindow.ErrorDialogue.myGUI_signal.emit("PyHFOAPIError")
+            return
+
+        if EOIs is None or len(EOIs) == 0:
+            print('No EOIs were found by pyHFO!')
+            return
+
+        print(f"pyHFO detection complete: {len(EOIs)} events found")
+        self.events_detected.setText(str(len(EOIs)))
+
+        for key, value in self.EOI_headers.items():
+            if 'ID' in key:
+                ID_value = value
+            elif 'Start' in key:
+                start_value = value
+            elif 'Stop' in key:
+                stop_value = value
+            elif 'Settings' in key:
+                settings_value = value
+
+        for EOI in EOIs:
+            EOI_item = TreeWidgetItem()
+
+            new_id = self.createID(self.eoi_method.currentText())
+            self.IDs.append(new_id)
+            EOI_item.setText(ID_value, new_id)
+            EOI_item.setText(start_value, str(EOI[0]))
+            EOI_item.setText(stop_value, str(EOI[1]))
+            EOI_item.setText(settings_value, getattr(self, 'settings_fname', 'N/A'))
+
+            self.AddItemSignal.childAdded.emit(EOI_item)
+    except KeyboardInterrupt:
+        print('pyHFO detection was interrupted by user')
+        return
+    except Exception as e:
+        print(f'Error during pyHFO detection: {e}')
+        import traceback
+        traceback.print_exc()
+        return
+
+
+def _ensure_dir(path):
+    if not os.path.exists(path):
+        os.makedirs(path)
+
+
+def _session_paths_for_settings(self):
+    session_path, set_filename = os.path.split(self.mainWindow.current_set_filename)
+    session = os.path.splitext(set_filename)[0]
+    hfo_path = os.path.join(session_path, 'HFOScores', session)
+    _ensure_dir(hfo_path)
+    return session, hfo_path
+
+
+def _pyhfo_settings_filename(self):
+    session, hfo_path = _session_paths_for_settings(self)
+    settings_name = f"{session}_{self.id_abbreviations['pyhfo']}_settings"
+    return os.path.join(hfo_path, f"{settings_name}.txt")
+
+
+def _prepare_pyhfo_settings(self):
+    """Record the fact that pyHFO auto settings were used, for traceability in UI."""
+    try:
+        import json
+        fname = _pyhfo_settings_filename(self)
+        settings = {
+            'Detector': 'pyHFO',
+            'use_artifact_model': True,
+            'use_spike_model': True,
+            'use_epileptogenic_model': True,
+        }
+        with open(fname, 'w') as f:
+            json.dump(settings, f)
+        self.settings_fname = fname
+    except Exception:
+        self.settings_fname = 'N/A'
 
 
 def find_same_consec(data):
@@ -1725,6 +1959,281 @@ class HilbertParametersWindow(QtWidgets.QWidget):
 
     def close_app(self):
 
+        self.close()
+
+
+class PyHFOParametersWindow(QtWidgets.QWidget):
+
+    def __init__(self, main, score):
+        super(PyHFOParametersWindow, self).__init__()
+
+        self.mainWindow = main
+        self.scoreWindow = score
+
+        self.setWindowTitle("pyHFO - Automatic Detection Parameters")
+
+        # Default frequency range (user can adjust manually)
+        self.default_min_freq = 80
+        self.default_max_freq = 500
+
+        # Define parameters for pyHFO
+        self.PyHFOParameters = [
+            'Epoch(s):', '', 'Threshold(SD):', '', 'Minimum Duration(ms):', '',
+            'Min Frequency(Hz):', '', 'Max Frequency(Hz):', '', 'CPU Cores:', '', '', ''
+        ]
+
+        self.pyhfo_fields = {}
+        self.PyHFO_field_positions = {}
+
+        positions = [(i, j) for i in range(2) for j in range(6)]
+        pyhfo_parameter_layout = QtWidgets.QGridLayout()
+
+        for (i, j), parameter in zip(positions, self.PyHFOParameters):
+            if parameter == '':
+                continue
+            else:
+                self.PyHFO_field_positions[parameter] = (i, j)
+
+                self.pyhfo_fields[i, j] = QtWidgets.QLabel(parameter)
+                self.pyhfo_fields[i, j].setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+
+                self.pyhfo_fields[i, j + 1] = QtWidgets.QLineEdit()
+                self.pyhfo_fields[i, j + 1].setAlignment(QtCore.Qt.AlignCenter | QtCore.Qt.AlignVCenter)
+
+                if 'Epoch' in parameter:
+                    ParameterText = str(10*60)  # 10 minute epochs (longer = faster)
+                    self.pyhfo_fields[i, j + 1].setToolTip(
+                        'Data is divided into epochs for threshold calculation. Longer epochs = faster processing.')
+                elif 'Threshold' in parameter:
+                    ParameterText = '5'  # mean + 5 SD's
+                    self.pyhfo_fields[i, j + 1].setToolTip(
+                        'Amplitude threshold: mean + X standard deviations per epoch.')
+                elif 'Minimum Duration' in parameter:
+                    ParameterText = '10'  # 10 ms minimum
+                    self.pyhfo_fields[i, j + 1].setToolTip(
+                        'Minimum event duration in milliseconds (rejects shorter events).')
+                elif 'Min Freq' in parameter:
+                    ParameterText = str(self.default_min_freq)
+                    self.pyhfo_fields[i, j + 1].setToolTip(
+                        'Lower cutoff of bandpass filter (Hz).')
+                elif 'Max Freq' in parameter:
+                    ParameterText = str(self.default_max_freq)
+                    self.pyhfo_fields[i, j + 1].setToolTip(
+                        'Upper cutoff of bandpass filter (Hz).')
+                elif 'CPU Cores' in parameter:
+                    import multiprocessing
+                    default_cores = min(4, multiprocessing.cpu_count() // 2)
+                    ParameterText = str(default_cores)
+                    self.pyhfo_fields[i, j + 1].setToolTip(
+                        f'Number of CPU cores for parallel processing (max: {multiprocessing.cpu_count()}).')
+
+                self.pyhfo_fields[i, j + 1].setText(ParameterText)
+
+                parameter_layout = QtWidgets.QHBoxLayout()
+                parameter_layout.addWidget(self.pyhfo_fields[i, j])
+                parameter_layout.addWidget(self.pyhfo_fields[i, j + 1])
+                pyhfo_parameter_layout.addLayout(parameter_layout, *(i, j))
+
+        # Load saved parameters after all fields are created
+        self._load_pyhfo_params()
+
+        window_layout = QtWidgets.QVBoxLayout()
+
+        Title = QtWidgets.QLabel("Automatic Detection - pyHFO (Adjust frequency range for ripples/fast ripples)")
+
+        directions = QtWidgets.QLabel(
+            "Adjust parameters below. Higher CPU cores = faster processing.\n"
+            "Longer epochs reduce threshold recalculations and speed up detection."
+        )
+
+        self.analyze_btn = QtWidgets.QPushButton("Analyze")
+        self.analyze_btn.clicked.connect(self.analyze)
+
+        self.cancel_btn = QtWidgets.QPushButton("Cancel")
+        self.cancel_btn.clicked.connect(self.close_app)
+
+        self.reset_btn = QtWidgets.QPushButton("Reset to Defaults")
+        self.reset_btn.clicked.connect(self.reset_to_defaults)
+
+        button_layout = QtWidgets.QHBoxLayout()
+
+        for button in [self.analyze_btn, self.reset_btn, self.cancel_btn]:
+            button_layout.addWidget(button)
+
+        for order in [Title, directions, pyhfo_parameter_layout, button_layout]:
+            if 'Layout' in order.__str__():
+                window_layout.addLayout(order)
+                window_layout.addStretch(1)
+            else:
+                window_layout.addWidget(order, 0, QtCore.Qt.AlignCenter)
+                window_layout.addStretch(1)
+
+        self.setLayout(window_layout)
+
+        center(self)
+
+        self.show()
+
+    def analyze(self):
+        if not hasattr(self.scoreWindow, 'source_filename'):
+            print('You have not chosen a source yet! Please add a source in the Graph Settings window!')
+            return
+
+        if not os.path.exists(self.scoreWindow.source_filename):
+            return
+
+        # Save current parameters before analysis
+        self._save_pyhfo_params()
+
+        # Extract parameters
+        settings = {}
+        for parameter, (i, j) in self.PyHFO_field_positions.items():
+            if parameter == '':
+                continue
+
+            parameter_object = self.pyhfo_fields[i, j+1]
+            try:
+                if 'Epoch' in parameter:
+                    self.scoreWindow.pyhfo_epoch = float(parameter_object.text())
+                    settings[parameter] = self.scoreWindow.pyhfo_epoch
+                elif 'Threshold' in parameter:
+                    self.scoreWindow.pyhfo_sd_num = float(parameter_object.text())
+                    settings[parameter] = self.scoreWindow.pyhfo_sd_num
+                elif 'Minimum Duration' in parameter:
+                    self.scoreWindow.pyhfo_min_duration = float(parameter_object.text()) / 1000.0  # Convert ms to seconds
+                    settings[parameter] = parameter_object.text()
+                elif 'Min Freq' in parameter:
+                    self.scoreWindow.pyhfo_min_freq = float(parameter_object.text())
+                    settings[parameter] = self.scoreWindow.pyhfo_min_freq
+                elif 'Max Freq' in parameter:
+                    self.scoreWindow.pyhfo_max_freq = float(parameter_object.text())
+                    settings[parameter] = self.scoreWindow.pyhfo_max_freq
+                elif 'CPU Cores' in parameter:
+                    self.scoreWindow.pyhfo_n_jobs = int(parameter_object.text())
+                    settings[parameter] = self.scoreWindow.pyhfo_n_jobs
+            except ValueError:
+                self.mainWindow.choice = ''
+                self.mainWindow.ErrorDialogue.myGUI_signal.emit("InvalidDetectionParam")
+                while self.mainWindow.choice == '':
+                    time.sleep(0.1)
+                return
+
+        # Save settings to file
+        self._save_settings_file(settings)
+
+        # Use single pyHFO thread
+        thread = self.scoreWindow.pyhfo_thread
+
+        # Check if thread is already running, stop it first
+        if thread.isRunning():
+            thread.quit()
+            thread.wait()
+
+        thread.start()
+        self.scoreWindow.pyhfo_thread_worker = Worker(PyHFODetection, self.scoreWindow)
+        self.scoreWindow.pyhfo_thread_worker.moveToThread(thread)
+        self.scoreWindow.pyhfo_thread_worker.start.emit("start")
+
+        self.close()
+
+    def _save_settings_file(self, settings):
+        """Save settings to a file for traceability."""
+        try:
+            method_abbreviation = self.scoreWindow.id_abbreviations[self.scoreWindow.eoi_method.currentText().lower()]
+            session_path, set_filename = os.path.split(self.mainWindow.current_set_filename)
+            session = os.path.splitext(set_filename)[0]
+
+            hfo_path = os.path.join(session_path, 'HFOScores', session)
+
+            if not os.path.exists(hfo_path):
+                os.makedirs(hfo_path)
+
+            settings_name = '%s_%s_settings' % (session, method_abbreviation)
+
+            existing_settings_files = [os.path.join(hfo_path, file) for file in os.listdir(hfo_path) if settings_name in file]
+
+            if len(existing_settings_files) >= 1:
+                # check if any of these files has your settings
+                match = False
+                for file in existing_settings_files:
+                    with open(file, 'r+') as f:
+                        file_settings = json.load(f)
+                        if len(file_settings.items() & settings.items()) == len(file_settings.items()):
+                            match = True
+                            self.scoreWindow.settings_fname = file
+                            break
+
+                if not match:
+                    version = [int(os.path.splitext(file)[0].split('_')[-1]) for file in existing_settings_files if
+                               os.path.splitext(file)[0].split('_')[-1] != 'settings']
+                    if len(version) == 0:
+                        version = 1
+                    else:
+                        version = np.amax(np.asarray(version)) + 1
+
+                    self.scoreWindow.settings_fname = os.path.join(hfo_path, '%s_%d.txt' % (settings_name, version))
+                    with open(self.scoreWindow.settings_fname, 'w') as f:
+                        json.dump(settings, f)
+
+            else:
+                # no settings file for this session
+                self.scoreWindow.settings_fname = os.path.join(hfo_path, '%s.txt' % (settings_name))
+                with open(self.scoreWindow.settings_fname, 'w') as f:
+                    json.dump(settings, f)
+        except Exception as e:
+            print(f"Could not save settings: {e}")
+            self.scoreWindow.settings_fname = 'N/A'
+
+    def reset_to_defaults(self):
+        """Reset all pyHFO parameters to their default values"""
+        import multiprocessing
+        default_cores = min(4, multiprocessing.cpu_count() // 2)
+        
+        default_values = {
+            'Epoch(s):': str(10*60),
+            'Threshold(SD):': '5',
+            'Minimum Duration(ms):': '10',
+            'Min Frequency(Hz):': str(self.default_min_freq),
+            'Max Frequency(Hz):': str(self.default_max_freq),
+            'CPU Cores:': str(default_cores)
+        }
+        
+        for parameter, value in default_values.items():
+            if parameter in self.PyHFO_field_positions:
+                i, j = self.PyHFO_field_positions[parameter]
+                self.pyhfo_fields[i, j + 1].setText(value)
+        
+        # Save these defaults to persistent storage
+        self._save_pyhfo_params()
+
+    def _save_pyhfo_params(self):
+        """Save current pyHFO parameters to persistent storage"""
+        try:
+            settings_file = os.path.join(self.scoreWindow.mainWindow.SETTINGS_DIR, f'pyhfo_{self.detection_type}_params.json')
+            params = {}
+            for parameter, (i, j) in self.PyHFO_field_positions.items():
+                if parameter != '':
+                    params[parameter] = self.pyhfo_fields[i, j + 1].text()
+            with open(settings_file, 'w') as f:
+                json.dump(params, f)
+        except Exception:
+            pass
+
+    def _load_pyhfo_params(self):
+        """Load saved pyHFO parameters from persistent storage"""
+        try:
+            settings_file = os.path.join(self.scoreWindow.mainWindow.SETTINGS_DIR, f'pyhfo_{self.detection_type}_params.json')
+            if os.path.exists(settings_file):
+                with open(settings_file, 'r') as f:
+                    params = json.load(f)
+                    for parameter, value in params.items():
+                        if parameter in self.PyHFO_field_positions:
+                            i, j = self.PyHFO_field_positions[parameter]
+                            self.pyhfo_fields[i, j + 1].setText(value)
+        except Exception:
+            pass
+
+    def close_app(self):
         self.close()
 
 
