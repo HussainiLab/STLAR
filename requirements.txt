@@ -5,3 +5,15 @@ pyFFTW>=0.11.1
 PyQt5>=5.15.0
 pyqtgraph>=0.12.0
 scipy>=1.7.0,<2.0
+opencv-python>=4.5.0,<5.0
+
+# Optional: For pyHFO automated detection method
+# Uncomment below and install from: C:\Users\Abid\Documents\Code\Python\pyhfo_repo
+# torch
+# torchvision
+# transformers
+# HFODetector
+# mne
+# yasa
+# scikit-image
+# p-tqdm
