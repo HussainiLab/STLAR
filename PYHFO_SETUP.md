@@ -1,21 +1,22 @@
 # pyHFO Integration Setup
 
-## Status: ✅ Complete & Enhanced
+## Status: ✅ Complete & Simplified
 
-Your hfoGUI application now supports **three pyHFO detection methods** with configurable parameters and parallel processing.
+Your hfoGUI application now supports **pyHFO** as a single detection option (alongside Hilbert). Users set ripple / fast ripple frequency bands manually in the parameter window.
+
+**Note on first-run speed:** pyHFO uses Numba/JIT under the hood. The first analysis may be slower due to compilation; subsequent runs are much faster because compiled code is cached in memory.
 
 ## What's New
 
-### Three Detection Methods:
-1. **pyHFO (Ripples)** - 80-250 Hz band - ID: PYR
-2. **pyHFO (Fast Ripples)** - 250-500 Hz band - ID: PYF  
-3. **pyHFO (Both)** - 80-500 Hz band - ID: PYH
+### Detection Methods (GUI):
+1. **Hilbert** (legacy)
+2. **pyHFO** (single option) – adjust min/max frequency for ripples, fast ripples, or both.
 
-Each method has its own:
+pyHFO includes:
 - ✅ Parameter configuration window
 - ✅ Saved settings (per session and persistent)
 - ✅ Parallel processing support (multi-core CPU)
-- ✅ Independent thread execution
+- ✅ Single worker thread
 
 ## Performance Improvements
 
@@ -33,18 +34,16 @@ Each method has its own:
 1. **Open your set file** in hfoGUI
 2. **Go to Score window** → **Automatic Detection tab**
 3. **Select method**:
-   - "pyHFO (Ripples)" for 80-250 Hz ripples
-   - "pyHFO (Fast Ripples)" for 250-500 Hz fast ripples
-   - "pyHFO (Both)" for combined 80-500 Hz detection
+   - "pyHFO" (set min/max frequency as desired: e.g., 80-250 for ripples, 250-500 for fast, 80-500 for both)
 4. **Click "Find EOIs"** → Parameters window opens
 5. **Adjust settings** (optional):
    - **Epoch**: 600s default (longer = faster)
    - **Threshold**: 5 SD default
    - **Min Duration**: 10 ms default
    - **CPU Cores**: 4 default (more = faster)
-   - **Frequency band**: Auto-set per method
+   - **Frequency band**: Defaults to 80-500 Hz; edit as needed
 6. **Click "Analyze"** → Detection runs in background
-7. **Results appear** in EOI list with appropriate ID (PYR/PYF/PYH)
+7. **Results appear** in EOI list with ID `PYH`
 
 ## Parameters Explained
 
@@ -53,8 +52,8 @@ Each method has its own:
 | **Epoch(s)** | 600 | Time window for threshold calculation | Longer = faster |
 | **Threshold(SD)** | 5 | Mean + X standard deviations | Higher = fewer events |
 | **Min Duration(ms)** | 10 | Minimum event length | Lower = more events |
-| **Min Frequency(Hz)** | 80/250 | Lower bandpass cutoff | Method-dependent |
-| **Max Frequency(Hz)** | 250/500 | Upper bandpass cutoff | Method-dependent |
+| **Min Frequency(Hz)** | 80 | Lower bandpass cutoff | Adjust per ripple/fast ripple |
+| **Max Frequency(Hz)** | 500 | Upper bandpass cutoff | Adjust per ripple/fast ripple |
 | **CPU Cores** | 4 | Parallel workers | More = much faster |
 
 ## Algorithm Details
@@ -118,17 +117,13 @@ pip install HFODetector mne yasa scikit-image
 ## Technical Notes
 
 **Files modified:**
-- `hfoGUI/core/Score.py` – Added PyHFOParametersWindow, three detection methods, parallel support
-- `requirements.txt` – Documented optional dependencies
+- `hfoGUI/core/Score.py` – PyHFOParametersWindow (single option), parallel support
+- `requirements.txt` – Added OpenCV dependency for arena detection overlays
 
 **Key classes/functions:**
-- `PyHFOParametersWindow` – Parameter configuration UI (3 variants)
+- `PyHFOParametersWindow` – Parameter configuration UI
 - `PyHFODetection(self)` – Worker function with parallel processing
 - `_convert_pyhfo_results_to_eois()` – Result converter
 
 **Thread management:**
-- `pyhfo_ripples_thread` – For Ripples detection
-- `pyhfo_fast_ripples_thread` – For Fast Ripples detection
-- `pyhfo_both_thread` – For Both detection
-
-Each method runs independently and can be configured separately.
+- `pyhfo_thread` – Single pyHFO worker thread
