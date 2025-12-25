@@ -173,7 +173,8 @@ class ScoreWindow(QtWidgets.QWidget):
 
         btn_layout = QtWidgets.QHBoxLayout()
 
-        for button in [self.add_btn, self.update_btn, self.delete_btn, self.hide_btn, self.export_scores_btn]:
+        # Keep Hide at the end, after export
+        for button in [self.add_btn, self.update_btn, self.delete_btn, self.export_scores_btn, self.hide_btn]:
             btn_layout.addWidget(button)
         # ------------------ layout ------------------------------
 
@@ -280,9 +281,8 @@ class ScoreWindow(QtWidgets.QWidget):
         self.export_eoi_btn.clicked.connect(self.exportEOIsForTraining)
 
         btn_layout = QtWidgets.QHBoxLayout()
-        for btn in [self.find_eoi_btn, self.add_eoi_btn, self.update_eoi_region, self.delete_eoi_btn, self.eoi_hide]:
+        for btn in [self.find_eoi_btn, self.add_eoi_btn, self.update_eoi_region, self.delete_eoi_btn, self.export_eoi_btn, self.eoi_hide]:
             btn_layout.addWidget(btn)
-        btn_layout.addWidget(self.export_eoi_btn)
 
         layout_eoi = QtWidgets.QVBoxLayout()
 
@@ -484,10 +484,86 @@ class ScoreWindow(QtWidgets.QWidget):
 
         train_tab.setLayout(train_layout)
 
+        # ------- Help tab -----------
+        help_tab = QtWidgets.QWidget()
+        help_layout = QtWidgets.QVBoxLayout()
+
+        help_title = QtWidgets.QLabel("Score Window Help")
+        help_title.setStyleSheet("font-weight: bold; font-size: 12pt;")
+        help_layout.addWidget(help_title)
+
+        self.help_text = QtWidgets.QTextEdit()
+        self.help_text.setReadOnly(True)
+        self.help_text.setMinimumHeight(220)
+        self.help_text.setHtml(
+                        """
+                        <h2>Score Window Help</h2>
+                        <p>The Score window provides a complete workflow to:
+                        <ol>
+                            <li>Detect EOIs (events of interest),</li>
+                            <li>Label them (Ripple-family vs Artifact),</li>
+                            <li>Prepare train/val datasets, and</li>
+                            <li>Train + export a Deep Learning classifier for detection.</li>
+                        </ol>
+                        All start/stop times are shown and saved in <b>milliseconds (ms)</b>.</p>
+
+                        <h3>1) Score</h3>
+                        <ul>
+                            <li><b>Add Score</b>: Adds a row using the current graph selection (times in ms).</li>
+                            <li><b>Update Selected Scores</b>: Updates the label only; does not change times.</li>
+                            <li><b>Delete Selected Scores</b>: Removes selected rows.</li>
+                            <li><b>Create labels for DL training</b>: Exports labeled segments (Ripple-family=1, Artifact=0) and a manifest CSV.</li>
+                            <li><b>Hide</b>: Hides selected entries from view (non-destructive).</li>
+                        </ul>
+
+                        <h3>2) Automatic Detection</h3>
+                        <ul>
+                            <li><b>Hilbert</b>: Bandpass + Hilbert envelope; thresholds via SD and peak counts.</li>
+                            <li><b>STE</b>: Local RMS-based detector (fallback handles pyhfo_repo changes).</li>
+                            <li><b>MNI</b>: Percentile/energy-based baseline detector.</li>
+                            <li><b>Deep Learning</b>: Requires an exported TorchScript model (Train tab).</li>
+                            <li><b>Add Selected EOI to Score</b>: Moves EOIs into the Score tab for labeling.</li>
+                            <li><b>Update EOI Region</b>: Updates EOI start/stop (ms) from current graph selection.</li>
+                            <li><b>Export EOIs for DL Training</b>: Exports unlabeled segments + manifest CSV.</li>
+                        </ul>
+
+                        <h3>3) CSV convert (Train/Val split)</h3>
+                        <ul>
+                            <li><b>Validation Fraction</b>: Fraction of subjects reserved for validation (e.g., 0.20 = 20%).</li>
+                            <li><b>Random Seed</b>: Ensures reproducible splits (same seed → same split).</li>
+                            <li><b>Stratified split</b>: Balances label distribution across train/val while avoiding subject leakage.</li>
+                            <li><b>Output Directory</b>: Saves train.csv, val.csv, and optional metadata.</li>
+                            <li><b>Status panel</b>: Shows class counts and subject statistics for each split.</li>
+                        </ul>
+
+                        <h3>4) Train</h3>
+                        <ul>
+                            <li><b>Train manifest (CSV)</b>: Path to train.csv from CSV convert.</li>
+                            <li><b>Val manifest (CSV)</b>: Path to val.csv from CSV convert.</li>
+                            <li><b>Epochs</b>: Full passes over the training set (typical: 15–50).</li>
+                            <li><b>Batch size</b>: Segments per step (typical: 32–128). Larger batches train faster but may overfit.</li>
+                            <li><b>Learning rate</b>: Optimizer step size (typical: 1e-3). Lower (5e-4) for stability; higher (5e-3) for speed.</li>
+                            <li><b>Output dir</b>: Folder for checkpoints; saves best.pt when validation loss improves.</li>
+                            <li><b>Start Training</b>: Launches training and streams logs here.</li>
+                            <li><b>Export Model</b>: Select best.pt → export TorchScript (always) and ONNX (optional). TorchScript (.pt) is used for DL detection.</li>
+                        </ul>
+
+                        <h3>Deep Learning Detection</h3>
+                        <ul>
+                            <li>After export, set model path (TorchScript .pt) in Settings.</li>
+                            <li>In Automatic Detection, choose Deep Learning → Find EOIs to classify segments.</li>
+                            <li>If ONNX is not installed, export still succeeds with TorchScript.</li>
+                        </ul>
+                        """
+                )
+        help_layout.addWidget(self.help_text)
+        help_tab.setLayout(help_layout)
+
         tabs.addTab(score_tab, 'Score')
         tabs.addTab(eoi_tab, 'Automatic Detection')
+        tabs.addTab(convert_tab, 'CSV convert')
         tabs.addTab(train_tab, 'Train')
-        tabs.addTab(convert_tab, 'Convert')
+        tabs.addTab(help_tab, 'Help')
 
         window_layout = QtWidgets.QVBoxLayout()
         for item in [source_layout, tabs]:
