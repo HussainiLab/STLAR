@@ -17,3 +17,7 @@ opencv-python>=4.5.0,<5.0
 # yasa
 # scikit-image
 # p-tqdm
+
+# Optional: For training/classifying with the DL scaffold
+# torch
+# onnxruntime
