@@ -519,7 +519,7 @@ class ScoreWindow(QtWidgets.QWidget):
                         <h3>2) Automatic Detection</h3>
                         <ul>
                             <li><b>Hilbert</b>: Bandpass + Hilbert envelope; thresholds via SD and peak counts.</li>
-                            <li><b>STE</b>: Local RMS-based detector (fallback handles pyhfo_repo changes).</li>
+                            <li><b>STE</b>: Local RMS-based detector (windowed energy thresholding).</li>
                             <li><b>MNI</b>: Percentile/energy-based baseline detector.</li>
                             <li><b>Deep Learning</b>: Requires an exported TorchScript model (Train tab).</li>
                             <li><b>Add Selected EOI to Score</b>: Moves EOIs into the Score tab for labeling.</li>
@@ -2057,26 +2057,9 @@ def PyHFODetection(self):
 
         raw_data, Fs = self.settingsWindow.loaded_sources[self.source_filename]
 
+        # Use local Hilbert detector implementation
         try:
-            # Add pyHFO repo to path for imports
-            import sys
-            pyhfo_path = r'C:\Users\Abid\Documents\Code\Python\pyhfo_repo'
-            if pyhfo_path not in sys.path:
-                sys.path.insert(0, pyhfo_path)
-
-            # Import from pyHFO's utils (the actual implementation)
-            from src.utils.utils_detector import set_HIL_detector
-            from src.param.param_detector import ParamHIL
-        except ImportError as e:
-            # Show helpful message to user via main window dialog
-            print(f"PyHFO import error: {e}")
-            self.mainWindow.ErrorDialogue.myGUI_signal.emit("PyHFOImportError")
-            return
-
-        # Use the Hilbert detector from pyHFO as the automated method
-        # This is one of the proven detection methods in pyHFO
-        try:
-            # Get parameters from the window (set by PyHFOParametersWindow)
+            # Get parameters from the window
             epoch_time = int(getattr(self, 'pyhfo_epoch', 10*60))
             sd_threshold = float(getattr(self, 'pyhfo_sd_num', 5))
             min_window = float(getattr(self, 'pyhfo_min_duration', 0.01))

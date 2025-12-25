@@ -1,24 +1,44 @@
 # hfoGUI
 
-hfoGUI was initially a Python package designed to visualize High Frequency Oscillations (HFO's), but has grown to be an all encompassing tool to visualize LFP data recorded in the Tint format (from Axona's dacqUSB).
+This is an extended version of the original [hfoGUI](https://github.com/HussainiLab/hfoGUI) by Geoff Barrett and the HussainiLab. The original package was designed to visualize High Frequency Oscillations (HFOs) in LFP data recorded in the Tint format (from Axona's dacqUSB). This version adds additional automated detection methods (STE, MNI, Deep Learning) and a complete deep learning training pipeline.
 
-# Python Dependencies:
-- PyQt5
-- Pillow
-- numpy
-- PyQtGraph
-- scipy
-- matplotlib 
-- pandas
-- pyfftw
+# Installation
 
-# Requirements
-Since it utilizes PyQt5 as the GUI framework it should be available to a wide variety of Python versions and Operating Systems. However it was only tested on Python 3.7 with Windows 10. I do recommend using the latest version of Python as it makes it easy to download some of these C++ based dependencies. 
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/YourUsername/PyhfoGUI.git
+   cd PyhfoGUI
+   ```
 
-# Project Documentation
-- [Installation](https://geba.technology/project/hfogui)
-- [User Guide](https://geba.technology/project/hfogui-hfogui-user-guide)
-- Windows No-Install file (OLD version). (1) [Download](https://drive.google.com/file/d/1Yz5z3Fn5AA3JPS4_hlFLPap3Omue6Pw7/view?usp=sharing) pre-built hfoGUI zip file, (2) unzip contents to folder and (3) run hfoGUI.exe. Use below method for latest version.
+2. **Create a conda environment (recommended):**
+   ```bash
+   conda create -n pyhfogui python=3.10
+   conda activate pyhfogui
+   ```
+
+3. **Install dependencies:**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. **Launch the GUI:**
+   ```bash
+   python -m hfoGUI
+   ```
+
+# Dependencies
+
+Core dependencies:
+- PyQt5 - GUI framework
+- pyqtgraph - Fast plotting
+- numpy - Numerical computing
+- scipy - Signal processing
+- matplotlib - Plotting
+- pandas - Data manipulation
+- pyfftw - Fast Fourier transforms
+- opencv-python - Image processing
+- torch - Deep learning training/inference
+- onnxruntime - ONNX model inference
 
 # Usage
 
@@ -193,7 +213,23 @@ Outputs are created in a session-named subfolder next to the input `.rhd`. The c
 * **Geoff Barrett** - [Geoff’s GitHub](https://github.com/GeoffBarrett)
 * **HussainiLab** - [hfoGUI Repository](https://github.com/HussainiLab/hfoGUI)
 
-**Updated (v3.0):** Added Intan RHD → Tint converter (GUI + CLI) and global UI theme options; batch Hilbert detection retained and improved.
+**Updated (v3.0):** Added Intan RHD → Tint converter (GUI + CLI), global UI theme options, deep learning classification with training pipeline (original 1D CNN architecture), and automatic manifest splitting for DL workflows.
+
+# Acknowledgments
+
+This project incorporates HFO detection concepts and methodologies inspired by the following research:
+
+- **Burnos et al. (2014)**: Foundational work on automated HFO detection using time-frequency analysis, introducing the Short-Term Energy (STE) and Mean-Normalized Integrated (MNI) detection methods. Our local scipy-based implementations are inspired by these concepts.
+  - Burnos, S., Hilfiker, P., Sürücü, O., Scholkmann, F., Krayenbühl, N., Grundwald, T., et al. (2014). Human intracranial high frequency oscillations (HFOs) detected by automatic time-frequency analysis. *PLoS ONE* 9:e94381. doi: 10.1371/journal.pone.0094381  
+    https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0094381
+
+- **RippleLab (Navarrete et al., 2016)**: Comprehensive HFO detection application, whose Hilbert transform-based detection method inspired hfoGUI's original implementation by Geoff Barrett.
+  - Navarrete M, Alvarado‐Rojas C, Le Van Quyen M, et al. RIPPLELAB: a comprehensive application for the detection, analysis and classification of high frequency oscillations in electroencephalographic signals. *PLoS ONE* 2016;11:e0158276.  
+    https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0158276
+
+The deep learning classification pipeline uses an original 1D CNN architecture designed for raw waveform classification, with custom training and export tooling developed for this project.
+
+We thank the authors of the above foundational works for their contributions to automated HFO detection.
 
 # License
 
