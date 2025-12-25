@@ -1,67 +1,8 @@
 import numpy as np
 from scipy.signal import butter, sosfiltfilt
 
-# Define dummies first so they exist if imports fail
-class DummyDetector:
-    def detect(self, *args, **kwargs): return np.array([])
-
-def set_STE_detector(*args, **kwargs): return DummyDetector()
-def set_MNI_detector(*args, **kwargs): return DummyDetector()
-def set_DL_detector(*args, **kwargs): return DummyDetector()
-
-class ParamSTE:
-    def __init__(self, *args, **kwargs): pass
-class ParamMNI:
-    def __init__(self, *args, **kwargs): pass
-class ParamDL:
-    def __init__(self, *args, **kwargs): pass
-
-_pyhfo_repo_available = False
-
-try:
-    import sys
-    # This path is hardcoded in Score.py, so we'll use it here too.
-    pyhfo_path = r'C:\Users\Abid\Documents\Code\Python\pyhfo_repo'
-    if pyhfo_path not in sys.path:
-        sys.path.insert(0, pyhfo_path)
-
-    # Try importing detectors individually to handle missing ones gracefully
-    try:
-        from src.utils.utils_detector import set_STE_detector
-        from src.param.param_detector import ParamSTE
-        _pyhfo_repo_available = True
-    except ImportError:
-        # Fallback to RMS if STE not found
-        try:
-            from src.utils.utils_detector import set_RMS_detector as set_STE_detector
-            from src.param.param_detector import ParamRMS as ParamSTE
-            _pyhfo_repo_available = True
-        except ImportError:
-            print("Warning: set_STE_detector/set_RMS_detector not found in pyhfo_repo.")
-
-    try:
-        from src.utils.utils_detector import set_MNI_detector
-        from src.param.param_detector import ParamMNI
-        _pyhfo_repo_available = True
-    except ImportError:
-        print("Warning: set_MNI_detector not found in pyhfo_repo.")
-
-    try:
-        from src.utils.utils_detector import set_DL_detector
-        from src.param.param_detector import ParamDL
-        _pyhfo_repo_available = True
-    except ImportError:
-        pass  # Will use local DL implementation instead
-
-except ImportError as e:
-    print(f"Warning: Could not import required components from pyhfo_repo: {e}")
-    print("Please ensure pyhfo_repo is at C:\\Users\\Abid\\Documents\\Code\\Python\\pyhfo_repo and contains the expected detectors.")
-    _pyhfo_repo_available = False
-
-
-def _check_package():
-    if not _pyhfo_repo_available:
-        raise ImportError("pyhfo_repo components not found. Please check the path and installation.")
+# All detection methods now use local implementations
+# No external dependencies required
 
 
 def _convert_pyhfo_results_to_eois(hfos, Fs):
@@ -142,7 +83,7 @@ def _convert_pyhfo_results_to_eois(hfos, Fs):
 
 def _local_ste_rms_detect(data, fs, threshold=3.0, window_size=0.01, overlap=0.5, min_freq=80.0, max_freq=500.0):
     """
-    Local fallback STE/RMS detector independent of pyhfo_repo.
+    Local STE/RMS detector using scipy signal processing.
     - Bandpass filters to [min_freq, max_freq]
     - Computes windowed RMS with given window size and overlap
     - Flags windows exceeding mean + threshold * std of RMS
@@ -223,111 +164,32 @@ def _local_ste_rms_detect(data, fs, threshold=3.0, window_size=0.01, overlap=0.5
 
 def ste_detect_events(data, fs, threshold=3.0, window_size=0.01, overlap=0.5, min_freq=80.0, max_freq=500.0, **kwargs):
     """
-    Run Short-Term Energy (RMS) detection via pyhfo_repo if available,
-    otherwise use a local fallback implementation.
+    Run Short-Term Energy (RMS) detection using local implementation.
+    
+    Implements a windowed RMS energy detector inspired by STE/RMS methods:
+    - Bandpass filters to [min_freq, max_freq]
+    - Computes windowed RMS with given window size and overlap
+    - Flags windows exceeding mean + threshold * std of RMS
+    - Merges contiguous windows into events
+    
+    Returns Nx2 [start_ms, end_ms] array.
     """
-    # If pyhfo_repo isn't available, use local fallback immediately
-    try:
-        _check_package()
-    except ImportError:
-        return _local_ste_rms_detect(data, fs, threshold, window_size, overlap, min_freq, max_freq)
-
-    # Assuming ParamRMS takes window_size in samples
-    win_size_samples = int(window_size * fs)
-
-    signal = np.asarray(data, dtype=np.float32)
-
-    # Try pyhfo_repo path first, falling back to local if construction fails
-    try:
-        args = ParamSTE(
-            sample_freq=float(fs),
-            pass_band=float(min_freq),
-            stop_band=float(max_freq),
-            sd_threshold=float(threshold),
-            window_size=win_size_samples,
-            window_overlap=float(overlap)
-        )
-        detector = set_STE_detector(args)
-        detection_results = detector.detect(signal, 'chn1')
-        eois = _convert_pyhfo_results_to_eois(detection_results, fs)
-        if eois.size:
-            return eois
-        # If detector returned empty, try local fallback
-        return _local_ste_rms_detect(signal, fs, threshold, window_size, overlap, min_freq, max_freq)
-    except TypeError as e:
-        # Handle mismatched parameter names between versions of pyhfo_repo
-        # Try alternative common names, else fallback to local implementation
-        try:
-            args = ParamSTE(
-                sample_freq=float(fs),
-                pass_band=float(min_freq),
-                stop_band=float(max_freq),
-                threshold=float(threshold),
-                window_samples=win_size_samples,
-                overlap=float(overlap)
-            )
-            detector = set_STE_detector(args)
-            detection_results = detector.detect(signal, 'chn1')
-            eois = _convert_pyhfo_results_to_eois(detection_results, fs)
-            if eois.size:
-                return eois
-        except Exception:
-            pass
-        # Final fallback
-        return _local_ste_rms_detect(signal, fs, threshold, window_size, overlap, min_freq, max_freq)
-    except Exception:
-        # Any other failure: fallback to local implementation
-        return _local_ste_rms_detect(signal, fs, threshold, window_size, overlap, min_freq, max_freq)
+    return _local_ste_rms_detect(data, fs, threshold, window_size, overlap, min_freq, max_freq)
 
 
 def mni_detect_events(data, fs, baseline_window=10.0, threshold_percentile=99.0, min_freq=80.0, **kwargs):
     """
-    Run MNI detection via pyhfo_repo if available,
-    otherwise use a local fallback implementation.
+    Run MNI-style detection using local implementation.
+    
+    Implements a percentile-based energy detector inspired by MNI methods:
+    - Optional bandpass with lower cutoff at min_freq
+    - Computes windowed RMS (20 ms, 50% overlap)
+    - Computes global RMS threshold at given percentile
+    - Merges contiguous supra-threshold windows into events
+    
+    Returns Nx2 [start_ms, end_ms] array.
     """
-    signal = np.asarray(data, dtype=np.float32)
-
-    # If pyhfo_repo isn't available, use local fallback immediately
-    try:
-        _check_package()
-    except ImportError:
-        return _local_mni_detect(signal, fs, baseline_window, threshold_percentile, min_freq, kwargs.get('max_freq'))
-
-    # Try pyhfo_repo path first
-    try:
-        args = ParamMNI(
-            sample_freq=float(fs),
-            pass_band=float(min_freq),
-            stop_band=kwargs.get('max_freq', fs / 2.0 - 1),
-            baseline_duration=float(baseline_window),
-            threshold_p=float(threshold_percentile)
-        )
-        detector = set_MNI_detector(args)
-        detection_results = detector.detect(signal, 'chn1')
-        eois = _convert_pyhfo_results_to_eois(detection_results, fs)
-        if eois.size:
-            return eois
-        return _local_mni_detect(signal, fs, baseline_window, threshold_percentile, min_freq, kwargs.get('max_freq'))
-    except TypeError:
-        # Handle mismatched parameter names between versions of pyhfo_repo
-        try:
-            args = ParamMNI(
-                sample_freq=float(fs),
-                pass_band=float(min_freq),
-                max_freq=kwargs.get('max_freq', fs / 2.0 - 1),
-                baseline_window=float(baseline_window),
-                threshold_percentile=float(threshold_percentile)
-            )
-            detector = set_MNI_detector(args)
-            detection_results = detector.detect(signal, 'chn1')
-            eois = _convert_pyhfo_results_to_eois(detection_results, fs)
-            if eois.size:
-                return eois
-        except Exception:
-            pass
-        return _local_mni_detect(signal, fs, baseline_window, threshold_percentile, min_freq, kwargs.get('max_freq'))
-    except Exception:
-        return _local_mni_detect(signal, fs, baseline_window, threshold_percentile, min_freq, kwargs.get('max_freq'))
+    return _local_mni_detect(data, fs, baseline_window, threshold_percentile, min_freq, kwargs.get('max_freq'))
 
 
 def _local_mni_detect(data, fs, baseline_window=10.0, threshold_percentile=99.0, min_freq=80.0, max_freq=None):
@@ -406,7 +268,7 @@ def _local_mni_detect(data, fs, baseline_window=10.0, threshold_percentile=99.0,
 
 def dl_detect_events(data, fs, model_path, threshold=0.5, batch_size=32, **kwargs):
     """
-    Run Deep Learning detection via pyhfo_repo.
+    Run Deep Learning detection using local PyTorch/ONNX implementation.
     """
     _check_package()
 

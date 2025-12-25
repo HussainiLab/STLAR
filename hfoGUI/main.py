@@ -564,22 +564,18 @@ class Window(QtWidgets.QWidget):  # defines the window class (main window)
         elif 'PyHFOImportError' in error:
             self.choice = QtWidgets.QMessageBox.question(
                 self,
-                "pyHFO Not Installed",
-                "The pyHFO-based automated detector requires the pyHFO library and its dependencies.\n\n"
-                "Please install them:\n\n"
-                "conda activate pyhfogui\n"
-                "cd C:\\Users\\Abid\\Documents\\Code\\Python\\pyhfo_repo\n"
-                "pip install -e .\n\n"
-                "After installation, try 'Find EOIs' again.",
+                "Detection Method Not Available",
+                "The selected detection method is not available.\n\n"
+                "All detectors (Hilbert, STE, MNI, Deep Learning) are now built-in.\n"
+                "If you're seeing this message, please check that PyQt5 and scipy are installed.",
                 QtWidgets.QMessageBox.Ok,
             )
 
         elif 'PyHFOAPIError' in error:
             self.choice = QtWidgets.QMessageBox.question(
                 self,
-                "pyHFO Detection Error",
-                "Could not run pyHFO detection. The detector interface may have changed.\n"
-                "Please ensure pyHFO is correctly installed.",
+                "Detection Error",
+                "Could not run detection. Please check the console for detailed error messages.",
                 QtWidgets.QMessageBox.Ok,
             )
 
