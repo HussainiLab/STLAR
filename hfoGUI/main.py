@@ -255,10 +255,16 @@ class Window(QtWidgets.QWidget):  # defines the window class (main window)
         if (ev.button() == QtCore.Qt.LeftButton):
             self.lr.show()  # showing the linear region selector
 
-            # defining the selected region
-            self.lr.setRegion([self.vb.mapToView(ev.buttonDownPos()).x(), self.vb.mapToView(ev.pos()).x()])
-            self.score_x1 = self.vb.mapToView(ev.buttonDownPos()).x()  # defining the start of the selected region
-            self.score_x2 = self.vb.mapToView(ev.pos()).x()  # defining the end of the selected region
+            # get selection in seconds for display, store in ms for scores/EOIs
+            start_sec = self.vb.mapToView(ev.buttonDownPos()).x()
+            stop_sec = self.vb.mapToView(ev.pos()).x()
+
+            # defining the selected region (Graph uses seconds)
+            self.lr.setRegion([start_sec, stop_sec])
+
+            # store in milliseconds for downstream score entries
+            self.score_x1 = start_sec * 1000.0
+            self.score_x2 = stop_sec * 1000.0
             ev.accept()
         else:
             pg.ViewBox.mouseDragEvent(self.vb, ev)
