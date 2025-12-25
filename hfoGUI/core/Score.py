@@ -1,12 +1,13 @@
 from pyqtgraph.Qt import QtGui, QtCore, QtWidgets
 from core.GUI_Utils import background, center, find_consec
-import os, time, json, functools
+import os, time, json, functools, sys
 from scipy.signal import hilbert
 import numpy as np
 from core.Tint_Matlab import detect_peaks
 from core.GUI_Utils import Worker
 import pandas as pd
 import core.filtering as filt
+from core.Detector import ste_detect_events, mni_detect_events, dl_detect_events
 
 
 class TreeWidgetItem(QtWidgets.QTreeWidgetItem):
@@ -144,7 +145,9 @@ class ScoreWindow(QtWidgets.QWidget):
         self.id_abbreviations = {
             'manual': 'MAN', 
             'hilbert': 'HIL', 
-            'pyhfo': 'PYH',
+            'ste': 'STE',
+            'mni': 'MNI',
+            'deep learning': 'DL',
             'unknown': 'UNK'
         }
 
@@ -165,10 +168,12 @@ class ScoreWindow(QtWidgets.QWidget):
         self.update_btn.clicked.connect(self.updateScores)
         self.delete_btn = QtWidgets.QPushButton('Delete Selected Scores', self)
         self.delete_btn.clicked.connect(self.deleteScores)
+        self.export_scores_btn = QtWidgets.QPushButton('Create labels for DL training', self)
+        self.export_scores_btn.clicked.connect(self.exportScoresForTraining)
 
         btn_layout = QtWidgets.QHBoxLayout()
 
-        for button in [self.add_btn, self.update_btn, self.delete_btn, self.hide_btn]:
+        for button in [self.add_btn, self.update_btn, self.delete_btn, self.hide_btn, self.export_scores_btn]:
             btn_layout.addWidget(button)
         # ------------------ layout ------------------------------
 
@@ -222,7 +227,7 @@ class ScoreWindow(QtWidgets.QWidget):
         eoi_method_label = QtWidgets.QLabel("EOI Detection Method:")
         self.eoi_method = QtWidgets.QComboBox()
         self.eoi_method.currentIndexChanged.connect(self.setEOIfilename)
-        methods = ['Hilbert', 'pyHFO']
+        methods = ['Hilbert', 'STE', 'MNI', 'Deep Learning']
 
         events_detected_label = QtWidgets.QLabel('Events Detected:')
         self.events_detected = QtWidgets.QLineEdit()
@@ -271,9 +276,13 @@ class ScoreWindow(QtWidgets.QWidget):
         self.add_eoi_btn = QtWidgets.QPushButton("Add Selected EOI to Score")
         self.add_eoi_btn.clicked.connect(self.addEOI)
 
+        self.export_eoi_btn = QtWidgets.QPushButton("Export EOIs for DL Training")
+        self.export_eoi_btn.clicked.connect(self.exportEOIsForTraining)
+
         btn_layout = QtWidgets.QHBoxLayout()
         for btn in [self.find_eoi_btn, self.add_eoi_btn, self.update_eoi_region, self.delete_eoi_btn, self.eoi_hide]:
             btn_layout.addWidget(btn)
+        btn_layout.addWidget(self.export_eoi_btn)
 
         layout_eoi = QtWidgets.QVBoxLayout()
 
@@ -287,8 +296,198 @@ class ScoreWindow(QtWidgets.QWidget):
 
         eoi_tab.setLayout(layout_eoi)
 
+        # ------- Convert tab for train/val splitting -----------
+        convert_tab = QtWidgets.QWidget()
+        convert_layout = QtWidgets.QVBoxLayout()
+
+        convert_title = QtWidgets.QLabel("Convert Manifests to Train/Val Splits")
+        convert_title.setStyleSheet("font-weight: bold; font-size: 12pt;")
+        convert_layout.addWidget(convert_title)
+
+        convert_help = QtWidgets.QLabel(
+            "Load one or more manifest.csv files (from EOI exports) and split into train/val sets.\n"
+            "Splits are done by subject to avoid data leakage."
+        )
+        convert_help.setWordWrap(True)
+        convert_layout.addWidget(convert_help)
+
+        # Manifest list
+        manifest_label = QtWidgets.QLabel("Selected Manifests:")
+        convert_layout.addWidget(manifest_label)
+
+        self.manifest_list = QtWidgets.QListWidget()
+        self.manifest_list.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+        convert_layout.addWidget(self.manifest_list)
+
+        # Buttons for manifest management
+        manifest_btn_layout = QtWidgets.QHBoxLayout()
+        self.add_manifest_btn = QtWidgets.QPushButton("Add Manifest(s)")
+        self.add_manifest_btn.clicked.connect(self.addManifests)
+        self.remove_manifest_btn = QtWidgets.QPushButton("Remove Selected")
+        self.remove_manifest_btn.clicked.connect(self.removeManifests)
+        self.clear_manifest_btn = QtWidgets.QPushButton("Clear All")
+        self.clear_manifest_btn.clicked.connect(self.clearManifests)
+        manifest_btn_layout.addWidget(self.add_manifest_btn)
+        manifest_btn_layout.addWidget(self.remove_manifest_btn)
+        manifest_btn_layout.addWidget(self.clear_manifest_btn)
+        convert_layout.addLayout(manifest_btn_layout)
+
+        # Split options
+        options_group = QtWidgets.QGroupBox("Split Options")
+        options_layout = QtWidgets.QFormLayout()
+
+        self.val_fraction_spin = QtWidgets.QDoubleSpinBox()
+        self.val_fraction_spin.setRange(0.1, 0.5)
+        self.val_fraction_spin.setValue(0.2)
+        self.val_fraction_spin.setSingleStep(0.05)
+        self.val_fraction_spin.setDecimals(2)
+        options_layout.addRow("Validation Fraction:", self.val_fraction_spin)
+
+        self.random_seed_spin = QtWidgets.QSpinBox()
+        self.random_seed_spin.setRange(0, 99999)
+        self.random_seed_spin.setValue(42)
+        options_layout.addRow("Random Seed:", self.random_seed_spin)
+
+        self.stratified_check = QtWidgets.QCheckBox("Use stratified split (balance labels)")
+        options_layout.addRow("", self.stratified_check)
+
+        options_group.setLayout(options_layout)
+        convert_layout.addWidget(options_group)
+
+        # Output directory
+        output_layout = QtWidgets.QHBoxLayout()
+        output_label = QtWidgets.QLabel("Output Directory:")
+        self.output_dir_edit = QtWidgets.QLineEdit()
+        self.output_dir_edit.setPlaceholderText("Select output directory...")
+        self.output_browse_btn = QtWidgets.QPushButton("Browse...")
+        self.output_browse_btn.clicked.connect(self.browseOutputDir)
+        output_layout.addWidget(output_label)
+        output_layout.addWidget(self.output_dir_edit)
+        output_layout.addWidget(self.output_browse_btn)
+        convert_layout.addLayout(output_layout)
+
+        # Convert button
+        self.convert_btn = QtWidgets.QPushButton("Create Train/Val Split")
+        self.convert_btn.clicked.connect(self.convertManifests)
+        self.convert_btn.setStyleSheet("font-weight: bold; padding: 8px;")
+        convert_layout.addWidget(self.convert_btn)
+
+        # Status output
+        self.convert_status = QtWidgets.QTextEdit()
+        self.convert_status.setReadOnly(True)
+        self.convert_status.setMaximumHeight(150)
+        convert_layout.addWidget(self.convert_status)
+
+        convert_tab.setLayout(convert_layout)
+
+        # ------- Train tab for running training/export -----------
+        train_tab = QtWidgets.QWidget()
+        train_layout = QtWidgets.QVBoxLayout()
+
+        train_title = QtWidgets.QLabel("Train Deep Learning Model")
+        train_title.setStyleSheet("font-weight: bold; font-size: 12pt;")
+        train_layout.addWidget(train_title)
+
+        train_help = QtWidgets.QLabel(
+            "Provide train/val manifests, adjust hyperparameters, and launch training."
+        )
+        train_help.setWordWrap(True)
+        train_layout.addWidget(train_help)
+
+        # File pickers for train/val
+        train_form = QtWidgets.QFormLayout()
+
+        self.train_manifest_edit = QtWidgets.QLineEdit()
+        train_browse_btn = QtWidgets.QPushButton("Browse…")
+        train_browse_btn.clicked.connect(self.browseTrainManifest)
+        train_row = QtWidgets.QHBoxLayout()
+        train_row.addWidget(self.train_manifest_edit)
+        train_row.addWidget(train_browse_btn)
+        train_form.addRow("Train manifest (CSV):", train_row)
+
+        self.val_manifest_edit = QtWidgets.QLineEdit()
+        val_browse_btn = QtWidgets.QPushButton("Browse…")
+        val_browse_btn.clicked.connect(self.browseValManifest)
+        val_row = QtWidgets.QHBoxLayout()
+        val_row.addWidget(self.val_manifest_edit)
+        val_row.addWidget(val_browse_btn)
+        train_form.addRow("Val manifest (CSV):", val_row)
+
+        # Hyperparameters
+        self.epochs_spin = QtWidgets.QSpinBox()
+        self.epochs_spin.setRange(1, 1000)
+        self.epochs_spin.setValue(15)
+        train_form.addRow("Epochs:", self.epochs_spin)
+
+        self.batch_spin = QtWidgets.QSpinBox()
+        self.batch_spin.setRange(1, 2048)
+        self.batch_spin.setValue(64)
+        train_form.addRow("Batch size:", self.batch_spin)
+
+        self.lr_spin = QtWidgets.QDoubleSpinBox()
+        self.lr_spin.setDecimals(6)
+        self.lr_spin.setRange(1e-6, 1.0)
+        self.lr_spin.setSingleStep(1e-4)
+        self.lr_spin.setValue(1e-3)
+        train_form.addRow("Learning rate:", self.lr_spin)
+
+        self.train_out_dir_edit = QtWidgets.QLineEdit()
+        train_out_btn = QtWidgets.QPushButton("Browse…")
+        train_out_btn.clicked.connect(self.browseTrainOutDir)
+        out_row = QtWidgets.QHBoxLayout()
+        out_row.addWidget(self.train_out_dir_edit)
+        out_row.addWidget(train_out_btn)
+        train_form.addRow("Output dir:", out_row)
+
+        train_layout.addLayout(train_form)
+
+        # Train button
+        self.train_btn = QtWidgets.QPushButton("Start Training")
+        self.train_btn.setStyleSheet("font-weight: bold; padding: 8px;")
+        self.train_btn.clicked.connect(self.startTraining)
+        train_layout.addWidget(self.train_btn)
+
+        # Export section
+        export_title = QtWidgets.QLabel("Export Trained Model (TorchScript + ONNX)")
+        export_title.setStyleSheet("font-weight: bold; margin-top: 12px;")
+        train_layout.addWidget(export_title)
+
+        export_form = QtWidgets.QFormLayout()
+
+        self.ckpt_edit = QtWidgets.QLineEdit()
+        ckpt_browse_btn = QtWidgets.QPushButton("Browse…")
+        ckpt_browse_btn.clicked.connect(self.browseCheckpoint)
+        ckpt_row = QtWidgets.QHBoxLayout()
+        ckpt_row.addWidget(self.ckpt_edit)
+        ckpt_row.addWidget(ckpt_browse_btn)
+        export_form.addRow("Checkpoint (.pt):", ckpt_row)
+
+        self.export_out_dir_edit = QtWidgets.QLineEdit()
+        export_out_btn = QtWidgets.QPushButton("Browse…")
+        export_out_btn.clicked.connect(self.browseExportOutDir)
+        exp_out_row = QtWidgets.QHBoxLayout()
+        exp_out_row.addWidget(self.export_out_dir_edit)
+        exp_out_row.addWidget(export_out_btn)
+        export_form.addRow("Export dir:", exp_out_row)
+
+        train_layout.addLayout(export_form)
+
+        self.export_btn = QtWidgets.QPushButton("Export Model")
+        self.export_btn.clicked.connect(self.startExport)
+        train_layout.addWidget(self.export_btn)
+
+        # Logs
+        self.train_log = QtWidgets.QTextEdit()
+        self.train_log.setReadOnly(True)
+        self.train_log.setMaximumHeight(180)
+        train_layout.addWidget(self.train_log)
+
+        train_tab.setLayout(train_layout)
+
         tabs.addTab(score_tab, 'Score')
         tabs.addTab(eoi_tab, 'Automatic Detection')
+        tabs.addTab(train_tab, 'Train')
+        tabs.addTab(convert_tab, 'Convert')
 
         window_layout = QtWidgets.QVBoxLayout()
         for item in [source_layout, tabs]:
@@ -299,6 +498,9 @@ class ScoreWindow(QtWidgets.QWidget):
 
         self.hilbert_thread = QtCore.QThread()
         self.pyhfo_thread = QtCore.QThread()
+        self.ste_thread = QtCore.QThread()
+        self.mni_thread = QtCore.QThread()
+        self.dl_thread = QtCore.QThread()
         self.setLayout(window_layout)
 
     def closeEvent(self, event):
@@ -309,10 +511,21 @@ class ScoreWindow(QtWidgets.QWidget):
         if hasattr(self, 'pyhfo_thread') and self.pyhfo_thread.isRunning():
             self.pyhfo_thread.quit()
             self.pyhfo_thread.wait(1000)
+        if hasattr(self, 'ste_thread') and self.ste_thread.isRunning():
+            self.ste_thread.quit()
+            self.ste_thread.wait(1000)
+        if hasattr(self, 'mni_thread') and self.mni_thread.isRunning():
+            self.mni_thread.quit()
+            self.mni_thread.wait(1000)
+        if hasattr(self, 'dl_thread') and self.dl_thread.isRunning():
+            self.dl_thread.quit()
+            self.dl_thread.wait(1000)
         super().closeEvent(event)
 
     def initialize_attributes(self):
         self.IDs = []
+        self.train_process = None
+        self.export_process = None
 
     def openSettings(self, index, source):
 
@@ -474,15 +687,9 @@ class ScoreWindow(QtWidgets.QWidget):
             elif 'Stop Time' in key:
                 stop_value = value
 
-        if hasattr(self.mainWindow, 'lr'):
-            x1, x2 = self.mainWindow.lr.getRegion()
-            for item in self.scores.selectedItems():
-                item.setText(score_value, self.score.currentText())
-                item.setText(start_value, str(x1))
-                item.setText(stop_value, str(x2))
-        else:
-            for item in self.scores.selectedItems():
-                item.setText(score_value, self.score.currentText())
+        # Only update the score label, not the times
+        for item in self.scores.selectedItems():
+            item.setText(score_value, self.score.currentText())
 
     def updateEOIRegion(self):
         root = self.EOI.invisibleRootItem()
@@ -494,10 +701,13 @@ class ScoreWindow(QtWidgets.QWidget):
                 stop_value = value
 
         if hasattr(self.mainWindow, 'lr'):
+            # getRegion() returns values in seconds, convert to milliseconds
             x1, x2 = self.mainWindow.lr.getRegion()
+            x1_ms = x1 * 1000.0
+            x2_ms = x2 * 1000.0
             for item in self.EOI.selectedItems():
-                item.setText(start_value, str(x1))
-                item.setText(stop_value, str(x2))
+                item.setText(start_value, f"{x1_ms:.10g}")
+                item.setText(stop_value, f"{x2_ms:.10g}")
         else:
            pass
 
@@ -744,9 +954,12 @@ class ScoreWindow(QtWidgets.QWidget):
         if 'Hilbert' in self.eoi_method.currentText():
             # make sure to have the windows have a self. in front of them otherwise they will run and close
             self.hilbert_window = HilbertParametersWindow(self.mainWindow, self)
-        elif 'pyHFO' in self.eoi_method.currentText():
-            # Open pyHFO parameters window
-            self.pyhfo_window = PyHFOParametersWindow(self.mainWindow, self)
+        elif 'STE' in self.eoi_method.currentText():
+            self.ste_window = STEParametersWindow(self.mainWindow, self)
+        elif 'MNI' in self.eoi_method.currentText():
+            self.mni_window = MNIParametersWindow(self.mainWindow, self)
+        elif 'Deep Learning' in self.eoi_method.currentText():
+            self.dl_window = DLParametersWindow(self.mainWindow, self)
 
     def changeEventText(self, source):
         """This method will move the plot to the current selection"""
@@ -1058,6 +1271,349 @@ class ScoreWindow(QtWidgets.QWidget):
             os.makedirs(os.path.dirname(save_filename))
 
         df.to_csv(save_filename, sep='\t')
+
+    def exportEOIsForTraining(self):
+        """Export current EOIs to .npy segments and manifest for DL training."""
+        if not hasattr(self, 'source_filename') or not os.path.exists(self.source_filename):
+            QtWidgets.QMessageBox.warning(self, "No Source", "Please load a data file first.")
+            return
+
+        if self.EOI.topLevelItemCount() == 0:
+            QtWidgets.QMessageBox.warning(self, "No EOIs", "Please detect or add EOIs first.")
+            return
+
+        # Ask user for output directory
+        out_dir = QtWidgets.QFileDialog.getExistingDirectory(self, "Select output directory for segments")
+        if not out_dir:
+            return
+
+        try:
+            # Get EOIs from tree
+            eois = []
+            for key, value in self.EOI_headers.items():
+                if 'Start' in key:
+                    start_col = value
+                elif 'Stop' in key:
+                    stop_col = value
+
+            for item_count in range(self.EOI.topLevelItemCount()):
+                item = self.EOI.topLevelItem(item_count)
+                try:
+                    s_ms = float(item.data(start_col, 0))
+                    e_ms = float(item.data(stop_col, 0))
+                    eois.append([s_ms, e_ms])
+                except Exception:
+                    continue
+
+            if not eois:
+                QtWidgets.QMessageBox.warning(self, "No Valid EOIs", "Could not extract EOI times.")
+                return
+
+            # Get signal
+            raw_data, Fs = self.settingsWindow.loaded_sources[self.source_filename]
+            raw_data = np.asarray(raw_data, dtype=np.float32)
+
+            # Export
+            from core.eoi_exporter import export_eois_for_training
+            manifest_path = export_eois_for_training(raw_data, Fs, np.asarray(eois), out_dir)
+
+            QtWidgets.QMessageBox.information(
+                self, "Export Complete",
+                f"Exported {len(eois)} EOIs to:\n{out_dir}\n\nManifest: {manifest_path}"
+            )
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Export Error", f"Error exporting EOIs: {e}")
+            import traceback
+            traceback.print_exc()
+
+
+    def exportScoresForTraining(self):
+        """Export scored events (Score tab) to labeled segments and manifest for DL training."""
+        if not hasattr(self, 'source_filename') or not os.path.exists(self.source_filename):
+            QtWidgets.QMessageBox.warning(self, "No Source", "Please load a data file first.")
+            return
+
+        if self.scores.topLevelItemCount() == 0:
+            QtWidgets.QMessageBox.warning(self, "No Scores", "Please add scores first (e.g., Ripple vs Artifact).")
+            return
+
+        out_dir = QtWidgets.QFileDialog.getExistingDirectory(self, "Select output directory for labeled segments")
+        if not out_dir:
+            return
+
+        # Map score labels to binary classes
+        pos_labels = {'ripple', 'fast ripple', 'sharp wave ripple'}
+        neg_labels = {'artifact'}
+
+        try:
+            for key, value in self.score_headers.items():
+                if 'Score:' in key:
+                    score_col = value
+                elif 'Start' in key:
+                    start_col = value
+                elif 'Stop' in key:
+                    stop_col = value
+
+            eois = []
+            labels = []
+            for item_count in range(self.scores.topLevelItemCount()):
+                item = self.scores.topLevelItem(item_count)
+                try:
+                    lbl_txt = str(item.data(score_col, 0)).strip().lower()
+                    if lbl_txt in pos_labels:
+                        lbl = 1
+                    elif lbl_txt in neg_labels:
+                        lbl = 0
+                    else:
+                        continue  # skip unlabeled/other
+                    s_ms = float(item.data(start_col, 0))
+                    e_ms = float(item.data(stop_col, 0))
+                    eois.append([s_ms, e_ms])
+                    labels.append(lbl)
+                except Exception:
+                    continue
+
+            if not eois:
+                QtWidgets.QMessageBox.warning(self, "No Labeled Scores", "Only Ripple/Fast Ripple/SWR (label=1) or Artifact (label=0) are exported.")
+                return
+
+            raw_data, Fs = self.settingsWindow.loaded_sources[self.source_filename]
+            raw_data = np.asarray(raw_data, dtype=np.float32)
+
+            from core.eoi_exporter import export_labeled_eois_for_training
+            manifest_path = export_labeled_eois_for_training(raw_data, Fs, np.asarray(eois), labels, out_dir)
+
+            QtWidgets.QMessageBox.information(
+                self, "Export Complete",
+                f"Exported {len(eois)} labeled segments to:\n{out_dir}\n\nManifest: {manifest_path}"
+            )
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Export Error", f"Error exporting labeled scores: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def addManifests(self):
+        """Add manifest files to the list."""
+        files, _ = QtWidgets.QFileDialog.getOpenFileNames(
+            self, "Select Manifest CSV Files", "", "CSV Files (*.csv);;All Files (*)"
+        )
+        for f in files:
+            if f not in [self.manifest_list.item(i).text() for i in range(self.manifest_list.count())]:
+                self.manifest_list.addItem(f)
+
+    def removeManifests(self):
+        """Remove selected manifests from the list."""
+        for item in self.manifest_list.selectedItems():
+            self.manifest_list.takeItem(self.manifest_list.row(item))
+
+    def clearManifests(self):
+        """Clear all manifests from the list."""
+        self.manifest_list.clear()
+
+    def browseOutputDir(self):
+        """Browse for output directory."""
+        out_dir = QtWidgets.QFileDialog.getExistingDirectory(self, "Select Output Directory")
+        if out_dir:
+            self.output_dir_edit.setText(out_dir)
+
+    def convertManifests(self):
+        """Convert manifests to train/val splits."""
+        if self.manifest_list.count() == 0:
+            QtWidgets.QMessageBox.warning(self, "No Manifests", "Please add at least one manifest file.")
+            return
+
+        if not self.output_dir_edit.text():
+            QtWidgets.QMessageBox.warning(self, "No Output Directory", "Please select an output directory.")
+            return
+
+        try:
+            from dl_training.manifest_splitter import load_manifests, subject_wise_split, stratified_subject_split
+            from dl_training.manifest_splitter import print_statistics, check_class_balance, save_splits
+
+            # Get manifest paths
+            manifest_paths = [self.manifest_list.item(i).text() for i in range(self.manifest_list.count())]
+
+            # Update status
+            self.convert_status.clear()
+            self.convert_status.append("Loading manifests...")
+            QtWidgets.QApplication.processEvents()
+
+            # Load and combine
+            combined_df = load_manifests(manifest_paths)
+
+            self.convert_status.append(f"✓ Loaded {len(combined_df)} events from {len(manifest_paths)} manifests\n")
+            QtWidgets.QApplication.processEvents()
+
+            # Print initial statistics
+            import io
+            import sys
+            old_stdout = sys.stdout
+            sys.stdout = buffer = io.StringIO()
+
+            print_statistics(combined_df, "Combined Dataset")
+
+            # Split
+            val_frac = self.val_fraction_spin.value()
+            seed = self.random_seed_spin.value()
+
+            if self.stratified_check.isChecked():
+                train_df, val_df = stratified_subject_split(combined_df, val_frac, seed)
+            else:
+                train_df, val_df = subject_wise_split(combined_df, val_frac, seed)
+
+            # Print split statistics
+            print_statistics(train_df, "Training Set")
+            print_statistics(val_df, "Validation Set")
+            check_class_balance(train_df, val_df)
+
+            # Save
+            output_dir = self.output_dir_edit.text()
+            save_splits(train_df, val_df, output_dir, save_metadata=True)
+
+            sys.stdout = old_stdout
+            output = buffer.getvalue()
+
+            self.convert_status.append(output)
+            self.convert_status.append("\n✓ COMPLETE! Train and validation sets created successfully.")
+
+            QtWidgets.QMessageBox.information(
+                self, "Split Complete",
+                f"Created train/val splits in:\n{output_dir}\n\n"
+                f"Train: {len(train_df)} events\n"
+                f"Val: {len(val_df)} events"
+            )
+
+        except Exception as e:
+            self.convert_status.append(f"\n❌ ERROR: {e}")
+            QtWidgets.QMessageBox.critical(self, "Conversion Error", f"Error creating splits: {e}")
+            import traceback
+            traceback.print_exc()
+
+    # ---------------- Train tab helpers ----------------
+    def browseTrainManifest(self):
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select train manifest", "", "CSV Files (*.csv)")
+        if path:
+            self.train_manifest_edit.setText(path)
+
+    def browseValManifest(self):
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select val manifest", "", "CSV Files (*.csv)")
+        if path:
+            self.val_manifest_edit.setText(path)
+
+    def browseTrainOutDir(self):
+        path = QtWidgets.QFileDialog.getExistingDirectory(self, "Select training output directory")
+        if path:
+            self.train_out_dir_edit.setText(path)
+
+    def browseCheckpoint(self):
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select checkpoint (.pt)", "", "PyTorch checkpoint (*.pt)")
+        if path:
+            self.ckpt_edit.setText(path)
+
+    def browseExportOutDir(self):
+        path = QtWidgets.QFileDialog.getExistingDirectory(self, "Select export output directory")
+        if path:
+            self.export_out_dir_edit.setText(path)
+
+    def _append_process_output(self, proc, widget):
+        text = proc.readAllStandardOutput().data().decode(errors='ignore')
+        if text:
+            widget.append(text)
+        text_err = proc.readAllStandardError().data().decode(errors='ignore')
+        if text_err:
+            widget.append(text_err)
+
+    def startTraining(self):
+        train_path = self.train_manifest_edit.text().strip()
+        val_path = self.val_manifest_edit.text().strip()
+        out_dir = self.train_out_dir_edit.text().strip()
+
+        if not os.path.isfile(train_path):
+            QtWidgets.QMessageBox.warning(self, "Missing train manifest", "Select a valid train manifest CSV.")
+            return
+        if not os.path.isfile(val_path):
+            QtWidgets.QMessageBox.warning(self, "Missing val manifest", "Select a valid val manifest CSV.")
+            return
+        if not out_dir:
+            QtWidgets.QMessageBox.warning(self, "Missing output dir", "Select an output directory for training artifacts.")
+            return
+
+        args = [
+            sys.executable, "-m", "hfoGUI.dl_training.train",
+            "--train", train_path,
+            "--val", val_path,
+            "--epochs", str(self.epochs_spin.value()),
+            "--batch-size", str(self.batch_spin.value()),
+            "--lr", str(self.lr_spin.value()),
+            "--out-dir", out_dir,
+        ]
+
+        # Prevent overlapping runs
+        if self.train_process and self.train_process.state() == QtCore.QProcess.Running:
+            QtWidgets.QMessageBox.information(self, "Training running", "Please wait for the current training to finish.")
+            return
+
+        self.train_log.clear()
+        self.train_log.append("Starting training...\n")
+
+        self.train_process = QtCore.QProcess(self)
+        self.train_process.readyReadStandardOutput.connect(lambda: self._append_process_output(self.train_process, self.train_log))
+        self.train_process.readyReadStandardError.connect(lambda: self._append_process_output(self.train_process, self.train_log))
+        self.train_process.finished.connect(lambda code, status: self._onTrainFinished(code, status))
+        self.train_process.start(args[0], args[1:])
+
+    def _onTrainFinished(self, code, status):
+        if code == 0:
+            self.train_log.append("\n✓ Training complete.")
+            QtWidgets.QMessageBox.information(self, "Training complete", "Training finished successfully.")
+        else:
+            self.train_log.append(f"\n❌ Training failed (code {code}).")
+            QtWidgets.QMessageBox.critical(self, "Training error", f"Training failed with exit code {code}.")
+
+    def startExport(self):
+        ckpt = self.ckpt_edit.text().strip()
+        out_dir = self.export_out_dir_edit.text().strip()
+
+        if not os.path.isfile(ckpt):
+            QtWidgets.QMessageBox.warning(self, "Missing checkpoint", "Select a valid .pt checkpoint file.")
+            return
+        if not out_dir:
+            QtWidgets.QMessageBox.warning(self, "Missing export dir", "Select an output directory.")
+            return
+
+        os.makedirs(out_dir, exist_ok=True)
+        
+        # Build output paths
+        onnx_path = os.path.join(out_dir, "model.onnx")
+        ts_path = os.path.join(out_dir, "model_traced.pt")
+
+        args = [
+            sys.executable, "-m", "hfoGUI.dl_training.export",
+            "--ckpt", ckpt,
+            "--onnx", onnx_path,
+            "--ts", ts_path,
+        ]
+
+        # Prevent overlapping runs
+        if self.export_process and self.export_process.state() == QtCore.QProcess.Running:
+            QtWidgets.QMessageBox.information(self, "Export running", "Please wait for the current export to finish.")
+            return
+
+        self.train_log.append("\nStarting export...\n")
+
+        self.export_process = QtCore.QProcess(self)
+        self.export_process.readyReadStandardOutput.connect(lambda: self._append_process_output(self.export_process, self.train_log))
+        self.export_process.readyReadStandardError.connect(lambda: self._append_process_output(self.export_process, self.train_log))
+        self.export_process.finished.connect(lambda code, status: self._onExportFinished(code, status))
+        self.export_process.start(args[0], args[1:])
+
+    def _onExportFinished(self, code, status):
+        if code == 0:
+            self.train_log.append("\n✓ Export complete (TorchScript + ONNX written).")
+            QtWidgets.QMessageBox.information(self, "Export complete", "Export finished successfully.")
+        else:
+            self.train_log.append(f"\n❌ Export failed (code {code}).")
+            QtWidgets.QMessageBox.critical(self, "Export error", f"Export failed with exit code {code}.")
 
 
 def hilbert_detect_events(raw_data, Fs, *, epoch, sd_num, min_duration, min_freq, max_freq,
@@ -1523,6 +2079,199 @@ def PyHFODetection(self):
         import traceback
         traceback.print_exc()
         return
+
+
+def STEDetection(self):
+    try:
+        if not hasattr(self, 'source_filename') or not os.path.exists(self.source_filename):
+            return
+
+        raw_data, Fs = self.settingsWindow.loaded_sources[self.source_filename]
+
+        EOIs = ste_detect_events(
+            raw_data, Fs,
+            threshold=self.ste_threshold,
+            window_size=self.ste_window_size,
+            overlap=self.ste_overlap,
+            min_freq=self.ste_min_freq,
+            max_freq=self.ste_max_freq
+        )
+
+        _process_detection_results(self, EOIs)
+
+    except Exception as e:
+        print(f'Error during STE detection: {e}')
+        import traceback
+        traceback.print_exc()
+
+
+def MNIDetection(self):
+    try:
+        if not hasattr(self, 'source_filename') or not os.path.exists(self.source_filename):
+            return
+
+        raw_data, Fs = self.settingsWindow.loaded_sources[self.source_filename]
+
+        EOIs = mni_detect_events(
+            raw_data, Fs,
+            baseline_window=self.mni_baseline_window,
+            threshold_percentile=self.mni_threshold_percentile,
+            min_freq=self.mni_min_freq
+        )
+
+        _process_detection_results(self, EOIs)
+
+    except Exception as e:
+        print(f'Error during MNI detection: {e}')
+        import traceback
+        traceback.print_exc()
+
+
+def DLDetection(self):
+    try:
+        if not hasattr(self, 'source_filename') or not os.path.exists(self.source_filename):
+            return
+
+        raw_data, Fs = self.settingsWindow.loaded_sources[self.source_filename]
+
+        # If EOIs already exist, perform classification of those EOIs; otherwise run DL detection.
+        existing_eois = []
+        try:
+            for key, value in self.EOI_headers.items():
+                if 'Start' in key:
+                    start_col = value
+                elif 'Stop' in key:
+                    stop_col = value
+            iterator = QtWidgets.QTreeWidgetItemIterator(self.EOI)
+            while iterator.value():
+                item = iterator.value()
+                try:
+                    s_ms = float(item.data(start_col, 0))
+                    e_ms = float(item.data(stop_col, 0))
+                    existing_eois.append([s_ms, e_ms])
+                except Exception:
+                    pass
+                iterator += 1
+        except Exception:
+            existing_eois = []
+
+        if len(existing_eois) > 0:
+            # Classify existing EOIs
+            from core.Detector import dl_classify_segments
+            probs, labels = dl_classify_segments(
+                raw_data, Fs, existing_eois,
+                model_path=self.dl_model_path,
+                threshold=self.dl_threshold,
+                batch_size=self.dl_batch_size
+            )
+
+            # Populate scores tree with classification results
+            for idx, eoi in enumerate(existing_eois):
+                new_item = TreeWidgetItem()
+                id_val = self.createID('Deep Learning')
+                self.IDs.append(id_val)
+
+                for key, value in self.score_headers.items():
+                    if 'ID' in key:
+                        new_item.setText(value, id_val)
+                    elif 'Score:' in key:
+                        # Map positive/negative to Ripple/Artifact; adjust as needed
+                        lbl = labels[idx] if idx < len(labels) else 'unknown'
+                        new_item.setText(value, 'Ripple' if lbl == 'positive' else 'Artifact')
+                    elif 'Start' in key:
+                        new_item.setText(value, str(eoi[0]))
+                    elif 'Stop' in key:
+                        new_item.setText(value, str(eoi[1]))
+                    elif 'Settings File' in key:
+                        new_item.setText(value, getattr(self, 'settings_fname', 'N/A'))
+                    elif 'Scorer' in key:
+                        # Store probability in scorer field for quick review
+                        p = probs[idx] if idx < len(probs) else 0.0
+                        new_item.setText(value, f"DL(p={p:.3f})")
+                self.scores.addTopLevelItem(new_item)
+            return
+        else:
+            # No EOIs present; run DL detection as a fallback
+            from core.Detector import dl_detect_events
+            EOIs = dl_detect_events(
+                raw_data, Fs,
+                model_path=self.dl_model_path,
+                threshold=self.dl_threshold,
+                batch_size=self.dl_batch_size
+            )
+            _process_detection_results(self, EOIs)
+
+    except Exception as e:
+        print(f'Error during Deep Learning detection/classification: {e}')
+        import traceback
+        traceback.print_exc()
+
+
+def _process_detection_results(self, EOIs):
+    """Helper to populate the EOI tree with detection results."""
+    if EOIs is None or len(EOIs) == 0:
+        print('No EOIs were found!')
+        return
+
+    self.events_detected.setText(str(len(EOIs)))
+
+    for key, value in self.EOI_headers.items():
+        if 'ID' in key:
+            ID_value = value
+        elif 'Start' in key:
+            start_value = value
+        elif 'Stop' in key:
+            stop_value = value
+        elif 'Settings' in key:
+            settings_value = value
+
+    for EOI in EOIs:
+        EOI_item = TreeWidgetItem()
+
+        new_id = self.createID(self.eoi_method.currentText())
+        self.IDs.append(new_id)
+        EOI_item.setText(ID_value, new_id)
+        EOI_item.setText(start_value, str(EOI[0]))
+        EOI_item.setText(stop_value, str(EOI[1]))
+        EOI_item.setText(settings_value, getattr(self, 'settings_fname', 'N/A'))
+
+        self.AddItemSignal.childAdded.emit(EOI_item)
+
+
+def _save_generic_settings(self, method_tag, settings_dict):
+    """Helper to save settings for generic detectors."""
+    try:
+        session_path, set_filename = os.path.split(self.mainWindow.current_set_filename)
+        session = os.path.splitext(set_filename)[0]
+        hfo_path = os.path.join(session_path, 'HFOScores', session)
+
+        if not os.path.exists(hfo_path):
+            os.makedirs(hfo_path)
+
+        settings_name = '%s_%s_settings' % (session, method_tag)
+        existing_settings_files = [os.path.join(hfo_path, file) for file in os.listdir(hfo_path) if settings_name in file]
+
+        if len(existing_settings_files) >= 1:
+            match = False
+            for file in existing_settings_files:
+                with open(file, 'r+') as f:
+                    file_settings = json.load(f)
+                    if len(file_settings.items() & settings_dict.items()) == len(file_settings.items()):
+                        match = True
+                        self.settings_fname = file
+                        break
+            if not match:
+                version = len(existing_settings_files) + 1
+                self.settings_fname = os.path.join(hfo_path, '%s_%d.txt' % (settings_name, version))
+                with open(self.settings_fname, 'w') as f:
+                    json.dump(settings_dict, f)
+        else:
+            self.settings_fname = os.path.join(hfo_path, '%s.txt' % (settings_name))
+            with open(self.settings_fname, 'w') as f:
+                json.dump(settings_dict, f)
+    except Exception as e:
+        print(f"Could not save settings: {e}")
+        self.settings_fname = 'N/A'
 
 
 def _ensure_dir(path):
@@ -2234,6 +2983,187 @@ class PyHFOParametersWindow(QtWidgets.QWidget):
             pass
 
     def close_app(self):
+        self.close()
+
+
+class STEParametersWindow(QtWidgets.QWidget):
+    def __init__(self, main, score):
+        super(STEParametersWindow, self).__init__()
+        self.mainWindow = main
+        self.scoreWindow = score
+        self.setWindowTitle("STE Detection Parameters")
+
+        layout = QtWidgets.QFormLayout()
+
+        self.threshold_edit = QtWidgets.QLineEdit("3.0")
+        self.window_size_edit = QtWidgets.QLineEdit("0.01")
+        self.overlap_edit = QtWidgets.QLineEdit("0.5")
+        self.min_freq_edit = QtWidgets.QLineEdit("80.0")
+        self.max_freq_edit = QtWidgets.QLineEdit("500.0")
+
+        layout.addRow("Threshold (RMS):", self.threshold_edit)
+        layout.addRow("Window Size (s):", self.window_size_edit)
+        layout.addRow("Overlap (0-1):", self.overlap_edit)
+        layout.addRow("Min Frequency (Hz):", self.min_freq_edit)
+        layout.addRow("Max Frequency (Hz):", self.max_freq_edit)
+
+        self.analyze_btn = QtWidgets.QPushButton("Analyze")
+        self.analyze_btn.clicked.connect(self.analyze)
+        layout.addRow(self.analyze_btn)
+
+        self.setLayout(layout)
+        center(self)
+        self.show()
+
+    def analyze(self):
+        try:
+            self.scoreWindow.ste_threshold = float(self.threshold_edit.text())
+            self.scoreWindow.ste_window_size = float(self.window_size_edit.text())
+            self.scoreWindow.ste_overlap = float(self.overlap_edit.text())
+            self.scoreWindow.ste_min_freq = float(self.min_freq_edit.text())
+            self.scoreWindow.ste_max_freq = float(self.max_freq_edit.text())
+        except ValueError:
+            QtWidgets.QMessageBox.warning(self, "Invalid Input", "Please enter valid numeric values.")
+            return
+
+        settings = {
+            'threshold': self.scoreWindow.ste_threshold,
+            'window_size': self.scoreWindow.ste_window_size,
+            'overlap': self.scoreWindow.ste_overlap,
+            'min_freq': self.scoreWindow.ste_min_freq,
+            'max_freq': self.scoreWindow.ste_max_freq
+        }
+        _save_generic_settings(self.scoreWindow, 'STE', settings)
+
+        if self.scoreWindow.ste_thread.isRunning():
+            self.scoreWindow.ste_thread.quit()
+            self.scoreWindow.ste_thread.wait()
+
+        self.scoreWindow.ste_thread.start()
+        self.scoreWindow.ste_thread_worker = Worker(STEDetection, self.scoreWindow)
+        self.scoreWindow.ste_thread_worker.moveToThread(self.scoreWindow.ste_thread)
+        self.scoreWindow.ste_thread_worker.start.emit("start")
+        self.close()
+
+
+class MNIParametersWindow(QtWidgets.QWidget):
+    def __init__(self, main, score):
+        super(MNIParametersWindow, self).__init__()
+        self.mainWindow = main
+        self.scoreWindow = score
+        self.setWindowTitle("MNI Detection Parameters")
+
+        layout = QtWidgets.QFormLayout()
+
+        self.baseline_edit = QtWidgets.QLineEdit("10.0")
+        self.percentile_edit = QtWidgets.QLineEdit("99.0")
+        self.min_freq_edit = QtWidgets.QLineEdit("80.0")
+
+        layout.addRow("Baseline Window (s):", self.baseline_edit)
+        layout.addRow("Threshold Percentile:", self.percentile_edit)
+        layout.addRow("Min Frequency (Hz):", self.min_freq_edit)
+
+        self.analyze_btn = QtWidgets.QPushButton("Analyze")
+        self.analyze_btn.clicked.connect(self.analyze)
+        layout.addRow(self.analyze_btn)
+
+        self.setLayout(layout)
+        center(self)
+        self.show()
+
+    def analyze(self):
+        try:
+            self.scoreWindow.mni_baseline_window = float(self.baseline_edit.text())
+            self.scoreWindow.mni_threshold_percentile = float(self.percentile_edit.text())
+            self.scoreWindow.mni_min_freq = float(self.min_freq_edit.text())
+        except ValueError:
+            QtWidgets.QMessageBox.warning(self, "Invalid Input", "Please enter valid numeric values.")
+            return
+
+        settings = {
+            'baseline_window': self.scoreWindow.mni_baseline_window,
+            'threshold_percentile': self.scoreWindow.mni_threshold_percentile,
+            'min_freq': self.scoreWindow.mni_min_freq
+        }
+        _save_generic_settings(self.scoreWindow, 'MNI', settings)
+
+        if self.scoreWindow.mni_thread.isRunning():
+            self.scoreWindow.mni_thread.quit()
+            self.scoreWindow.mni_thread.wait()
+
+        self.scoreWindow.mni_thread.start()
+        self.scoreWindow.mni_thread_worker = Worker(MNIDetection, self.scoreWindow)
+        self.scoreWindow.mni_thread_worker.moveToThread(self.scoreWindow.mni_thread)
+        self.scoreWindow.mni_thread_worker.start.emit("start")
+        self.close()
+
+
+class DLParametersWindow(QtWidgets.QWidget):
+    def __init__(self, main, score):
+        super(DLParametersWindow, self).__init__()
+        self.mainWindow = main
+        self.scoreWindow = score
+        self.setWindowTitle("Deep Learning Detection Parameters")
+
+        layout = QtWidgets.QFormLayout()
+
+        self.model_path_edit = QtWidgets.QLineEdit()
+        self.browse_btn = QtWidgets.QPushButton("Browse...")
+        self.browse_btn.clicked.connect(self.browse_model)
+        
+        path_layout = QtWidgets.QHBoxLayout()
+        path_layout.addWidget(self.model_path_edit)
+        path_layout.addWidget(self.browse_btn)
+
+        self.threshold_edit = QtWidgets.QLineEdit("0.5")
+        self.batch_size_edit = QtWidgets.QLineEdit("32")
+
+        layout.addRow("Model Path:", path_layout)
+        layout.addRow("Threshold (Prob):", self.threshold_edit)
+        layout.addRow("Batch Size:", self.batch_size_edit)
+
+        self.analyze_btn = QtWidgets.QPushButton("Classify EOIs")
+        self.analyze_btn.clicked.connect(self.analyze)
+        layout.addRow(self.analyze_btn)
+
+        self.setLayout(layout)
+        center(self)
+        self.show()
+
+    def browse_model(self):
+        fname, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select Model File", "", "Model Files (*.h5 *.pt *.onnx *.pkl);;All Files (*)")
+        if fname:
+            self.model_path_edit.setText(fname)
+
+    def analyze(self):
+        model_path = self.model_path_edit.text()
+        if not model_path or not os.path.exists(model_path):
+            QtWidgets.QMessageBox.warning(self, "Invalid Model", "Please select a valid model file.")
+            return
+
+        try:
+            self.scoreWindow.dl_model_path = model_path
+            self.scoreWindow.dl_threshold = float(self.threshold_edit.text())
+            self.scoreWindow.dl_batch_size = int(self.batch_size_edit.text())
+        except ValueError:
+            QtWidgets.QMessageBox.warning(self, "Invalid Input", "Please enter valid numeric values.")
+            return
+
+        settings = {
+            'model_path': self.scoreWindow.dl_model_path,
+            'threshold': self.scoreWindow.dl_threshold,
+            'batch_size': self.scoreWindow.dl_batch_size
+        }
+        _save_generic_settings(self.scoreWindow, 'DL', settings)
+
+        if self.scoreWindow.dl_thread.isRunning():
+            self.scoreWindow.dl_thread.quit()
+            self.scoreWindow.dl_thread.wait()
+
+        self.scoreWindow.dl_thread.start()
+        self.scoreWindow.dl_thread_worker = Worker(DLDetection, self.scoreWindow)
+        self.scoreWindow.dl_thread_worker.moveToThread(self.scoreWindow.dl_thread)
+        self.scoreWindow.dl_thread_worker.start.emit("start")
         self.close()
 
 
