@@ -6,7 +6,7 @@ import pandas as pd
 from pathlib import Path
 
 
-def export_eois_for_training(signal, fs, eois_ms, out_dir, prefix="seg"):
+def export_eois_for_training(signal, fs, eois_ms, out_dir, prefix="seg", metadata=None):
     """
     Extract EOI segments from a signal and write to .npy files with a manifest.
 
@@ -16,6 +16,7 @@ def export_eois_for_training(signal, fs, eois_ms, out_dir, prefix="seg"):
         eois_ms: Nx2 array/list of [start_ms, end_ms].
         out_dir: Output directory (will be created).
         prefix: Prefix for segment filenames.
+        metadata: Optional list of dicts (same length as eois_ms) merged into the manifest rows.
 
     Returns:
         Path to the manifest CSV.
@@ -26,7 +27,9 @@ def export_eois_for_training(signal, fs, eois_ms, out_dir, prefix="seg"):
     out_dir.mkdir(parents=True, exist_ok=True)
 
     rows = []
-    for idx, (s_ms, e_ms) in enumerate(eois_ms):
+    meta = metadata if metadata is not None else [None] * len(eois_ms)
+
+    for idx, ((s_ms, e_ms), extra) in enumerate(zip(eois_ms, meta)):
         s = int(float(s_ms) * fs / 1000.0)
         e = int(float(e_ms) * fs / 1000.0)
         s = max(0, s)
@@ -36,7 +39,10 @@ def export_eois_for_training(signal, fs, eois_ms, out_dir, prefix="seg"):
         seg = signal[s:e].astype(np.float32)
         seg_path = out_dir / f"{prefix}_{idx:05d}.npy"
         np.save(seg_path, seg)
-        rows.append({"segment_path": str(seg_path), "label": None})
+        row = {"segment_path": str(seg_path), "label": None}
+        if isinstance(extra, dict):
+            row.update(extra)
+        rows.append(row)
 
     manifest_path = out_dir / "manifest.csv"
     pd.DataFrame(rows).to_csv(manifest_path, index=False)

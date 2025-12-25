@@ -1,7 +1,7 @@
 from pyqtgraph.Qt import QtGui, QtCore, QtWidgets
 from core.GUI_Utils import background, center, find_consec
 import os, time, json, functools, sys
-from scipy.signal import hilbert
+from scipy.signal import hilbert, welch
 import numpy as np
 from core.Tint_Matlab import detect_peaks
 from core.GUI_Utils import Worker
@@ -38,6 +38,11 @@ class custom_signal(QtCore.QObject):
     set_lr_signal = QtCore.pyqtSignal(str, str)
 
 
+class ProgressSignal(QtCore.QObject):
+    """Signal for detection progress updates."""
+    progress = QtCore.pyqtSignal(str)  # Emits status message like "Hilbert: 45%"
+
+
 class ScoreWindow(QtWidgets.QWidget):
     '''This is the window that will pop up to score the '''
 
@@ -52,9 +57,17 @@ class ScoreWindow(QtWidgets.QWidget):
         self.customSignals = custom_signal()
         self.customSignals.set_lr_signal.connect(self.mainWindow.set_lr)
 
+        self.progressSignal = ProgressSignal()
+        self.progressSignal.progress.connect(self._on_detection_progress)
+
         self.settingsWindow = settings
 
         self.initialize_attributes()
+
+        # Region-specific analysis presets (Phase 1)
+        self.region_presets = self._build_region_presets()
+        self.current_region = 'LEC'
+        self.region_profile = self.region_presets.get(self.current_region, {}).copy()
 
         background(self)
         width = int(self.deskW / 6)
@@ -121,8 +134,15 @@ class ScoreWindow(QtWidgets.QWidget):
 
         self.scores.itemSelectionChanged.connect(functools.partial(self.changeEventText, 'score'))
 
-        self.score_headers = {'ID#:': 0, "Score:": 1, "Start Time(ms):": 2, "Stop Time(ms):": 3, "Scorer:": 4,
-                              "Settings File:": 5}
+        self.score_headers = {
+            'ID#:': 0,
+            'Score:': 1,
+            'Start Time(ms):': 2,
+            'Stop Time(ms):': 3,
+            'Duration(ms):': 4,
+            'Scorer:': 5,
+            'Settings File:': 6,
+        }
 
         for key, value in self.score_headers.items():
             self.scores.headerItem().setText(value, key)
@@ -243,11 +263,28 @@ class ScoreWindow(QtWidgets.QWidget):
         for method in methods:
             self.eoi_method.addItem(method)
 
+        region_label = QtWidgets.QLabel("Brain Region:")
+        self.region_selector = QtWidgets.QComboBox()
+        for region_name in self.region_presets.keys():
+            self.region_selector.addItem(region_name)
+        self.region_selector.setCurrentText(self.current_region)
+        self.region_selector.currentTextChanged.connect(self._on_region_changed)
+
+        self.apply_region_btn = QtWidgets.QPushButton("Apply Region Preset")
+        self.apply_region_btn.setToolTip("Load region-specific defaults (bands, durations, behavioral gating, DL export filters).")
+        self.apply_region_btn.clicked.connect(self.applyRegionPreset)
+
+        region_layout = QtWidgets.QHBoxLayout()
+        region_layout.addWidget(region_label)
+        region_layout.addWidget(self.region_selector)
+        region_layout.addWidget(self.apply_region_btn)
+
         eoi_method_layout = QtWidgets.QHBoxLayout()
         eoi_method_layout.addWidget(eoi_method_label)
         eoi_method_layout.addWidget(self.eoi_method)
 
         eoi_parameter_layout = QtWidgets.QHBoxLayout()
+        eoi_parameter_layout.addLayout(region_layout)
         eoi_parameter_layout.addLayout(eoi_method_layout)
         eoi_parameter_layout.addLayout(events_detected_layout)
 
@@ -255,7 +292,13 @@ class ScoreWindow(QtWidgets.QWidget):
         self.EOI.setSortingEnabled(True)
         self.EOI.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.EOI.customContextMenuRequested.connect(functools.partial(self.openMenu, 'EOI'))
-        self.EOI_headers = {'ID#:': 0, "Start Time(ms):": 1, "Stop Time(ms):": 2, 'Settings File:': 3}
+        self.EOI_headers = {
+            'ID#:': 0,
+            'Start Time(ms):': 1,
+            'Stop Time(ms):': 2,
+            'Duration(ms):': 3,
+            'Settings File:': 4,
+        }
 
         for key, value in self.EOI_headers.items():
             self.EOI.headerItem().setText(value, key)
@@ -607,6 +650,300 @@ class ScoreWindow(QtWidgets.QWidget):
         self.IDs = []
         self.train_process = None
         self.export_process = None
+
+    def _on_detection_progress(self, message):
+        """Handle detection progress updates; print to console."""
+        print(f"[Detection] {message}")
+
+    def _build_region_presets(self):
+        """Define region-specific defaults for banding, durations, and export gating."""
+        return {
+            'LEC': {
+                'bands': {
+                    'ripple': [80, 250],
+                    'fast_ripple': [250, 500],
+                    'gamma': [30, 80],
+                },
+                'durations': {
+                    'ripple_min_ms': 15,
+                    'ripple_max_ms': 120,
+                    'fast_min_ms': 10,
+                    'fast_max_ms': 80,
+                },
+                'threshold_sd': 3.5,
+                'epoch_s': 300,
+                'behavior_gating': True,
+                'speed_threshold_cm_s': 5.0,
+                'dl_export': {
+                    'filter_by_duration': True,
+                    'annotate_band': True,
+                    'behavior_gating': True,
+                },
+            },
+            'Hippocampus': {
+                'bands': {
+                    'ripple': [100, 250],
+                    'fast_ripple': [250, 500],
+                    'gamma': [30, 80],
+                },
+                'durations': {
+                    'ripple_min_ms': 15,
+                    'ripple_max_ms': 120,
+                    'fast_min_ms': 10,
+                    'fast_max_ms': 80,
+                },
+                'threshold_sd': 4.0,
+                'epoch_s': 300,
+                'behavior_gating': True,
+                'speed_threshold_cm_s': 5.0,
+                'dl_export': {
+                    'filter_by_duration': True,
+                    'annotate_band': True,
+                    'behavior_gating': True,
+                },
+            },
+            'MEC': {
+                'bands': {
+                    'ripple': [80, 200],
+                    'fast_ripple': [200, 500],
+                    'gamma': [30, 80],
+                },
+                'durations': {
+                    'ripple_min_ms': 15,
+                    'ripple_max_ms': 120,
+                    'fast_min_ms': 10,
+                    'fast_max_ms': 80,
+                },
+                'threshold_sd': 3.5,
+                'epoch_s': 300,
+                'behavior_gating': True,
+                'speed_threshold_cm_s': 5.0,
+                'dl_export': {
+                    'filter_by_duration': True,
+                    'annotate_band': True,
+                    'behavior_gating': True,
+                },
+            },
+        }
+
+    def _on_region_changed(self, region_name):
+        self.current_region = region_name
+
+    def applyRegionPreset(self):
+        profile = self.region_presets.get(self.current_region, {}).copy()
+        if not profile:
+            QtWidgets.QMessageBox.warning(self, "Preset Missing", f"No preset found for region: {self.current_region}")
+            return
+
+        self.region_profile = profile
+        self._update_hilbert_params_from_profile(profile)
+        self._update_ste_params_from_profile(profile)
+        self._update_mni_params_from_profile(profile)
+        self._update_consensus_params_from_profile(profile)
+        QtWidgets.QMessageBox.information(
+            self,
+            "Region Preset Applied",
+            f"Applied preset for {self.current_region}.\n"
+            "Detector defaults updated; export will include duration and speed annotations.")
+
+    def _update_hilbert_params_from_profile(self, profile):
+        """Persist hilbert parameter defaults according to the region preset."""
+        try:
+            settings_file = os.path.join(self.mainWindow.SETTINGS_DIR, 'hilbert_params.json')
+            bands = profile.get('bands', {})
+            durations = profile.get('durations', {})
+            params = {
+                'Epoch(s):': str(profile.get('epoch_s', 300)),
+                'Threshold(SD):': str(profile.get('threshold_sd', 3.5)),
+                'Minimum Time(ms):': str(durations.get('ripple_min_ms', 10)),
+                'Min Frequency(Hz):': str(bands.get('ripple', [80, 250])[0]),
+                'Max Frequency(Hz):': str(bands.get('ripple', [80, 250])[1]),
+                'Required Peaks:': '6',
+                'Required Peak Threshold(SD):': '2',
+                'Boundary Threshold(Percent)': '30',
+            }
+            with open(settings_file, 'w') as f:
+                json.dump(params, f)
+        except Exception:
+            pass
+
+    def _update_ste_params_from_profile(self, profile):
+        try:
+            settings_file = os.path.join(self.mainWindow.SETTINGS_DIR, 'ste_params.json')
+            bands = profile.get('bands', {})
+            params = {
+                'threshold': 2.5,
+                'window_size': 0.01,
+                'overlap': 0.5,
+                'min_freq': bands.get('ripple', [80, 250])[0],
+                'max_freq': bands.get('fast_ripple', [250, 500])[1],
+            }
+            with open(settings_file, 'w') as f:
+                json.dump(params, f)
+        except Exception:
+            pass
+
+    def _update_mni_params_from_profile(self, profile):
+        try:
+            settings_file = os.path.join(self.mainWindow.SETTINGS_DIR, 'mni_params.json')
+            bands = profile.get('bands', {})
+            params = {
+                'baseline_window': 10.0,
+                'threshold_percentile': 98.0,
+                'min_freq': bands.get('ripple', [80, 250])[0],
+                'max_freq': bands.get('fast_ripple', [250, 500])[1],
+            }
+            with open(settings_file, 'w') as f:
+                json.dump(params, f)
+        except Exception:
+            pass
+
+    def _update_consensus_params_from_profile(self, profile):
+        try:
+            settings_file = os.path.join(self.mainWindow.SETTINGS_DIR, 'consensus_params.json')
+            bands = profile.get('bands', {})
+            params = {
+                'voting_strategy': 'majority',
+                'overlap_ms': 10.0,
+                'hilbert_epoch': profile.get('epoch_s', 300),
+                'hilbert_sd_num': profile.get('threshold_sd', 3.5),
+                'hilbert_min_duration': profile.get('durations', {}).get('ripple_min_ms', 10),
+                'hilbert_min_freq': bands.get('ripple', [80, 250])[0],
+                'hilbert_max_freq': bands.get('fast_ripple', [250, 500])[1],
+                'hilbert_required_peaks': 6,
+                'hilbert_peak_sd': 2.0,
+                'ste_threshold': 2.5,
+                'ste_window_size': 0.01,
+                'ste_overlap': 0.5,
+                'ste_min_freq': bands.get('ripple', [80, 250])[0],
+                'ste_max_freq': bands.get('fast_ripple', [250, 500])[1],
+                'mni_baseline_window': 10.0,
+                'mni_threshold_percentile': 98.0,
+                'mni_min_freq': bands.get('ripple', [80, 250])[0],
+                'mni_max_freq': bands.get('fast_ripple', [250, 500])[1],
+            }
+            with open(settings_file, 'w') as f:
+                json.dump(params, f)
+        except Exception:
+            pass
+
+    def _get_speed_signal(self):
+        """Return (speed_trace, fs_speed) if a .pos-derived speed source is loaded."""
+        try:
+            for key, value in self.settingsWindow.loaded_sources.items():
+                if key.endswith('.pos') or 'Speed' in key:
+                    if isinstance(value, (list, tuple)) and len(value) >= 2:
+                        speed = np.asarray(value[0]).flatten()
+                        fs_speed = value[1]
+                        return speed, fs_speed
+        except Exception:
+            return None
+        return None
+
+    def _filter_and_annotate_eois_for_export(self, eois, profile):
+        """Annotate EOIs with band label (PSD-dominant; duration fallback) and behavioral state.
+
+        Labeling priority:
+        1) PSD-based: compare ripple vs fast ripple band power; choose dominant.
+        2) If band powers within 10% (ambiguous), fall back to duration thresholds.
+        3) If duration also ambiguous, label as 'ripple_fast_ripple'.
+        """
+        durations = profile.get('durations', {})
+        r_min = durations.get('ripple_min_ms', 0)
+        r_max = durations.get('ripple_max_ms', np.inf)
+        fr_min = durations.get('fast_min_ms', 0)
+        fr_max = durations.get('fast_max_ms', np.inf)
+        bands = profile.get('bands', {})
+        ripple_band = bands.get('ripple', [80, 250])
+        fast_band = bands.get('fast_ripple', [250, 500])
+        speed_threshold = profile.get('speed_threshold_cm_s', 5.0)
+        do_behavior = profile.get('behavior_gating', False)
+        export_opts = profile.get('dl_export', {})
+        filter_by_duration = export_opts.get('filter_by_duration', True)
+
+        speed_signal = self._get_speed_signal() if do_behavior else None
+
+        # Access raw data and sampling rate for PSD
+        try:
+            raw_data, Fs = self.settingsWindow.loaded_sources[self.source_filename]
+            raw_data = np.asarray(raw_data).flatten()
+        except Exception:
+            raw_data, Fs = None, None
+
+        filtered = []
+        metadata = []
+        for s_ms, e_ms in eois:
+            try:
+                s_ms = float(s_ms)
+                e_ms = float(e_ms)
+            except Exception:
+                continue
+            duration = e_ms - s_ms
+            if duration <= 0:
+                continue
+
+            band_label = 'ripple_fast_ripple'  # default ambiguous
+
+            # PSD-based classification when raw_data is available
+            psd_decided = False
+            if raw_data is not None and Fs is not None:
+                s_idx_sig = int(max(0, np.floor(s_ms / 1000 * Fs)))
+                e_idx_sig = int(min(len(raw_data), np.ceil(e_ms / 1000 * Fs)))
+                if e_idx_sig > s_idx_sig:
+                    seg = raw_data[s_idx_sig:e_idx_sig]
+                    try:
+                        nper = int(min(1024, max(64, len(seg))))
+                        f, Pxx = welch(seg, fs=Fs, nperseg=nper, noverlap=nper//2, scaling='density')
+                        rp_lo, rp_hi = float(ripple_band[0]), float(ripple_band[1])
+                        fr_lo, fr_hi = float(fast_band[0]), float(fast_band[1])
+                        rp_mask = (f >= rp_lo) & (f < rp_hi)
+                        fr_mask = (f >= fr_lo) & (f < fr_hi)
+                        ripple_power = float(np.nansum(Pxx[rp_mask])) if np.any(rp_mask) else 0.0
+                        fast_power = float(np.nansum(Pxx[fr_mask])) if np.any(fr_mask) else 0.0
+                        max_power = max(ripple_power, fast_power)
+                        if max_power > 0:
+                            rel_diff = abs(ripple_power - fast_power) / max_power
+                            if rel_diff > 0.10:
+                                band_label = 'ripple' if ripple_power > fast_power else 'fast_ripple'
+                                psd_decided = True
+                    except Exception:
+                        psd_decided = False
+
+            if not psd_decided:
+                # Duration fallback
+                if r_min <= duration <= r_max:
+                    band_label = 'ripple'
+                elif fr_min <= duration <= fr_max:
+                    band_label = 'fast_ripple'
+                else:
+                    band_label = 'ripple_fast_ripple'
+
+            # If strict duration filtering requested and duration is outside all ranges, drop
+            if filter_by_duration and not (r_min <= duration <= r_max or fr_min <= duration <= fr_max):
+                # Only drop if user enforces duration filter; keep ambiguous labels otherwise
+                continue
+
+            state = 'unknown'
+            mean_speed = None
+            if speed_signal is not None:
+                speed_trace, fs_speed = speed_signal
+                s_idx = int(max(0, np.floor(s_ms / 1000 * fs_speed)))
+                e_idx = int(min(len(speed_trace), np.ceil(e_ms / 1000 * fs_speed)))
+                if e_idx > s_idx:
+                    seg_speed = speed_trace[s_idx:e_idx]
+                    if seg_speed.size > 0:
+                        mean_speed = float(np.nanmean(seg_speed))
+                        state = 'rest' if mean_speed < speed_threshold else 'active'
+
+            filtered.append([s_ms, e_ms])
+            metadata.append({
+                'band_label': band_label,
+                'duration_ms': duration,
+                'state': state,
+                'mean_speed_cm_s': mean_speed,
+            })
+
+        return filtered, metadata
 
     def openSettings(self, index, source):
 
@@ -1392,13 +1729,21 @@ class ScoreWindow(QtWidgets.QWidget):
                 QtWidgets.QMessageBox.warning(self, "No Valid EOIs", "Could not extract EOI times.")
                 return
 
+            # Apply region-aware filtering and annotation
+            metadata_rows = None
+            if hasattr(self, 'region_profile') and self.region_profile:
+                eois, metadata_rows = self._filter_and_annotate_eois_for_export(np.asarray(eois), self.region_profile)
+                if not eois:
+                    QtWidgets.QMessageBox.warning(self, "No EOIs After Filters", "All EOIs were excluded by duration/behavior filters.")
+                    return
+
             # Get signal
             raw_data, Fs = self.settingsWindow.loaded_sources[self.source_filename]
             raw_data = np.asarray(raw_data, dtype=np.float32)
 
-            # Export
+            # Export with annotations
             from core.eoi_exporter import export_eois_for_training
-            manifest_path = export_eois_for_training(raw_data, Fs, np.asarray(eois), out_dir)
+            manifest_path = export_eois_for_training(raw_data, Fs, np.asarray(eois), out_dir, metadata=metadata_rows)
 
             QtWidgets.QMessageBox.information(
                 self, "Export Complete",
@@ -1927,8 +2272,10 @@ def HilbertDetection(self):
         if not os.path.exists(self.source_filename):
             return
 
+        self.progressSignal.progress.emit("Hilbert: 10% - Loading data")
         raw_data, Fs = self.settingsWindow.loaded_sources[self.source_filename]
 
+        self.progressSignal.progress.emit("Hilbert: 30% - Running detection")
         EOIs = hilbert_detect_events(
             raw_data,
             Fs,
@@ -1944,8 +2291,10 @@ def HilbertDetection(self):
 
         if EOIs is None or len(EOIs) == 0:
             print('No EOIs were found!')
+            self.progressSignal.progress.emit("Hilbert: Complete - 0 events")
             return
 
+        self.progressSignal.progress.emit(f"Hilbert: 70% - Found {len(EOIs)} events")
         self.events_detected.setText(str(len(EOIs)))
 
         for key, value in self.EOI_headers.items():
@@ -1969,11 +2318,14 @@ def HilbertDetection(self):
             EOI_item.setText(settings_value, self.settings_fname)
 
             self.AddItemSignal.childAdded.emit(EOI_item)
+        self.progressSignal.progress.emit("Hilbert: 100% - Complete")
     except KeyboardInterrupt:
         print('Hilbert detection was interrupted by user')
+        self.progressSignal.progress.emit("Hilbert: Cancelled by user")
         return
     except Exception as e:
         print(f'Error during Hilbert detection: {e}')
+        self.progressSignal.progress.emit(f"Hilbert: Error - {e}")
         import traceback
         traceback.print_exc()
         return
@@ -2152,8 +2504,10 @@ def STEDetection(self):
         if not hasattr(self, 'source_filename') or not os.path.exists(self.source_filename):
             return
 
+        self.progressSignal.progress.emit("STE: 10% - Loading data")
         raw_data, Fs = self.settingsWindow.loaded_sources[self.source_filename]
 
+        self.progressSignal.progress.emit("STE: 30% - Running detection")
         EOIs = ste_detect_events(
             raw_data, Fs,
             threshold=self.ste_threshold,
@@ -2163,10 +2517,13 @@ def STEDetection(self):
             max_freq=self.ste_max_freq
         )
 
+        self.progressSignal.progress.emit(f"STE: 70% - Found {len(EOIs) if EOIs is not None and len(EOIs) > 0 else 0} events")
         _process_detection_results(self, EOIs)
+        self.progressSignal.progress.emit("STE: 100% - Complete")
 
     except Exception as e:
         print(f'Error during STE detection: {e}')
+        self.progressSignal.progress.emit(f"STE: Error - {e}")
         import traceback
         traceback.print_exc()
 
@@ -2176,8 +2533,10 @@ def MNIDetection(self):
         if not hasattr(self, 'source_filename') or not os.path.exists(self.source_filename):
             return
 
+        self.progressSignal.progress.emit("MNI: 10% - Loading data")
         raw_data, Fs = self.settingsWindow.loaded_sources[self.source_filename]
 
+        self.progressSignal.progress.emit("MNI: 30% - Running detection")
         EOIs = mni_detect_events(
             raw_data, Fs,
             baseline_window=self.mni_baseline_window,
@@ -2185,10 +2544,13 @@ def MNIDetection(self):
             min_freq=self.mni_min_freq
         )
 
+        self.progressSignal.progress.emit(f"MNI: 70% - Found {len(EOIs) if EOIs is not None and len(EOIs) > 0 else 0} events")
         _process_detection_results(self, EOIs)
+        self.progressSignal.progress.emit("MNI: 100% - Complete")
 
     except Exception as e:
         print(f'Error during MNI detection: {e}')
+        self.progressSignal.progress.emit(f"MNI: Error - {e}")
         import traceback
         traceback.print_exc()
 
@@ -2198,6 +2560,7 @@ def DLDetection(self):
         if not hasattr(self, 'source_filename') or not os.path.exists(self.source_filename):
             return
 
+        self.progressSignal.progress.emit("DL: 10% - Loading data")
         raw_data, Fs = self.settingsWindow.loaded_sources[self.source_filename]
 
         # If EOIs already exist, perform classification of those EOIs; otherwise run DL detection.
@@ -2223,6 +2586,7 @@ def DLDetection(self):
 
         if len(existing_eois) > 0:
             # Classify existing EOIs
+            self.progressSignal.progress.emit(f"DL: 30% - Classifying {len(existing_eois)} EOIs")
             from core.Detector import dl_classify_segments
             probs, labels = dl_classify_segments(
                 raw_data, Fs, existing_eois,
@@ -2232,6 +2596,7 @@ def DLDetection(self):
             )
 
             # Populate scores tree with classification results
+            self.progressSignal.progress.emit("DL: 70% - Populating results")
             for idx, eoi in enumerate(existing_eois):
                 new_item = TreeWidgetItem()
                 id_val = self.createID('Deep Learning')
@@ -2248,6 +2613,12 @@ def DLDetection(self):
                         new_item.setText(value, str(eoi[0]))
                     elif 'Stop' in key:
                         new_item.setText(value, str(eoi[1]))
+                    elif 'Duration' in key:
+                        try:
+                            d_ms = float(eoi[1]) - float(eoi[0])
+                            new_item.setText(value, f"{d_ms:.3f}")
+                        except Exception:
+                            new_item.setText(value, "")
                     elif 'Settings File' in key:
                         new_item.setText(value, getattr(self, 'settings_fname', 'N/A'))
                     elif 'Scorer' in key:
@@ -2255,9 +2626,11 @@ def DLDetection(self):
                         p = probs[idx] if idx < len(probs) else 0.0
                         new_item.setText(value, f"DL(p={p:.3f})")
                 self.scores.addTopLevelItem(new_item)
+            self.progressSignal.progress.emit("DL: 100% - Complete")
             return
         else:
             # No EOIs present; run DL detection as a fallback
+            self.progressSignal.progress.emit("DL: 30% - Running detection")
             from core.Detector import dl_detect_events
             EOIs = dl_detect_events(
                 raw_data, Fs,
@@ -2265,9 +2638,15 @@ def DLDetection(self):
                 threshold=self.dl_threshold,
                 batch_size=self.dl_batch_size
             )
+            if EOIs is None or len(EOIs) == 0:
+                self.progressSignal.progress.emit("DL: Complete - 0 events")
+            else:
+                self.progressSignal.progress.emit(f"DL: 70% - Found {len(EOIs)} events")
             _process_detection_results(self, EOIs)
+            self.progressSignal.progress.emit("DL: 100% - Complete")
 
     except Exception as e:
+        self.progressSignal.progress.emit(f"DL: Error - {e}")
         print(f'Error during Deep Learning detection/classification: {e}')
         import traceback
         traceback.print_exc()
@@ -2279,8 +2658,10 @@ def ConsensusDetection(self):
         if not hasattr(self, 'source_filename') or not os.path.exists(self.source_filename):
             return
 
+        self.progressSignal.progress.emit("Consensus: 10% - Loading data")
         raw_data, Fs = self.settingsWindow.loaded_sources[self.source_filename]
 
+        self.progressSignal.progress.emit("Consensus: 30% - Building parameters")
         # Build parameter dicts
         hilbert_params = {
             'epoch': self.hilbert_epoch,
@@ -2310,6 +2691,7 @@ def ConsensusDetection(self):
 
         # Run consensus
         from core.Detector import consensus_detect_events
+        self.progressSignal.progress.emit("Consensus: 50% - Running detectors")
         EOIs = consensus_detect_events(
             raw_data, Fs,
             hilbert_params=hilbert_params,
@@ -2319,9 +2701,16 @@ def ConsensusDetection(self):
             overlap_threshold_ms=getattr(self, 'consensus_overlap_ms', 10.0)
         )
 
+        if EOIs is None or len(EOIs) == 0:
+            self.progressSignal.progress.emit("Consensus: Complete - 0 events")
+        else:
+            self.progressSignal.progress.emit(f"Consensus: 70% - Found {len(EOIs)} events")
+
         _process_detection_results(self, EOIs)
+        self.progressSignal.progress.emit("Consensus: 100% - Complete")
 
     except Exception as e:
+        self.progressSignal.progress.emit(f"Consensus: Error - {e}")
         print(f'Error during Consensus detection: {e}')
         import traceback
         traceback.print_exc()
@@ -2342,6 +2731,8 @@ def _process_detection_results(self, EOIs):
             start_value = value
         elif 'Stop' in key:
             stop_value = value
+        elif 'Duration' in key:
+            duration_value = value
         elif 'Settings' in key:
             settings_value = value
 
@@ -2353,6 +2744,14 @@ def _process_detection_results(self, EOIs):
         EOI_item.setText(ID_value, new_id)
         EOI_item.setText(start_value, str(EOI[0]))
         EOI_item.setText(stop_value, str(EOI[1]))
+        try:
+            dur_ms = float(EOI[1]) - float(EOI[0])
+            if dur_ms > 0:
+                EOI_item.setText(duration_value, f"{dur_ms:.3f}")
+            else:
+                EOI_item.setText(duration_value, "")
+        except Exception:
+            EOI_item.setText(duration_value, "")
         EOI_item.setText(settings_value, getattr(self, 'settings_fname', 'N/A'))
 
         self.AddItemSignal.childAdded.emit(EOI_item)
@@ -3115,11 +3514,12 @@ class STEParametersWindow(QtWidgets.QWidget):
 
         layout = QtWidgets.QFormLayout()
 
-        self.threshold_edit = QtWidgets.QLineEdit("3.0")
-        self.window_size_edit = QtWidgets.QLineEdit("0.01")
-        self.overlap_edit = QtWidgets.QLineEdit("0.5")
-        self.min_freq_edit = QtWidgets.QLineEdit("80.0")
-        self.max_freq_edit = QtWidgets.QLineEdit("500.0")
+        params = self._load_ste_params()
+        self.threshold_edit = QtWidgets.QLineEdit(str(params.get('threshold', 3.0)))
+        self.window_size_edit = QtWidgets.QLineEdit(str(params.get('window_size', 0.01)))
+        self.overlap_edit = QtWidgets.QLineEdit(str(params.get('overlap', 0.5)))
+        self.min_freq_edit = QtWidgets.QLineEdit(str(params.get('min_freq', 80.0)))
+        self.max_freq_edit = QtWidgets.QLineEdit(str(params.get('max_freq', 500.0)))
 
         layout.addRow("Threshold (RMS):", self.threshold_edit)
         layout.addRow("Window Size (s):", self.window_size_edit)
@@ -3134,6 +3534,17 @@ class STEParametersWindow(QtWidgets.QWidget):
         self.setLayout(layout)
         center(self)
         self.show()
+
+    def _load_ste_params(self):
+        import json
+        try:
+            fname = os.path.join(self.scoreWindow.mainWindow.SETTINGS_DIR, 'ste_params.json')
+            if os.path.exists(fname):
+                with open(fname, 'r') as f:
+                    return json.load(f)
+        except Exception:
+            return {}
+        return {}
 
     def analyze(self):
         try:
@@ -3175,9 +3586,10 @@ class MNIParametersWindow(QtWidgets.QWidget):
 
         layout = QtWidgets.QFormLayout()
 
-        self.baseline_edit = QtWidgets.QLineEdit("10.0")
-        self.percentile_edit = QtWidgets.QLineEdit("99.0")
-        self.min_freq_edit = QtWidgets.QLineEdit("80.0")
+        params = self._load_mni_params()
+        self.baseline_edit = QtWidgets.QLineEdit(str(params.get('baseline_window', 10.0)))
+        self.percentile_edit = QtWidgets.QLineEdit(str(params.get('threshold_percentile', 99.0)))
+        self.min_freq_edit = QtWidgets.QLineEdit(str(params.get('min_freq', 80.0)))
 
         layout.addRow("Baseline Window (s):", self.baseline_edit)
         layout.addRow("Threshold Percentile:", self.percentile_edit)
@@ -3190,6 +3602,17 @@ class MNIParametersWindow(QtWidgets.QWidget):
         self.setLayout(layout)
         center(self)
         self.show()
+
+    def _load_mni_params(self):
+        import json
+        try:
+            fname = os.path.join(self.scoreWindow.mainWindow.SETTINGS_DIR, 'mni_params.json')
+            if os.path.exists(fname):
+                with open(fname, 'r') as f:
+                    return json.load(f)
+        except Exception:
+            return {}
+        return {}
 
     def analyze(self):
         try:
@@ -3321,10 +3744,12 @@ class ConsensusParametersWindow(QtWidgets.QWidget):
         voting_layout.addWidget(self.voting_combo)
         layout.addLayout(voting_layout)
 
+        params = self._load_consensus_params()
+
         # Overlap threshold
         overlap_layout = QtWidgets.QHBoxLayout()
         overlap_label = QtWidgets.QLabel("Overlap Threshold (ms):")
-        self.overlap_edit = QtWidgets.QLineEdit("10.0")
+        self.overlap_edit = QtWidgets.QLineEdit(str(params.get('overlap_ms', 10.0)))
         self.overlap_edit.setMaximumWidth(100)
         overlap_layout.addWidget(overlap_label)
         overlap_layout.addWidget(self.overlap_edit)
@@ -3339,13 +3764,13 @@ class ConsensusParametersWindow(QtWidgets.QWidget):
         # Hilbert parameters
         hilbert_group = QtWidgets.QGroupBox("Hilbert Parameters")
         hilbert_form = QtWidgets.QFormLayout()
-        self.hilbert_epoch = QtWidgets.QLineEdit("300.0")
-        self.hilbert_sd = QtWidgets.QLineEdit("3.5")
-        self.hilbert_min_dur = QtWidgets.QLineEdit("10.0")
-        self.hilbert_min_freq = QtWidgets.QLineEdit("80.0")
-        self.hilbert_max_freq = QtWidgets.QLineEdit("500.0")
-        self.hilbert_peaks = QtWidgets.QLineEdit("6")
-        self.hilbert_peak_sd = QtWidgets.QLineEdit("2.0")
+        self.hilbert_epoch = QtWidgets.QLineEdit(str(params.get('hilbert_epoch', 300.0)))
+        self.hilbert_sd = QtWidgets.QLineEdit(str(params.get('hilbert_sd_num', 3.5)))
+        self.hilbert_min_dur = QtWidgets.QLineEdit(str(params.get('hilbert_min_duration', 10.0)))
+        self.hilbert_min_freq = QtWidgets.QLineEdit(str(params.get('hilbert_min_freq', 80.0)))
+        self.hilbert_max_freq = QtWidgets.QLineEdit(str(params.get('hilbert_max_freq', 500.0)))
+        self.hilbert_peaks = QtWidgets.QLineEdit(str(params.get('hilbert_required_peaks', 6)))
+        self.hilbert_peak_sd = QtWidgets.QLineEdit(str(params.get('hilbert_peak_sd', 2.0)))
         hilbert_form.addRow("Epoch (s):", self.hilbert_epoch)
         hilbert_form.addRow("Threshold (SD):", self.hilbert_sd)
         hilbert_form.addRow("Min Duration (ms):", self.hilbert_min_dur)
@@ -3359,11 +3784,11 @@ class ConsensusParametersWindow(QtWidgets.QWidget):
         # STE parameters
         ste_group = QtWidgets.QGroupBox("STE Parameters")
         ste_form = QtWidgets.QFormLayout()
-        self.ste_threshold = QtWidgets.QLineEdit("2.5")
-        self.ste_window = QtWidgets.QLineEdit("0.01")
-        self.ste_overlap = QtWidgets.QLineEdit("0.5")
-        self.ste_min_freq = QtWidgets.QLineEdit("80.0")
-        self.ste_max_freq = QtWidgets.QLineEdit("500.0")
+        self.ste_threshold = QtWidgets.QLineEdit(str(params.get('ste_threshold', 2.5)))
+        self.ste_window = QtWidgets.QLineEdit(str(params.get('ste_window_size', 0.01)))
+        self.ste_overlap = QtWidgets.QLineEdit(str(params.get('ste_overlap', 0.5)))
+        self.ste_min_freq = QtWidgets.QLineEdit(str(params.get('ste_min_freq', 80.0)))
+        self.ste_max_freq = QtWidgets.QLineEdit(str(params.get('ste_max_freq', 500.0)))
         ste_form.addRow("Threshold (RMS):", self.ste_threshold)
         ste_form.addRow("Window Size (s):", self.ste_window)
         ste_form.addRow("Overlap (0-1):", self.ste_overlap)
@@ -3375,10 +3800,10 @@ class ConsensusParametersWindow(QtWidgets.QWidget):
         # MNI parameters
         mni_group = QtWidgets.QGroupBox("MNI Parameters")
         mni_form = QtWidgets.QFormLayout()
-        self.mni_baseline = QtWidgets.QLineEdit("10.0")
-        self.mni_percentile = QtWidgets.QLineEdit("98.0")
-        self.mni_min_freq = QtWidgets.QLineEdit("80.0")
-        self.mni_max_freq = QtWidgets.QLineEdit("500.0")
+        self.mni_baseline = QtWidgets.QLineEdit(str(params.get('mni_baseline_window', 10.0)))
+        self.mni_percentile = QtWidgets.QLineEdit(str(params.get('mni_threshold_percentile', 98.0)))
+        self.mni_min_freq = QtWidgets.QLineEdit(str(params.get('mni_min_freq', 80.0)))
+        self.mni_max_freq = QtWidgets.QLineEdit(str(params.get('mni_max_freq', 500.0)))
         mni_form.addRow("Baseline Window (s):", self.mni_baseline)
         mni_form.addRow("Threshold Percentile:", self.mni_percentile)
         mni_form.addRow("Min Frequency (Hz):", self.mni_min_freq)
@@ -3400,6 +3825,17 @@ class ConsensusParametersWindow(QtWidgets.QWidget):
         self.resize(600, 900)
         center(self)
         self.show()
+
+    def _load_consensus_params(self):
+        import json
+        try:
+            fname = os.path.join(self.scoreWindow.mainWindow.SETTINGS_DIR, 'consensus_params.json')
+            if os.path.exists(fname):
+                with open(fname, 'r') as f:
+                    return json.load(f)
+        except Exception:
+            return {}
+        return {}
 
     def analyze(self):
         try:
