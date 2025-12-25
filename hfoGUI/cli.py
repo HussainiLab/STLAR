@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 from .core.Score import hilbert_detect_events
-from .core.Detector import ste_detect_events, mni_detect_events, dl_detect_events
+from .core.Detector import ste_detect_events, mni_detect_events, dl_detect_events, consensus_detect_events
 from .core.Tint_Matlab import ReadEEG, bits2uV, TintException
 
 def _default_freqs(data_path: Path, max_freq: Optional[float]) -> Tuple[float, float]:
@@ -179,6 +179,63 @@ def _process_dl_file(data_path: Path, set_path: Optional[Path], args: argparse.N
     return _save_results(events, params, data_path, set_path, args, method_tag='DL')
 
 
+def _process_consensus_file(data_path: Path, set_path: Optional[Path], args: argparse.Namespace):
+    """Process a single data file with Consensus detection (Hilbert + STE + MNI)."""
+
+    if args.verbose:
+        print('\nProcessing (Consensus): {}'.format(data_path))
+
+    raw_data, Fs = _load_and_scale_data(data_path, set_path, args)
+
+    min_freq_default, max_freq_default = _default_freqs(data_path, args.max_freq)
+
+    hilbert_params = {
+        'epoch': float(args.epoch_sec),
+        'sd_num': float(args.hilbert_threshold_sd),
+        'min_duration': float(args.min_duration_ms),
+        'min_freq': float(args.min_freq) if args.min_freq else min_freq_default,
+        'max_freq': float(args.max_freq) if args.max_freq else max_freq_default,
+        'required_peak_number': int(args.required_peaks),
+        'required_peak_sd': float(args.required_peak_sd),
+        'boundary_fraction': 0.3,
+    }
+
+    ste_params = {
+        'threshold': float(args.ste_threshold),
+        'window_size': 0.01,
+        'overlap': 0.5,
+        'min_freq': float(args.min_freq) if args.min_freq else min_freq_default,
+        'max_freq': float(args.max_freq) if args.max_freq else max_freq_default,
+    }
+
+    mni_params = {
+        'baseline_window': 10.0,
+        'threshold_percentile': float(args.mni_percentile),
+        'min_freq': float(args.min_freq) if args.min_freq else min_freq_default,
+        'max_freq': float(args.max_freq) if args.max_freq else max_freq_default,
+    }
+
+    params = {
+        'voting_strategy': args.voting_strategy,
+        'overlap_threshold_ms': float(args.overlap_threshold_ms),
+        'hilbert': hilbert_params,
+        'ste': ste_params,
+        'mni': mni_params,
+    }
+
+    events = consensus_detect_events(
+        raw_data, Fs,
+        hilbert_params=hilbert_params,
+        ste_params=ste_params,
+        mni_params=mni_params,
+        voting_strategy=args.voting_strategy,
+        overlap_threshold_ms=float(args.overlap_threshold_ms),
+    )
+
+    return _save_results(events, params, data_path, set_path, args, method_tag='CON')
+
+
+
 def _save_results(events, params, data_path, set_path, args, method_tag):
     """Helper to save events and settings to disk."""
     # Ensure events is a numpy array
@@ -281,6 +338,26 @@ def build_parser() -> argparse.ArgumentParser:
     mni.add_argument('--min-freq', type=float, help='Min frequency (Hz)')
     mni.add_argument('--skip-bits2uv', action='store_true', help='Skip bits-to-uV conversion')
     mni.add_argument('-v', '--verbose', action='store_true', help='Verbose logging')
+
+    # --- Consensus Parser ---
+    consensus = sub.add_parser('consensus-batch', help='Run Consensus detection (Hilbert + STE + MNI voting)')
+    consensus.add_argument('-f', '--file', required=True, help='Path to .eeg/.egf file or directory to process recursively')
+    consensus.add_argument('-s', '--set-file', help='Optional .set file or directory')
+    consensus.add_argument('-o', '--output', help='Output directory')
+    consensus.add_argument('--epoch-sec', type=float, default=5 * 60, help='Hilbert epoch length in seconds (default: 300)')
+    consensus.add_argument('--hilbert-threshold-sd', type=float, default=3.5, help='Hilbert threshold in SD (default: 3.5)')
+    consensus.add_argument('--ste-threshold', type=float, default=2.5, help='STE threshold in RMS (default: 2.5)')
+    consensus.add_argument('--mni-percentile', type=float, default=98.0, help='MNI threshold percentile (default: 98)')
+    consensus.add_argument('--min-duration-ms', type=float, default=10.0, help='Minimum event duration in ms (default: 10)')
+    consensus.add_argument('--min-freq', type=float, help='Minimum bandpass frequency (Hz). Default 80 Hz')
+    consensus.add_argument('--max-freq', type=float, help='Maximum bandpass frequency (Hz). Default 125 Hz for EEG, 500 Hz for EGF')
+    consensus.add_argument('--required-peaks', type=int, default=6, help='Hilbert minimum peak count (default: 6)')
+    consensus.add_argument('--required-peak-sd', type=float, default=2.0, help='Hilbert peak threshold in SD (default: 2.0)')
+    consensus.add_argument('--voting-strategy', choices=['strict', 'majority', 'any'], default='majority', 
+                          help='Voting rule: strict=3/3, majority=2/3, any=1/3 (default: majority)')
+    consensus.add_argument('--overlap-threshold-ms', type=float, default=10.0, help='Overlap window in ms (default: 10)')
+    consensus.add_argument('--skip-bits2uv', action='store_true', help='Skip bits-to-uV conversion')
+    consensus.add_argument('-v', '--verbose', action='store_true', help='Verbose logging')
 
     # --- Deep Learning Parser ---
     dl = sub.add_parser('dl-batch', help='Run Deep Learning detection')
@@ -386,8 +463,12 @@ def run_mni_batch(args: argparse.Namespace):
     _run_batch_job(args, _process_mni_file)
 
 
+def run_consensus_batch(args: argparse.Namespace):
+    _run_batch_job(args, _process_consensus_file)
+
+
 def run_dl_batch(args: argparse.Namespace):
     _run_batch_job(args, _process_dl_file)
 
 
-__all__ = ['build_parser', 'run_hilbert_batch', 'run_ste_batch', 'run_mni_batch', 'run_dl_batch']
+__all__ = ['build_parser', 'run_hilbert_batch', 'run_ste_batch', 'run_mni_batch', 'run_consensus_batch', 'run_dl_batch']
