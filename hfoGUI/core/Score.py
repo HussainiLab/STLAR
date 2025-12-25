@@ -147,6 +147,7 @@ class ScoreWindow(QtWidgets.QWidget):
             'hilbert': 'HIL', 
             'ste': 'STE',
             'mni': 'MNI',
+            'consensus': 'CON',
             'deep learning': 'DL',
             'unknown': 'UNK'
         }
@@ -228,7 +229,7 @@ class ScoreWindow(QtWidgets.QWidget):
         eoi_method_label = QtWidgets.QLabel("EOI Detection Method:")
         self.eoi_method = QtWidgets.QComboBox()
         self.eoi_method.currentIndexChanged.connect(self.setEOIfilename)
-        methods = ['Hilbert', 'STE', 'MNI', 'Deep Learning']
+        methods = ['Hilbert', 'STE', 'MNI', 'Consensus', 'Deep Learning']
 
         events_detected_label = QtWidgets.QLabel('Events Detected:')
         self.events_detected = QtWidgets.QLineEdit()
@@ -577,6 +578,7 @@ class ScoreWindow(QtWidgets.QWidget):
         self.ste_thread = QtCore.QThread()
         self.mni_thread = QtCore.QThread()
         self.dl_thread = QtCore.QThread()
+        self.consensus_thread = QtCore.QThread()
         self.setLayout(window_layout)
 
     def closeEvent(self, event):
@@ -596,6 +598,9 @@ class ScoreWindow(QtWidgets.QWidget):
         if hasattr(self, 'dl_thread') and self.dl_thread.isRunning():
             self.dl_thread.quit()
             self.dl_thread.wait(1000)
+        if hasattr(self, 'consensus_thread') and self.consensus_thread.isRunning():
+            self.consensus_thread.quit()
+            self.consensus_thread.wait(1000)
         super().closeEvent(event)
 
     def initialize_attributes(self):
@@ -1034,6 +1039,8 @@ class ScoreWindow(QtWidgets.QWidget):
             self.ste_window = STEParametersWindow(self.mainWindow, self)
         elif 'MNI' in self.eoi_method.currentText():
             self.mni_window = MNIParametersWindow(self.mainWindow, self)
+        elif 'Consensus' in self.eoi_method.currentText():
+            self.consensus_window = ConsensusParametersWindow(self.mainWindow, self)
         elif 'Deep Learning' in self.eoi_method.currentText():
             self.dl_window = DLParametersWindow(self.mainWindow, self)
 
@@ -2266,6 +2273,60 @@ def DLDetection(self):
         traceback.print_exc()
 
 
+def ConsensusDetection(self):
+    """Run consensus detection combining Hilbert, STE, and MNI."""
+    try:
+        if not hasattr(self, 'source_filename') or not os.path.exists(self.source_filename):
+            return
+
+        raw_data, Fs = self.settingsWindow.loaded_sources[self.source_filename]
+
+        # Build parameter dicts
+        hilbert_params = {
+            'epoch': self.hilbert_epoch,
+            'sd_num': self.hilbert_sd_num,
+            'min_duration': self.hilbert_min_duration,
+            'min_freq': self.hilbert_min_freq,
+            'max_freq': self.hilbert_max_freq,
+            'required_peak_number': self.hilbert_required_peaks,
+            'required_peak_sd': getattr(self, 'hilbert_peak_sd', 2.0),
+            'boundary_fraction': 0.3
+        }
+
+        ste_params = {
+            'threshold': self.ste_threshold,
+            'window_size': self.ste_window_size,
+            'overlap': self.ste_overlap,
+            'min_freq': self.ste_min_freq,
+            'max_freq': self.ste_max_freq
+        }
+
+        mni_params = {
+            'baseline_window': self.mni_baseline_window,
+            'threshold_percentile': self.mni_threshold_percentile,
+            'min_freq': self.mni_min_freq,
+            'max_freq': getattr(self, 'mni_max_freq', 500.0)
+        }
+
+        # Run consensus
+        from core.Detector import consensus_detect_events
+        EOIs = consensus_detect_events(
+            raw_data, Fs,
+            hilbert_params=hilbert_params,
+            ste_params=ste_params,
+            mni_params=mni_params,
+            voting_strategy=getattr(self, 'consensus_voting', 'majority'),
+            overlap_threshold_ms=getattr(self, 'consensus_overlap_ms', 10.0)
+        )
+
+        _process_detection_results(self, EOIs)
+
+    except Exception as e:
+        print(f'Error during Consensus detection: {e}')
+        import traceback
+        traceback.print_exc()
+
+
 def _process_detection_results(self, EOIs):
     """Helper to populate the EOI tree with detection results."""
     if EOIs is None or len(EOIs) == 0:
@@ -3223,6 +3284,190 @@ class DLParametersWindow(QtWidgets.QWidget):
         self.scoreWindow.dl_thread_worker = Worker(DLDetection, self.scoreWindow)
         self.scoreWindow.dl_thread_worker.moveToThread(self.scoreWindow.dl_thread)
         self.scoreWindow.dl_thread_worker.start.emit("start")
+        self.close()
+
+
+class ConsensusParametersWindow(QtWidgets.QWidget):
+    """Parameters window for Consensus detection (combines Hilbert, STE, MNI)."""
+    
+    def __init__(self, main, score):
+        super(ConsensusParametersWindow, self).__init__()
+        self.mainWindow = main
+        self.scoreWindow = score
+        self.setWindowTitle("Consensus Detection Parameters (Hilbert + STE + MNI)")
+
+        layout = QtWidgets.QVBoxLayout()
+
+        # Title and help text
+        title = QtWidgets.QLabel("Consensus Detection: Vote-based combination of 3 detectors")
+        title.setStyleSheet("font-weight: bold;")
+        layout.addWidget(title)
+
+        help_text = QtWidgets.QLabel(
+            "Consensus voting: Select how many detectors must agree.\n"
+            "• Strict (3/3): Highest specificity, may miss marginal HFOs\n"
+            "• Majority (2/3): Balanced; recommended for most applications\n"
+            "• Any (1/3): Highest sensitivity, more false positives"
+        )
+        help_text.setWordWrap(True)
+        layout.addWidget(help_text)
+
+        # Voting strategy
+        voting_layout = QtWidgets.QHBoxLayout()
+        voting_label = QtWidgets.QLabel("Voting Strategy:")
+        self.voting_combo = QtWidgets.QComboBox()
+        self.voting_combo.addItems(['Majority (2/3)', 'Strict (3/3)', 'Any (1/3)'])
+        voting_layout.addWidget(voting_label)
+        voting_layout.addWidget(self.voting_combo)
+        layout.addLayout(voting_layout)
+
+        # Overlap threshold
+        overlap_layout = QtWidgets.QHBoxLayout()
+        overlap_label = QtWidgets.QLabel("Overlap Threshold (ms):")
+        self.overlap_edit = QtWidgets.QLineEdit("10.0")
+        self.overlap_edit.setMaximumWidth(100)
+        overlap_layout.addWidget(overlap_label)
+        overlap_layout.addWidget(self.overlap_edit)
+        overlap_layout.addStretch()
+        layout.addLayout(overlap_layout)
+
+        # Separator
+        separator = QtWidgets.QFrame()
+        separator.setFrameShape(QtWidgets.QFrame.HLine)
+        layout.addWidget(separator)
+
+        # Hilbert parameters
+        hilbert_group = QtWidgets.QGroupBox("Hilbert Parameters")
+        hilbert_form = QtWidgets.QFormLayout()
+        self.hilbert_epoch = QtWidgets.QLineEdit("300.0")
+        self.hilbert_sd = QtWidgets.QLineEdit("3.5")
+        self.hilbert_min_dur = QtWidgets.QLineEdit("10.0")
+        self.hilbert_min_freq = QtWidgets.QLineEdit("80.0")
+        self.hilbert_max_freq = QtWidgets.QLineEdit("500.0")
+        self.hilbert_peaks = QtWidgets.QLineEdit("6")
+        self.hilbert_peak_sd = QtWidgets.QLineEdit("2.0")
+        hilbert_form.addRow("Epoch (s):", self.hilbert_epoch)
+        hilbert_form.addRow("Threshold (SD):", self.hilbert_sd)
+        hilbert_form.addRow("Min Duration (ms):", self.hilbert_min_dur)
+        hilbert_form.addRow("Min Frequency (Hz):", self.hilbert_min_freq)
+        hilbert_form.addRow("Max Frequency (Hz):", self.hilbert_max_freq)
+        hilbert_form.addRow("Required Peaks:", self.hilbert_peaks)
+        hilbert_form.addRow("Peak Threshold (SD):", self.hilbert_peak_sd)
+        hilbert_group.setLayout(hilbert_form)
+        layout.addWidget(hilbert_group)
+
+        # STE parameters
+        ste_group = QtWidgets.QGroupBox("STE Parameters")
+        ste_form = QtWidgets.QFormLayout()
+        self.ste_threshold = QtWidgets.QLineEdit("2.5")
+        self.ste_window = QtWidgets.QLineEdit("0.01")
+        self.ste_overlap = QtWidgets.QLineEdit("0.5")
+        self.ste_min_freq = QtWidgets.QLineEdit("80.0")
+        self.ste_max_freq = QtWidgets.QLineEdit("500.0")
+        ste_form.addRow("Threshold (RMS):", self.ste_threshold)
+        ste_form.addRow("Window Size (s):", self.ste_window)
+        ste_form.addRow("Overlap (0-1):", self.ste_overlap)
+        ste_form.addRow("Min Frequency (Hz):", self.ste_min_freq)
+        ste_form.addRow("Max Frequency (Hz):", self.ste_max_freq)
+        ste_group.setLayout(ste_form)
+        layout.addWidget(ste_group)
+
+        # MNI parameters
+        mni_group = QtWidgets.QGroupBox("MNI Parameters")
+        mni_form = QtWidgets.QFormLayout()
+        self.mni_baseline = QtWidgets.QLineEdit("10.0")
+        self.mni_percentile = QtWidgets.QLineEdit("98.0")
+        self.mni_min_freq = QtWidgets.QLineEdit("80.0")
+        self.mni_max_freq = QtWidgets.QLineEdit("500.0")
+        mni_form.addRow("Baseline Window (s):", self.mni_baseline)
+        mni_form.addRow("Threshold Percentile:", self.mni_percentile)
+        mni_form.addRow("Min Frequency (Hz):", self.mni_min_freq)
+        mni_form.addRow("Max Frequency (Hz):", self.mni_max_freq)
+        mni_group.setLayout(mni_form)
+        layout.addWidget(mni_group)
+
+        # Buttons
+        button_layout = QtWidgets.QHBoxLayout()
+        self.analyze_btn = QtWidgets.QPushButton("Analyze (Run Consensus)")
+        self.analyze_btn.clicked.connect(self.analyze)
+        self.cancel_btn = QtWidgets.QPushButton("Cancel")
+        self.cancel_btn.clicked.connect(self.close)
+        button_layout.addWidget(self.analyze_btn)
+        button_layout.addWidget(self.cancel_btn)
+        layout.addLayout(button_layout)
+
+        self.setLayout(layout)
+        self.resize(600, 900)
+        center(self)
+        self.show()
+
+    def analyze(self):
+        try:
+            # Voting strategy mapping
+            voting_text = self.voting_combo.currentText()
+            if 'Strict' in voting_text:
+                voting_strategy = 'strict'
+            elif 'Any' in voting_text:
+                voting_strategy = 'any'
+            else:
+                voting_strategy = 'majority'
+
+            # Store parameters on score window
+            self.scoreWindow.consensus_voting = voting_strategy
+            self.scoreWindow.consensus_overlap_ms = float(self.overlap_edit.text())
+
+            self.scoreWindow.hilbert_epoch = float(self.hilbert_epoch.text())
+            self.scoreWindow.hilbert_sd_num = float(self.hilbert_sd.text())
+            self.scoreWindow.hilbert_min_duration = float(self.hilbert_min_dur.text())
+            self.scoreWindow.hilbert_min_freq = float(self.hilbert_min_freq.text())
+            self.scoreWindow.hilbert_max_freq = float(self.hilbert_max_freq.text())
+            self.scoreWindow.hilbert_required_peaks = int(self.hilbert_peaks.text())
+            self.scoreWindow.hilbert_peak_sd = float(self.hilbert_peak_sd.text())
+
+            self.scoreWindow.ste_threshold = float(self.ste_threshold.text())
+            self.scoreWindow.ste_window_size = float(self.ste_window.text())
+            self.scoreWindow.ste_overlap = float(self.ste_overlap.text())
+            self.scoreWindow.ste_min_freq = float(self.ste_min_freq.text())
+            self.scoreWindow.ste_max_freq = float(self.ste_max_freq.text())
+
+            self.scoreWindow.mni_baseline_window = float(self.mni_baseline.text())
+            self.scoreWindow.mni_threshold_percentile = float(self.mni_percentile.text())
+            self.scoreWindow.mni_min_freq = float(self.mni_min_freq.text())
+            self.scoreWindow.mni_max_freq = float(self.mni_max_freq.text())
+
+        except ValueError:
+            QtWidgets.QMessageBox.warning(self, "Invalid Input", "Please enter valid numeric values.")
+            return
+
+        settings = {
+            'voting_strategy': self.scoreWindow.consensus_voting,
+            'overlap_ms': self.scoreWindow.consensus_overlap_ms,
+            'hilbert_epoch': self.scoreWindow.hilbert_epoch,
+            'hilbert_sd_num': self.scoreWindow.hilbert_sd_num,
+            'hilbert_min_duration': self.scoreWindow.hilbert_min_duration,
+            'hilbert_min_freq': self.scoreWindow.hilbert_min_freq,
+            'hilbert_max_freq': self.scoreWindow.hilbert_max_freq,
+            'hilbert_required_peaks': self.scoreWindow.hilbert_required_peaks,
+            'ste_threshold': self.scoreWindow.ste_threshold,
+            'ste_window_size': self.scoreWindow.ste_window_size,
+            'ste_overlap': self.scoreWindow.ste_overlap,
+            'ste_min_freq': self.scoreWindow.ste_min_freq,
+            'ste_max_freq': self.scoreWindow.ste_max_freq,
+            'mni_baseline_window': self.scoreWindow.mni_baseline_window,
+            'mni_threshold_percentile': self.scoreWindow.mni_threshold_percentile,
+            'mni_min_freq': self.scoreWindow.mni_min_freq,
+            'mni_max_freq': self.scoreWindow.mni_max_freq
+        }
+        _save_generic_settings(self.scoreWindow, 'Consensus', settings)
+
+        if self.scoreWindow.consensus_thread.isRunning():
+            self.scoreWindow.consensus_thread.quit()
+            self.scoreWindow.consensus_thread.wait()
+
+        self.scoreWindow.consensus_thread.start()
+        self.scoreWindow.consensus_thread_worker = Worker(ConsensusDetection, self.scoreWindow)
+        self.scoreWindow.consensus_thread_worker.moveToThread(self.scoreWindow.consensus_thread)
+        self.scoreWindow.consensus_thread_worker.start.emit("start")
         self.close()
 
 

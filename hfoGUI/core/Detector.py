@@ -404,3 +404,211 @@ def dl_classify_segments(data, fs, segments_ms, model_path, threshold=0.5, batch
 
     labels = ['positive' if float(p) >= float(threshold) else 'negative' for p in probs]
     return np.asarray(probs, dtype=float), labels
+
+
+# ============================================================================
+# Consensus Detection: Combine Hilbert, STE, and MNI via voting
+# ============================================================================
+
+def _merge_overlaps(events, overlap_threshold_ms=10.0):
+    """
+    Merge overlapping or near-overlapping events.
+    
+    Args:
+        events: Nx2 array of [start_ms, stop_ms]
+        overlap_threshold_ms: events within this distance are merged
+    
+    Returns:
+        Merged Nx2 array
+    """
+    if events is None or len(events) == 0:
+        return np.asarray([])
+    
+    events = np.asarray(events, dtype=float)
+    if events.ndim == 1:
+        events = events.reshape(-1, 2)
+    
+    # Sort by start time
+    events = events[np.argsort(events[:, 0])]
+    
+    merged = []
+    current_start, current_stop = events[0]
+    
+    for i in range(1, len(events)):
+        start, stop = events[i]
+        # Check if this event overlaps or is within threshold of current
+        if start <= current_stop + overlap_threshold_ms:
+            # Merge: extend current_stop
+            current_stop = max(current_stop, stop)
+        else:
+            # No overlap: save current and start new
+            merged.append([current_start, current_stop])
+            current_start, current_stop = start, stop
+    
+    # Add final event
+    merged.append([current_start, current_stop])
+    
+    return np.asarray(merged, dtype=float)
+
+
+def _vote_consensus(all_events_list, voting_strategy='majority', overlap_threshold_ms=10.0):
+    """
+    Vote on consensus events: count how many detectors detected each event.
+    
+    Args:
+        all_events_list: List of 3 Nx2 arrays (Hilbert, STE, MNI events)
+        voting_strategy: 'strict' (3/3), 'majority' (2/3), 'any' (1/3)
+        overlap_threshold_ms: events within this distance are considered same event
+    
+    Returns:
+        Nx2 array of consensus events
+    """
+    if not all_events_list or all(len(e) == 0 for e in all_events_list):
+        return np.asarray([])
+    
+    # Flatten and collect all events with detector labels
+    event_detectors = []  # List of (start, stop, detector_idx)
+    for detector_idx, events in enumerate(all_events_list):
+        if events is None or len(events) == 0:
+            continue
+        for start, stop in np.asarray(events, dtype=float):
+            event_detectors.append((float(start), float(stop), detector_idx))
+    
+    if not event_detectors:
+        return np.asarray([])
+    
+    # Sort by start time
+    event_detectors.sort(key=lambda x: x[0])
+    
+    # Group events by overlap
+    consensus_events = []
+    current_group = [event_detectors[0]]
+    
+    for i in range(1, len(event_detectors)):
+        start, stop, det_idx = event_detectors[i]
+        prev_stop = current_group[-1][1]
+        
+        # Check if overlapping with any in current group
+        if start <= prev_stop + overlap_threshold_ms:
+            current_group.append((start, stop, det_idx))
+        else:
+            # Process current group and start new
+            if current_group:
+                consensus_events.append(current_group)
+            current_group = [(start, stop, det_idx)]
+    
+    # Process final group
+    if current_group:
+        consensus_events.append(current_group)
+    
+    # Vote: count unique detectors per group
+    voted_events = []
+    
+    for group in consensus_events:
+        # Get unique detectors and aggregate time bounds
+        detectors_in_group = set(det_idx for _, _, det_idx in group)
+        num_votes = len(detectors_in_group)
+        
+        # Check voting strategy
+        pass_vote = False
+        if voting_strategy == 'strict':
+            pass_vote = (num_votes == 3)
+        elif voting_strategy == 'majority':
+            pass_vote = (num_votes >= 2)
+        elif voting_strategy == 'any':
+            pass_vote = (num_votes >= 1)
+        
+        if pass_vote:
+            # Compute union of time bounds
+            starts = [s for s, _, _ in group]
+            stops = [st for _, st, _ in group]
+            consensus_start = min(starts)
+            consensus_stop = max(stops)
+            voted_events.append([consensus_start, consensus_stop])
+    
+    if not voted_events:
+        return np.asarray([])
+    
+    return np.asarray(voted_events, dtype=float)
+
+
+def consensus_detect_events(data, fs, 
+                           hilbert_params=None, ste_params=None, mni_params=None,
+                           voting_strategy='majority', overlap_threshold_ms=10.0, **kwargs):
+    """
+    Run Hilbert, STE, and MNI detectors and return consensus events.
+    
+    Args:
+        data: 1D signal array
+        fs: sampling frequency (Hz)
+        hilbert_params: dict of hilbert_detect_events kwargs
+        ste_params: dict of ste_detect_events kwargs
+        mni_params: dict of mni_detect_events kwargs
+        voting_strategy: 'strict' (3/3), 'majority' (2/3), 'any' (1/3)
+        overlap_threshold_ms: events within this distance are merged (default 10 ms)
+    
+    Returns:
+        Nx2 array of [start_ms, stop_ms] consensus events
+    """
+    # Import locally to handle circular deps
+    from .Score import hilbert_detect_events
+    
+    # Default parameters (conservative/balanced)
+    if hilbert_params is None:
+        hilbert_params = {
+            'epoch': 300.0,
+            'sd_num': 3.5,
+            'min_duration': 10.0,
+            'min_freq': 80.0,
+            'max_freq': 500.0,
+            'required_peak_number': 6,
+            'required_peak_sd': 2.0,
+            'boundary_fraction': 0.3
+        }
+    
+    if ste_params is None:
+        ste_params = {
+            'threshold': 2.5,
+            'window_size': 0.01,
+            'overlap': 0.5,
+            'min_freq': 80.0,
+            'max_freq': 500.0
+        }
+    
+    if mni_params is None:
+        mni_params = {
+            'baseline_window': 10.0,
+            'threshold_percentile': 98.0,
+            'min_freq': 80.0,
+            'max_freq': 500.0
+        }
+    
+    # Run all three detectors
+    try:
+        hilbert_eois = hilbert_detect_events(data, fs, **hilbert_params)
+    except Exception:
+        hilbert_eois = np.asarray([])
+    
+    try:
+        ste_eois = ste_detect_events(data, fs, **ste_params)
+    except Exception:
+        ste_eois = np.asarray([])
+    
+    try:
+        mni_eois = mni_detect_events(data, fs, **mni_params)
+    except Exception:
+        mni_eois = np.asarray([])
+    
+    # Merge overlaps within each detector result
+    if len(hilbert_eois) > 0:
+        hilbert_eois = _merge_overlaps(hilbert_eois, overlap_threshold_ms)
+    if len(ste_eois) > 0:
+        ste_eois = _merge_overlaps(ste_eois, overlap_threshold_ms)
+    if len(mni_eois) > 0:
+        mni_eois = _merge_overlaps(mni_eois, overlap_threshold_ms)
+    
+    # Vote on consensus
+    all_events = [hilbert_eois, ste_eois, mni_eois]
+    consensus_eois = _vote_consensus(all_events, voting_strategy, overlap_threshold_ms)
+    
+    return consensus_eois
