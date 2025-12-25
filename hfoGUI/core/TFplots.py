@@ -316,7 +316,7 @@ class TFPlotWindow(QtWidgets.QWidget):
             if self.settingsWindow.selected_time is None:
                 return
 
-            selected_time = np.rint(self.Fs * self.settingsWindow.selected_time / 1000)  # index instead of milliseconds
+            selected_time = np.rint(self.Fs * self.settingsWindow.selected_time)  # convert seconds to sample index
 
             if selected_time is None:
                 return
