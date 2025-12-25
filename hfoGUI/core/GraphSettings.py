@@ -309,8 +309,9 @@ class GraphSettingsWindows(QtWidgets.QWidget):
             # defining the selected region
             self.mainWindow.lr.setRegion([self.drag_start, self.drag_stop])
 
-            self.mainWindow.score_x1 = self.drag_start  # defining the start of the selected region
-            self.mainWindow.score_x2 = self.drag_stop  # defining the end of the selected region
+            # Store times in milliseconds for Score/EOI tables
+            self.mainWindow.score_x1 = self.drag_start * 1000.0  # start in ms
+            self.mainWindow.score_x2 = self.drag_stop * 1000.0  # stop in ms
 
             self.remove_lines()  # remove any lines marking central position for
 

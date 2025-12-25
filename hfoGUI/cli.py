@@ -7,8 +7,8 @@ import numpy as np
 import pandas as pd
 
 from .core.Score import hilbert_detect_events
+from .core.Detector import ste_detect_events, mni_detect_events, dl_detect_events
 from .core.Tint_Matlab import ReadEEG, bits2uV, TintException
-
 
 def _default_freqs(data_path: Path, max_freq: Optional[float]) -> Tuple[float, float]:
     """Choose sensible defaults based on file extension."""
@@ -23,8 +23,7 @@ def _default_freqs(data_path: Path, max_freq: Optional[float]) -> Tuple[float, f
     return min_freq, 125.0
 
 
-def _build_output_paths(data_path: Path, set_path: Optional[Path], output: Optional[Path]):
-    method_tag = 'HIL'
+def _build_output_paths(data_path: Path, set_path: Optional[Path], output: Optional[Path], method_tag: str = 'HIL'):
     session_base = set_path.stem if set_path else data_path.stem
 
     if output:
@@ -71,15 +70,8 @@ def _find_set_file(data_path: Path):
     return None
 
 
-def _process_single_file(data_path: Path, set_path: Optional[Path], args: argparse.Namespace):
-    """Process a single data file with Hilbert detection.
-    
-    Returns:
-        int: Number of events detected (for summary reporting).
-    """
-    if args.verbose:
-        print('\nProcessing: {}'.format(data_path))
-
+def _load_and_scale_data(data_path: Path, set_path: Optional[Path], args: argparse.Namespace):
+    """Helper to load EEG data and convert to uV if possible."""
     raw_data, Fs = ReadEEG(str(data_path))
 
     if set_path and set_path.exists() and not args.skip_bits2uv:
@@ -90,6 +82,20 @@ def _process_single_file(data_path: Path, set_path: Optional[Path], args: argpar
                 raise
             if args.verbose:
                 print('  Warning: Proceeding without bits->uV conversion: {}'.format(exc))
+    
+    return np.asarray(raw_data, dtype=float), Fs
+
+
+def _process_single_file(data_path: Path, set_path: Optional[Path], args: argparse.Namespace):
+    """Process a single data file with Hilbert detection.
+    
+    Returns:
+        int: Number of events detected (for summary reporting).
+    """
+    if args.verbose:
+        print('\nProcessing: {}'.format(data_path))
+
+    raw_data, Fs = _load_and_scale_data(data_path, set_path, args)
 
     min_freq_default, max_freq_default = _default_freqs(data_path, args.max_freq)
     min_freq = args.min_freq if args.min_freq is not None else min_freq_default
@@ -109,22 +115,109 @@ def _process_single_file(data_path: Path, set_path: Optional[Path], args: argpar
         'verbose': args.verbose,
     }
 
-    events = hilbert_detect_events(np.asarray(raw_data, dtype=float), Fs, **params)
+    events = hilbert_detect_events(raw_data, Fs, **params)
+
+    return _save_results(events, params, data_path, set_path, args, method_tag='HIL')
+
+
+def _process_ste_file(data_path: Path, set_path: Optional[Path], args: argparse.Namespace):
+    """Process a single data file with STE (RMS) detection."""
+
+    if args.verbose:
+        print('\nProcessing (STE): {}'.format(data_path))
+
+    raw_data, Fs = _load_and_scale_data(data_path, set_path, args)
+
+    params = {
+        'threshold': float(args.threshold),
+        'window_size': float(args.window_size),
+        'overlap': float(args.overlap),
+        'min_freq': float(args.min_freq) if args.min_freq else 80.0,
+        'max_freq': float(args.max_freq) if args.max_freq else 500.0,
+    }
+
+    events = ste_detect_events(raw_data, Fs, **params)
+
+    return _save_results(events, params, data_path, set_path, args, method_tag='STE')
+
+
+def _process_mni_file(data_path: Path, set_path: Optional[Path], args: argparse.Namespace):
+    """Process a single data file with MNI detection."""
+
+    if args.verbose:
+        print('\nProcessing (MNI): {}'.format(data_path))
+
+    raw_data, Fs = _load_and_scale_data(data_path, set_path, args)
+
+    params = {
+        'baseline_window': float(args.baseline_window),
+        'threshold_percentile': float(args.threshold_percentile),
+        'min_freq': float(args.min_freq) if args.min_freq else 80.0,
+    }
+
+    events = mni_detect_events(raw_data, Fs, **params)
+
+    return _save_results(events, params, data_path, set_path, args, method_tag='MNI')
+
+
+def _process_dl_file(data_path: Path, set_path: Optional[Path], args: argparse.Namespace):
+    """Process a single data file with Deep Learning detection."""
+
+    if args.verbose:
+        print('\nProcessing (DL): {}'.format(data_path))
+
+    raw_data, Fs = _load_and_scale_data(data_path, set_path, args)
+
+    params = {
+        'model_path': args.model_path,
+        'threshold': float(args.threshold),
+        'batch_size': int(args.batch_size),
+    }
+
+    events = dl_detect_events(raw_data, Fs, **params)
+
+    return _save_results(events, params, data_path, set_path, args, method_tag='DL')
+
+
+def _save_results(events, params, data_path, set_path, args, method_tag):
+    """Helper to save events and settings to disk."""
+    # Ensure events is a numpy array
+    events = np.asarray(events)
+    if events.ndim == 1 and len(events) == 0:
+        events = np.empty((0, 2))
 
     out_path = Path(args.output).expanduser() if args.output else None
     scores_path, settings_path = _build_output_paths(
         data_path,
         set_path if set_path and set_path.exists() else None,
         out_path,
+        method_tag=method_tag
     )
 
     with open(str(settings_path), 'w', encoding='utf-8') as f:
-        json.dump(params, f, indent=2)
+        # Convert params to serializable dict if necessary
+        serializable_params = {}
+        for k, v in params.items():
+            if isinstance(v, Path):
+                serializable_params[k] = str(v)
+            else:
+                serializable_params[k] = v
+        json.dump(serializable_params, f, indent=2)
+
+    # Generate IDs
+    if len(events) > 0:
+        ids = ['{}{}'.format(method_tag, idx + 1) for idx in range(len(events))]
+        start_times = events[:, 0]
+        stop_times = events[:, 1]
+    else:
+        ids = []
+        start_times = []
+        stop_times = []
 
     df = pd.DataFrame({
-        'ID#:': ['HIL{}'.format(idx + 1) for idx in range(len(events))],
-        'Start Time(ms):': events[:, 0] if len(events) else [],
-        'Stop Time(ms):': events[:, 1] if len(events) else [],
+        'ID#:': ids,
+        'Start Time(ms):': start_times,
+        'Stop Time(ms):': stop_times,
         'Settings File:': settings_path.as_posix(),
     })
 
@@ -134,7 +227,7 @@ def _process_single_file(data_path: Path, set_path: Optional[Path], args: argpar
         print('  Saved settings -> {}'.format(settings_path))
 
     print('  Detected {} events; saved scores -> {}'.format(len(events), scores_path))
-    
+
     return len(events)
 
 
@@ -142,6 +235,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description='hfoGUI command-line utilities')
     sub = parser.add_subparsers(dest='command')
 
+    # --- Hilbert Parser ---
     hilbert = sub.add_parser('hilbert-batch', help='Run Hilbert-based automatic detection headlessly')
     hilbert.add_argument('-f', '--file', required=True, help='Path to .eeg/.egf file or directory to process recursively')
     hilbert.add_argument('-s', '--set-file', help='Optional .set file or directory; defaults to sibling of the data file')
@@ -163,11 +257,47 @@ def build_parser() -> argparse.ArgumentParser:
     hilbert.add_argument('--skip-bits2uv', action='store_true',
                          help='Skip bits-to-uV conversion if the .set file is missing')
     hilbert.add_argument('-v', '--verbose', action='store_true', help='Verbose progress logging')
+    
+    # --- STE Parser ---
+    ste = sub.add_parser('ste-batch', help='Run Short-Term Energy (RMS) detection')
+    ste.add_argument('-f', '--file', required=True, help='Path to .eeg/.egf file or directory')
+    ste.add_argument('-s', '--set-file', help='Optional .set file')
+    ste.add_argument('-o', '--output', help='Output directory')
+    ste.add_argument('--threshold', type=float, default=3.0, help='RMS threshold (SD or absolute)')
+    ste.add_argument('--window-size', type=float, default=0.01, help='Window size in seconds')
+    ste.add_argument('--overlap', type=float, default=0.5, help='Window overlap fraction')
+    ste.add_argument('--min-freq', type=float, help='Min frequency (Hz)')
+    ste.add_argument('--max-freq', type=float, help='Max frequency (Hz)')
+    ste.add_argument('--skip-bits2uv', action='store_true', help='Skip bits-to-uV conversion')
+    ste.add_argument('-v', '--verbose', action='store_true', help='Verbose logging')
+
+    # --- MNI Parser ---
+    mni = sub.add_parser('mni-batch', help='Run MNI detection')
+    mni.add_argument('-f', '--file', required=True, help='Path to .eeg/.egf file or directory')
+    mni.add_argument('-s', '--set-file', help='Optional .set file')
+    mni.add_argument('-o', '--output', help='Output directory')
+    mni.add_argument('--baseline-window', type=float, default=10.0, help='Baseline window in seconds')
+    mni.add_argument('--threshold-percentile', type=float, default=99.0, help='Threshold percentile')
+    mni.add_argument('--min-freq', type=float, help='Min frequency (Hz)')
+    mni.add_argument('--skip-bits2uv', action='store_true', help='Skip bits-to-uV conversion')
+    mni.add_argument('-v', '--verbose', action='store_true', help='Verbose logging')
+
+    # --- Deep Learning Parser ---
+    dl = sub.add_parser('dl-batch', help='Run Deep Learning detection')
+    dl.add_argument('-f', '--file', required=True, help='Path to .eeg/.egf file or directory')
+    dl.add_argument('-s', '--set-file', help='Optional .set file')
+    dl.add_argument('-o', '--output', help='Output directory')
+    dl.add_argument('--model-path', required=True, help='Path to trained model file')
+    dl.add_argument('--threshold', type=float, default=0.5, help='Detection probability threshold')
+    dl.add_argument('--batch-size', type=int, default=32, help='Inference batch size')
+    dl.add_argument('--skip-bits2uv', action='store_true', help='Skip bits-to-uV conversion')
+    dl.add_argument('-v', '--verbose', action='store_true', help='Verbose logging')
 
     return parser
 
 
-def run_hilbert_batch(args: argparse.Namespace):
+def _run_batch_job(args: argparse.Namespace, process_func):
+    """Generic batch runner that iterates files and calls process_func."""
     input_path = Path(args.file).expanduser()
     
     # Check if input is a directory
@@ -196,7 +326,7 @@ def run_hilbert_batch(args: argparse.Namespace):
                 continue
             
             try:
-                event_count = _process_single_file(data_path, set_path, args)
+                event_count = process_func(data_path, set_path, args)
                 successful += 1
                 total_events += event_count
                 file_results.append((data_path.name, event_count))
@@ -241,7 +371,23 @@ def run_hilbert_batch(args: argparse.Namespace):
         if set_path and not set_path.exists() and not args.skip_bits2uv:
             raise FileNotFoundError('Set file not found: {} (pass --skip-bits2uv to continue without scaling)'.format(set_path))
         
-        _process_single_file(input_path, set_path, args)
+        process_func(input_path, set_path, args)
 
 
-__all__ = ['build_parser', 'run_hilbert_batch']
+def run_hilbert_batch(args: argparse.Namespace):
+    _run_batch_job(args, _process_single_file)
+
+
+def run_ste_batch(args: argparse.Namespace):
+    _run_batch_job(args, _process_ste_file)
+
+
+def run_mni_batch(args: argparse.Namespace):
+    _run_batch_job(args, _process_mni_file)
+
+
+def run_dl_batch(args: argparse.Namespace):
+    _run_batch_job(args, _process_dl_file)
+
+
+__all__ = ['build_parser', 'run_hilbert_batch', 'run_ste_batch', 'run_mni_batch', 'run_dl_batch']
