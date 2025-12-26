@@ -48,19 +48,50 @@ cd STLAR
 pip install -e .
 ```
 
+## Project Structure
+```
+STLAR/
+├── hfoGUI/           # Temporal analysis (HFO detection)
+├── stlar/            # Main package wrapper
+├── spatial_mapper/   # Spatial spectral mapping
+├── docs/             # Documentation
+├── tests/            # Test files
+├── settings/         # User configuration files (gitignored)
+├── HFOScores/        # User output data (gitignored)
+└── main.py           # Entry point
+```
+
+**Note:** `settings/` and `HFOScores/` directories contain user-generated configuration and output data. These are created automatically on first run and should not be committed to version control.
+
 ## Quick Start
 
-### GUI Mode
+### HFO Analysis GUI (Temporal)
 ```bash
 python -m stlar
 ```
 
+### Spatial Spectral Mapper GUI
+```bash
+python spatial_mapper/src/main.py
+```
+
 ### Batch Processing
+
+**HFO Detection:**
 ```bash
 python -m stlar.batch_processing.batch_cli \
     --config configs/hfo_detection.yaml \
     --input data/*.set \
     --output results/
+```
+
+**Spatial Spectral Mapper:**
+```bash
+# Single file
+python spatial_mapper/src/batch_ssm.py data/recording.eeg --export-binned-jpgs -o output/
+
+# Directory batch mode
+python spatial_mapper/src/batch_ssm.py data/ --ppm 511 --chunk-size 10 -o results/
 ```
 
 ### Python API
@@ -76,6 +107,18 @@ spatial = SpatialAnalyzer()
 heatmaps = spatial.create_frequency_maps(lfp_data, position_data)
 ```
 
+## Module Structure
+
+### Temporal Analysis (HFO Detection)
+- Location: `hfoGUI/` and `stlar/`
+- Entry: `python -m stlar`
+- See: [docs/PYHFO_SETUP.md](docs/PYHFO_SETUP.md), [docs/CONSENSUS_QUICKSTART.md](docs/CONSENSUS_QUICKSTART.md)
+
+### Spatial Analysis (Spectral Mapper)
+- Location: `spatial_mapper/`
+- Entry: `python spatial_mapper/src/main.py` (GUI) or `python spatial_mapper/src/batch_ssm.py` (CLI)
+- See: [spatial_mapper/README.md](spatial_mapper/README.md)
+
 ## Original Tools
 
 This project unifies:
@@ -86,11 +129,18 @@ Legacy code preserved in `legacy/` folder with full commit history.
 
 ## Documentation
 
-- [Installation Guide](docs/installation.md)
-- [User Manual](docs/user_manual.md)
-- [API Reference](docs/api_reference.md)
-- [Migration Guide](docs/migration_guide.md) - For users of original tools
-- [Contributing](CONTRIBUTING.md)
+### HFO Detection (Temporal Analysis)
+- [PyHFO Setup Guide](docs/PYHFO_SETUP.md)
+- [Consensus Detection Overview](docs/CONSENSUS_DETECTION.md)
+- [Consensus Quick Start](docs/CONSENSUS_QUICKSTART.md)
+- [Consensus Summary](docs/CONSENSUS_SUMMARY.md)
+
+### Spatial Spectral Mapper
+- [Spatial Mapper Guide](spatial_mapper/README.md)
+
+### General
+- Installation: See main README
+- Contributing: [CONTRIBUTING.md](CONTRIBUTING.md) (if exists)
 
 ## Citation
 
