@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 # Test only the helper functions, not the full consensus_detect_events 
 # (which requires GUI imports)
-from hfoGUI.core.Detector import (
+from stlar.core.Detector import (
     _merge_overlaps, 
     _vote_consensus,
     ste_detect_events,

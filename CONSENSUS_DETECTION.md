@@ -8,7 +8,7 @@ A **consensus detection system** has been implemented for HFO (High-Frequency Os
 
 ### Core Components (Backend)
 
-All consensus functions are in `hfoGUI/core/Detector.py`:
+All consensus functions are in `stlar/core/Detector.py`:
 
 1. **`consensus_detect_events()`** - Main entry point
    - Runs Hilbert, STE, and MNI detectors in parallel
@@ -57,7 +57,7 @@ Consensus-detected events are assigned IDs with prefix **"CON"** (e.g., CON1, CO
 New command: `consensus-batch` for headless processing
 
 ```bash
-python -m hfoGUI consensus-batch \
+python -m stlar consensus-batch \
   --file /path/to/data.egf \
   --voting-strategy majority \
   --epoch-sec 300 \
@@ -96,7 +96,7 @@ python -m hfoGUI consensus-batch \
 ### CLI Usage (Single File)
 
 ```bash
-python -m hfoGUI consensus-batch \
+python -m stlar consensus-batch \
   --file ~/data/experiment.egf \
   --voting-strategy majority \
   --output ~/results
@@ -105,7 +105,7 @@ python -m hfoGUI consensus-batch \
 ### CLI Usage (Batch Processing - Directory)
 
 ```bash
-python -m hfoGUI consensus-batch \
+python -m stlar consensus-batch \
   --file ~/data/ \
   --voting-strategy majority \
   --verbose
@@ -204,11 +204,11 @@ All tests pass successfully.
 
 ## Files Modified
 
-1. **hfoGUI/core/Detector.py**
+1. **stlar/core/Detector.py**
    - Added `consensus_detect_events()`, `_merge_overlaps()`, `_vote_consensus()`
    - ~150 lines
 
-2. **hfoGUI/core/Score.py**
+2. **stlar/core/Score.py**
    - Added `ConsensusParametersWindow` class
    - Added `ConsensusDetection()` function
    - Updated `findEOIs()` to handle Consensus option
@@ -217,14 +217,14 @@ All tests pass successfully.
    - Added Consensus to dropdown methods list
    - ~350 lines
 
-3. **hfoGUI/cli.py**
+3. **stlar/cli.py**
    - Added `_process_consensus_file()` function
    - Added consensus-batch parser
    - Added `run_consensus_batch()` function
    - Updated imports and __all__
    - ~100 lines
 
-4. **hfoGUI/__main__.py**
+4. **stlar/__main__.py**
    - Added consensus-batch command handler
    - Updated imports
 

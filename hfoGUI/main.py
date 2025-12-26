@@ -29,11 +29,11 @@ class Window(QtWidgets.QWidget):  # defines the window class (main window)
 
         if getattr(sys, 'frozen', False):
             # frozen
-            self.setWindowTitle("hfoGUI - main window")
+            self.setWindowTitle("STLAR - main window")
 
         else:
             # unfrozen
-            self.setWindowTitle("hfoGUI - main window")
+            self.setWindowTitle("STLAR - main window")
 
         self.ErrorDialogue = Communicate()
         self.ErrorDialogue.myGUI_signal.connect(self.PopUpMessage)
@@ -83,9 +83,9 @@ class Window(QtWidgets.QWidget):  # defines the window class (main window)
 
         # Version information -------------------------------------------
         if getattr(sys, 'frozen', False):
-            version_label = QtWidgets.QLabel("hfoGUI - {}".format(version))
+            version_label = QtWidgets.QLabel("STLAR - {}".format(version))
         else:
-            version_label = QtWidgets.QLabel("hfoGUI - {}".format(version))
+            version_label = QtWidgets.QLabel("STLAR - {}".format(version))
 
         # ------------- grid layout ------------------------
 
