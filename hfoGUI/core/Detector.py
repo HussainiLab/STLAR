@@ -1,8 +1,113 @@
 import numpy as np
 from scipy.signal import butter, sosfiltfilt
+from dataclasses import dataclass
+from pathlib import Path
 
 # All detection methods now use local implementations
 # No external dependencies required
+
+
+def _check_package():
+    """Ensure torch is available for DL detection; raise a clear error if not."""
+    try:
+        import torch  # noqa: F401
+    except ImportError as e:
+        raise RuntimeError("PyTorch is required for deep learning detection. Install with `pip install torch`." ) from e
+
+
+@dataclass
+class ParamDL:
+    sample_freq: float
+    model_path: str
+    threshold: float = 0.5
+    batch_size: int = 32
+
+
+class _LocalDLDetector:
+    """Lightweight DL detector wrapper with TorchScript fallback and RMS backup."""
+
+    def __init__(self, params: ParamDL):
+        self.params = params
+        self.model = None
+        self.device = 'cpu'
+        self.window_secs = 1.0  # 1-second windows by default
+        self.hop_frac = 0.5      # 50% overlap
+        self._load_model()
+
+    def _load_model(self):
+        path = Path(self.params.model_path)
+        if not path.exists():
+            self.model = None
+            return
+        try:
+            import torch
+            torch.set_grad_enabled(False)
+            # Try TorchScript first
+            try:
+                self.model = torch.jit.load(str(path), map_location=self.device)
+            except Exception:
+                # Fallback to regular torch.load (state_dict or full model)
+                try:
+                    obj = torch.load(str(path), map_location=self.device)
+                    if hasattr(obj, 'state_dict'):
+                        # Attempt to rebuild simple model if state_dict
+                        from hfoGUI.dl_training.model import build_model  # local import
+                        mdl = build_model()
+                        mdl.load_state_dict(obj['model_state'] if isinstance(obj, dict) and 'model_state' in obj else obj)
+                        self.model = mdl
+                    else:
+                        self.model = obj
+                except Exception:
+                    self.model = None
+            if self.model is not None:
+                self.model.eval()
+        except Exception:
+            self.model = None
+
+    def detect(self, signal, ch_name='chn1'):
+        # If no model, fall back to RMS detector
+        if self.model is None:
+            events_ms = _local_ste_rms_detect(signal, self.params.sample_freq)
+            # Convert ms to seconds for downstream converter
+            return [{'start': s/1000.0, 'end': e/1000.0} for s, e in events_ms]
+
+        import torch
+        x = np.asarray(signal, dtype=np.float32)
+        fs = float(self.params.sample_freq)
+        win = max(1, int(self.window_secs * fs))
+        hop = max(1, int(win * self.hop_frac))
+
+        pos_windows = []
+        for start in range(0, len(x), hop):
+            end = min(len(x), start + win)
+            seg = x[start:end]
+            if seg.size == 0:
+                continue
+            mu = seg.mean()
+            sd = seg.std() + 1e-8
+            seg = (seg - mu) / sd
+            seg = torch.from_numpy(seg).unsqueeze(0).unsqueeze(0)  # (1,1,L)
+            with torch.no_grad():
+                logit = self.model(seg)
+                if isinstance(logit, (list, tuple)):
+                    logit = logit[0]
+                prob = torch.sigmoid(logit.squeeze()).item()
+            if prob >= float(self.params.threshold):
+                pos_windows.append((start, end))
+
+        # Merge overlapping windows
+        merged = []
+        for start, end in pos_windows:
+            if not merged or start > merged[-1][1]:
+                merged.append([start, end])
+            else:
+                merged[-1][1] = max(merged[-1][1], end)
+
+        return [{'start': s/float(fs), 'end': e/float(fs)} for s, e in merged]
+
+
+def set_DL_detector(params: ParamDL):
+    return _LocalDLDetector(params)
 
 
 def _convert_pyhfo_results_to_eois(hfos, Fs):
