@@ -1,9 +1,11 @@
+import os
+# Force pyqtgraph to use PyQt5 backend to avoid PySide6-specific connect warnings
+os.environ.setdefault('PYQTGRAPH_QT_LIB', 'PyQt5')
 import pyqtgraph as pg
 from pyqtgraph.exporters import ImageExporter
 import numpy as np
 from pyqtgraph.Qt import QtCore, QtWidgets
 import sys
-import os
 import time
 import functools
 from core.animal_tracking import grab_position_data
@@ -1004,14 +1006,16 @@ class Window(QtWidgets.QWidget):  # defines the window class (main window)
                         self.pos_plot_widget.addItem(text)
                         text.setPos(xc, yc)
 
-        # Connect save button
+        # Connect save buttons safely by disconnecting previous specific handlers
         try:
-            self.save_bins_btn.clicked.disconnect()
-        except TypeError:
+            if hasattr(self, '_save_bins_handler') and self._save_bins_handler is not None:
+                self.save_bins_btn.clicked.disconnect(self._save_bins_handler)
+        except Exception:
             pass
         try:
-            self.save_pos_img_btn.clicked.disconnect()
-        except TypeError:
+            if hasattr(self, '_save_pos_img_handler') and self._save_pos_img_handler is not None:
+                self.save_pos_img_btn.clicked.disconnect(self._save_pos_img_handler)
+        except Exception:
             pass
 
         def _save_bins():
@@ -1050,8 +1054,11 @@ class Window(QtWidgets.QWidget):  # defines the window class (main window)
                 exporter.parameters()['antialias'] = True
                 exporter.export(path)
 
-        self.save_bins_btn.clicked.connect(_save_bins)
-        self.save_pos_img_btn.clicked.connect(_save_pos_image)
+        # Store handler references to enable clean disconnect next time
+        self._save_bins_handler = _save_bins
+        self._save_pos_img_handler = _save_pos_image
+        self.save_bins_btn.clicked.connect(self._save_bins_handler)
+        self.save_pos_img_btn.clicked.connect(self._save_pos_img_handler)
 
         self.pos_plot_window.show()
         self.pos_plot_window.raise_()

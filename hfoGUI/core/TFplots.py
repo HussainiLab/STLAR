@@ -136,6 +136,15 @@ class TFPlotWindow(QtWidgets.QWidget):
         for item in active_sources:
             self.source_combo.addItem(item)
 
+        # Auto-select first active source if available
+        if len(active_sources) > 0:
+            # Index 0 is "None", so select the first real source
+            self.source_combo.setCurrentIndex(1)
+            # Populate fields and plot synchronously
+            self.changeSources()
+        else:
+            self.source_combo.setCurrentIndex(0)
+
         source_layout = QtWidgets.QHBoxLayout()
         source_layout.addWidget(source_combo_label)
         source_layout.addWidget(self.source_combo)
@@ -465,6 +474,21 @@ class TFPlotWindow(QtWidgets.QWidget):
         for item in remove_items:
             self.source_combo.removeItem(self.source_combo.findText(item))
 
+        # Ensure selection remains valid; auto-select first active source if needed
+        current_text = self.source_combo.currentText()
+        if current_text not in active_sources:
+            if len(active_sources) > 0:
+                idx = self.source_combo.findText(active_sources[0])
+                if idx >= 0:
+                    self.source_combo.setCurrentIndex(idx)
+                    self.changeSources()
+            else:
+                none_idx = self.source_combo.findText("None")
+                if none_idx >= 0:
+                    self.source_combo.setCurrentIndex(none_idx)
+                self.source_filename = None
+                self.clearPlots()
+
     def changeSources(self):
         """This method will populate the appropriate values in the T-F window forms and runs whenever
         the user changes sources (mainly for if it changes between .egf and .eeg value files)"""
@@ -496,19 +520,13 @@ class TFPlotWindow(QtWidgets.QWidget):
 
             self.raw_data = []
             self.filtered_data = []
-
-            self.plot_thread.start()
-            self.plot_thread_worker = Worker(self.Plot)
-            self.plot_thread_worker.moveToThread(self.plot_thread)
-            self.plot_thread_worker.start.emit("start")
+            # Synchronous plot for reliability across Qt backends
+            self.Plot()
 
     def RePlot(self):
         """This method will start a thread which will replot the data"""
-
-        self.replot_thread.start()
-        self.replot_thread_worker = Worker(plot, self)
-        self.replot_thread_worker.moveToThread(self.replot_thread)
-        self.replot_thread_worker.start.emit("start")
+        # Re-plot synchronously to avoid backend type mismatches
+        self.Plot()
 
     def filterFrequencyChange(self):
         """This method will update the attribute relating to the upper and lower cutoff values"""
