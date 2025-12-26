@@ -35,8 +35,21 @@ class SegmentDataset(Dataset):
         self.manifest = pd.read_csv(manifest_csv)
         if not {'segment_path', 'label'} <= set(self.manifest.columns):
             raise ValueError("Manifest must have columns: segment_path,label")
-        self.paths = self.manifest['segment_path'].tolist()
-        self.labels = self.manifest['label'].astype(int).tolist()
+
+        # Coerce labels to numeric and drop any rows with NaN/inf labels
+        manifest_len = len(self.manifest)
+        self.manifest['label'] = pd.to_numeric(self.manifest['label'], errors='coerce')
+        # Keep only finite labels
+        self.manifest = self.manifest[np.isfinite(self.manifest['label'])]
+        dropped = manifest_len - len(self.manifest)
+        if dropped > 0:
+            print(f"⚠️  Dropped {dropped} rows with missing/invalid labels in {manifest_csv}")
+
+        # Normalize paths to strings; keep rows where segment_path is non-null
+        self.manifest = self.manifest[self.manifest['segment_path'].notna()]
+        self.paths = self.manifest['segment_path'].astype(str).tolist()
+        # Use float labels; BCEWithLogits expects float targets
+        self.labels = self.manifest['label'].astype(float).tolist()
 
     def __len__(self):
         return len(self.paths)
