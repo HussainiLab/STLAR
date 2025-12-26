@@ -66,7 +66,7 @@ def background(self):  # defines the background for each window
         app._custom_palette_applied = True
 
 
-class Worker(QtCore.QObject):
+class Worker(QObject):
     # def __init__(self, main_window, thread):
     def __init__(self, function, *args, **kwargs):
         super(Worker, self).__init__()
@@ -75,9 +75,9 @@ class Worker(QtCore.QObject):
         self.kwargs = kwargs
         self.start.connect(self.run)
 
-    start = QtCore.Signal(str)
+    start = pyqtSignal(str)
 
-    @QtCore.Slot()
+    @pyqtSlot()
     def run(self):
 
         self.function(*self.args, **self.kwargs)

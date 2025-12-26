@@ -1,4 +1,8 @@
 import sys
+import os
+
+# Force pyqtgraph to use PyQt5 backend before importing main
+os.environ.setdefault('PYQTGRAPH_QT_LIB', 'PyQt5')
 
 from .cli import build_parser, run_hilbert_batch, run_ste_batch, run_mni_batch, run_consensus_batch, run_dl_batch
 from .main import run
