@@ -1967,7 +1967,7 @@ class ScoreWindow(QtWidgets.QWidget):
             return
 
         args = [
-            sys.executable, "-m", "hfoGUI.dl_training.train",
+            sys.executable, "-m", "stlar.dl_training.train",
             "--train", train_path,
             "--val", val_path,
             "--epochs", str(self.epochs_spin.value()),
@@ -2016,7 +2016,7 @@ class ScoreWindow(QtWidgets.QWidget):
         ts_path = os.path.join(out_dir, "model_traced.pt")
 
         args = [
-            sys.executable, "-m", "hfoGUI.dl_training.export",
+            sys.executable, "-m", "stlar.dl_training.export",
             "--ckpt", ckpt,
             "--onnx", onnx_path,
             "--ts", ts_path,

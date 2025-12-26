@@ -289,7 +289,7 @@ def _save_results(events, params, data_path, set_path, args, method_tag):
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description='hfoGUI command-line utilities')
+    parser = argparse.ArgumentParser(description='STLAR command-line utilities')
     sub = parser.add_subparsers(dest='command')
 
     # --- Hilbert Parser ---
