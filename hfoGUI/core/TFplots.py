@@ -10,13 +10,23 @@ import pyqtgraph as pg
 from matplotlib import cm
 from matplotlib.colors import ColorConverter
 from pyqtgraph.Qt import QtCore, QtWidgets
+
+# Import Signal and Slot from the Qt backend
+try:
+    from PyQt5.QtCore import pyqtSignal, pyqtSlot, QObject
+except ImportError:
+    try:
+        from PyQt6.QtCore import pyqtSignal, pyqtSlot, QObject
+    except ImportError:
+        from PySide6.QtCore import Signal as pyqtSignal, Slot as pyqtSlot, QObject
+
 from scipy import interpolate
 import time
 
 
-class update_plots_signal(QtCore.QObject):
+class update_plots_signal(QObject):
     """This is a custom plot signal class so we can replot from the main thread"""
-    mysignal = QtCore.pyqtSignal(str, object, object)
+    mysignal = pyqtSignal(str, object, object)
 
 
 class PltWidget(pg.PlotWidget):

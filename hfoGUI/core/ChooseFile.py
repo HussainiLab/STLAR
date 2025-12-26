@@ -1,6 +1,6 @@
 import os
 import sys
-from PyQt5 import QtWidgets, QtCore
+from pyqtgraph.Qt import QtWidgets, QtCore
 from core.GUI_Utils import background, center
 
 
