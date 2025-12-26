@@ -15,7 +15,7 @@ from core.Score import ScoreWindow
 from core.TFplots import TFPlotWindow
 from core.ChooseFile import ChooseFile, new_File
 
-version = "1.0"
+version = "2.0"
 
 _author_ = "Geoffrey Barrett, HussainiLab"  # defines the author
 
