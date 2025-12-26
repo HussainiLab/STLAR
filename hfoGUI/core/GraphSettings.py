@@ -63,7 +63,7 @@ class GraphSettingsWindows(QtWidgets.QWidget):
             self.mainWindow.graphics_window.scene().sigMouseClicked, rateLimit=60, slot=self.mousePress,
         )
 
-        self.setWindowTitle("hfoGUI - Graph Settings Window")  # sets the title of the window
+        self.setWindowTitle("STLAR - Graph Settings Window")  # sets the title of the window
 
         main_location = main.frameGeometry().getCoords()
 

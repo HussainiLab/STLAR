@@ -32,19 +32,19 @@ conda run -n pyhfogui pip install torch onnxruntime
 - Select output directory and click "Create Train/Val Split".
 - This creates `train.csv`, `val.csv`, and metadata files with proper subject-wise splitting.
 
-   Alternatively (manual split): Split `manifest.csv` into train/val using the command-line tool:
+  Alternatively (manual split): Split `manifest.csv` into train/val using the command-line tool:
 ```powershell
-conda run -n pyhfogui python -m hfoGUI.dl_training.manifest_splitter manifest1.csv manifest2.csv --val-frac 0.2 --output splits/
+conda run -n pyhfogui python -m stlar.dl_training.manifest_splitter manifest1.csv manifest2.csv --val-frac 0.2 --output splits/
 ```
 
 5) Train:
 ```powershell
-conda run -n pyhfogui python -m hfoGUI.dl_training.train --train splits/train.csv --val splits/val.csv --epochs 15 --batch-size 64 --lr 1e-3 --out-dir models
+conda run -n pyhfogui python -m stlar.dl_training.train --train splits/train.csv --val splits/val.csv --epochs 15 --batch-size 64 --lr 1e-3 --out-dir models
 ```
 
 6) Export TorchScript and ONNX:
 ```powershell
-conda run -n pyhfogui python -m hfoGUI.dl_training.export --ckpt models/best.pt --onnx models/hfo_classifier.onnx --ts models/hfo_classifier.pt
+conda run -n pyhfogui python -m stlar.dl_training.export --ckpt models/best.pt --onnx models/hfo_classifier.onnx --ts models/hfo_classifier.pt
 ```
 
 8) Use in GUI:

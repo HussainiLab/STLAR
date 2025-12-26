@@ -5,7 +5,7 @@ import os
 import time
 import sys
 
-project_name = 'hfoGUI'
+project_name = 'STLAR'
 
 
 def background(self):  # defines the background for each window

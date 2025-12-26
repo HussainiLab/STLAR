@@ -139,14 +139,14 @@ A **consensus-based HFO detection system** has been successfully implemented, co
 
 ### CLI (Single File)
 ```bash
-python -m hfoGUI consensus-batch \
+python -m stlar consensus-batch \
   --file ~/data/experiment.egf \
   --voting-strategy majority
 ```
 
 ### CLI (Batch)
 ```bash
-python -m hfoGUI consensus-batch \
+python -m stlar consensus-batch \
   --file ~/data/directory/ \
   --voting-strategy majority \
   --verbose
@@ -181,10 +181,10 @@ Single-detector training:    Consensus-detector training:
 
 | File | Changes | Lines |
 |------|---------|-------|
-| `hfoGUI/core/Detector.py` | Added consensus functions | +150 |
-| `hfoGUI/core/Score.py` | Added GUI window + detection function | +350 |
-| `hfoGUI/cli.py` | Added CLI command + batch processor | +100 |
-| `hfoGUI/__main__.py` | Added consensus-batch handler | +5 |
+| `stlar/core/Detector.py` | Added consensus functions | +150 |
+| `stlar/core/Score.py` | Added GUI window + detection function | +350 |
+| `stlar/cli.py` | Added CLI command + batch processor | +100 |
+| `stlar/__main__.py` | Added consensus-batch handler | +5 |
 
 **Total new code**: ~605 lines (well-organized, thoroughly documented)
 
@@ -208,7 +208,7 @@ Single-detector training:    Consensus-detector training:
 ## Next Steps (Optional)
 
 ### Immediate Use
-1. Open GUI: `python -m hfoGUI`
+1. Open GUI: `python -m stlar`
 2. Load data → Score Window → "Automatic Detection"
 3. Select "Consensus" method
 4. Try it out!
