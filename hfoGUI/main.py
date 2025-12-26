@@ -17,7 +17,7 @@ from core.ChooseFile import ChooseFile, new_File
 
 version = "1.0"
 
-_author_ = "Geoffrey Barrett"  # defines myself as the author
+_author_ = "Geoffrey Barrett, HussainiLab"  # defines the author
 
 
 class Window(QtWidgets.QWidget):  # defines the window class (main window)
