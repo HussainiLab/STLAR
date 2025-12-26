@@ -5,7 +5,7 @@ STLAR (pronounced Stellar) is a Spatio-Temporal LFP analysis tool combining hfoG
 ## Features
 
 ### 🕐 Temporal Analysis
-- HFO detection (ripples 140-250 Hz, fast ripples 250-500 Hz)
+- HFO detection (ripples 80-250 Hz, fast ripples 250-500 Hz)
 - Multi-band filtering and visualization
 - Time-frequency analysis (Stockwell transform)
 - Event scoring and annotation
@@ -171,8 +171,8 @@ GPL-3.0 License - see [LICENSE](LICENSE) file for details.
 ## Acknowledgments
 
 Built upon the foundational work of:
-- PyhfoGUI contributors
-- Spatial_Spectral_Mapper contributors
+- hfoGUI contributors (Geoff Barrett)
+- Spatial_Spectral_Mapper contributors (Srujan Vajram)
 - HussainiLab members
 
 ---
