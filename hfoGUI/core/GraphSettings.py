@@ -9,22 +9,32 @@ import core.filtering as filt
 import scipy
 import pyqtgraph as pg
 from pyqtgraph.Qt import QtCore, QtWidgets
+
+# Import Signal and Slot from the Qt backend
+try:
+    from PyQt5.QtCore import pyqtSignal, pyqtSlot, QObject
+except ImportError:
+    try:
+        from PyQt6.QtCore import pyqtSignal, pyqtSlot, QObject
+    except ImportError:
+        from PySide6.QtCore import Signal as pyqtSignal, Slot as pyqtSlot, QObject
+
 import numpy as np
 from scipy import signal
 
 
 
-class update_plots_signal(QtCore.QObject):
-    mysignal = QtCore.pyqtSignal(str, object, object, dict)
+class update_plots_signal(QObject):
+    mysignal = pyqtSignal(str, object, object, dict)
     # could have combined these two into a single signal... but who has time for that?
-    mouse_signal = QtCore.pyqtSignal(str)
-    lr_signal = QtCore.pyqtSignal(str)
+    mouse_signal = pyqtSignal(str)
+    lr_signal = pyqtSignal(str)
 
 
-class customProgress_signal(QtCore.QObject):
-    start_signal = QtCore.pyqtSignal(str)
-    mysignal = QtCore.pyqtSignal(str, dict)
-    close_signal = QtCore.pyqtSignal(str)
+class customProgress_signal(QObject):
+    start_signal = pyqtSignal(str)
+    mysignal = pyqtSignal(str, dict)
+    close_signal = pyqtSignal(str)
 
 
 class GraphSettingsWindows(QtWidgets.QWidget):
@@ -42,9 +52,9 @@ class GraphSettingsWindows(QtWidgets.QWidget):
         self.newData.mouse_signal.connect(self.mouse_slot)
 
         self.progress_signal = customProgress_signal()
-        self.progress_signal.start_signal.connect(lambda: self.Progress('start'))
+        self.progress_signal.start_signal.connect(lambda x: self.Progress('start'))
         self.progress_signal.mysignal.connect(self.update_progress)
-        self.progress_signal.close_signal.connect(lambda: self.Progress('stop'))
+        self.progress_signal.close_signal.connect(lambda x: self.Progress('stop'))
 
         self.ActiveSourceSignal = Communicate()
         self.RePlotTFSignal = Communicate()
@@ -554,7 +564,7 @@ class GraphSettingsWindows(QtWidgets.QWidget):
             self.mainWindow.proxy = pg.SignalProxy(self.mainWindow.Graph_axis.scene().sigMouseMoved, rateLimit=60,
                                    slot=self.mainWindow.mouseMoved)
 
-    def changeFilter(self, i, j):
+    def changeFilter(self, i, j, index=None):
         lower = False
         upper = False
         for option, position in self.graph_header_option_positions.items():
@@ -595,7 +605,7 @@ class GraphSettingsWindows(QtWidgets.QWidget):
             self.graph_header_option_fields[i_upper, j_upper + 1].setDisabled(1)
             self.graph_header_option_fields[i_upper, j_upper + 1].setText('N/A')
 
-    def changeMethod(self, i , j):
+    def changeMethod(self, i, j, index=None):
         for option, position in self.graph_header_option_positions.items():
             if 'Filter Type' in option:
                 i_type, j_type = position
@@ -781,11 +791,11 @@ class GraphSettingsWindows(QtWidgets.QWidget):
         self.setDefaultOptions()
 
         self.ActiveSourceSignal.myGUI_signal.emit('update')
-
-        self.mainWindow.plot_thread.start()
-        self.mainWindow.plot_thread_worker = Worker(self.Plot)
-        self.mainWindow.plot_thread_worker.moveToThread(self.mainWindow.plot_thread)
-        self.mainWindow.plot_thread_worker.start.emit("start")
+        # Plot synchronously to ensure immediate feedback
+        try:
+            self.Plot()
+        except Exception:
+            pass
 
     def sourceSelected(self):
         root = self.graphs.invisibleRootItem()
@@ -1389,11 +1399,11 @@ class GraphSettingsWindows(QtWidgets.QWidget):
             (item.parent() or root).removeChild(item)
 
         self.ActiveSourceSignal.myGUI_signal.emit('update')
-
-        self.mainWindow.plot_thread.start()
-        self.mainWindow.plot_thread_worker = Worker(self.Plot)
-        self.mainWindow.plot_thread_worker.moveToThread(self.mainWindow.plot_thread)
-        self.mainWindow.plot_thread_worker.start.emit("start")
+        # Re-plot synchronously to keep the view updated
+        try:
+            self.Plot()
+        except Exception:
+            pass
 
     def updateSource(self):
 
@@ -1463,11 +1473,11 @@ class GraphSettingsWindows(QtWidgets.QWidget):
         self.ActiveSourceSignal.myGUI_signal.emit('update')
 
         self.setDefaultOptions()
-
-        self.mainWindow.plot_thread.start()
-        self.mainWindow.plot_thread_worker = Worker(self.Plot)
-        self.mainWindow.plot_thread_worker.moveToThread(self.mainWindow.plot_thread)
-        self.mainWindow.plot_thread_worker.start.emit("start")
+        # Re-plot synchronously to keep the view updated
+        try:
+            self.Plot()
+        except Exception:
+            pass
 
     def getSources(self):
         sources = []
@@ -1569,11 +1579,11 @@ class GraphSettingsWindows(QtWidgets.QWidget):
             self.current_profile = new_profile
 
             self.ActiveSourceSignal.myGUI_signal.emit('update')
-
-            self.mainWindow.plot_thread.start()
-            self.mainWindow.plot_thread_worker = Worker(self.Plot)
-            self.mainWindow.plot_thread_worker.moveToThread(self.mainWindow.plot_thread)
-            self.mainWindow.plot_thread_worker.start.emit("start")
+            # Re-plot synchronously to keep the view updated
+            try:
+                self.Plot()
+            except Exception:
+                pass
 
     def deleteProfile(self):
         for option, (i, j) in self.graph_header_option_positions.items():

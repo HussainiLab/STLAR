@@ -1,4 +1,14 @@
 from pyqtgraph.Qt import QtGui, QtCore, QtWidgets
+
+# Import Signal and Slot from the Qt backend
+try:
+    from PyQt5.QtCore import pyqtSignal, pyqtSlot, QObject
+except ImportError:
+    try:
+        from PyQt6.QtCore import pyqtSignal, pyqtSlot, QObject
+    except ImportError:
+        from PySide6.QtCore import Signal as pyqtSignal, Slot as pyqtSlot, QObject
+
 from core.GUI_Utils import background, center, find_consec
 import os, time, json, functools, sys
 from scipy.signal import hilbert, welch
@@ -24,23 +34,23 @@ class TreeWidgetItem(QtWidgets.QTreeWidgetItem):
             return self.text(column) < otherItem.text(column)
 
 
-class AddItemSignal(QtCore.QObject):
+class AddItemSignal(QObject):
     """This is a signal was created so that we could add QTreeWidgetItems
     from the main thread since it did not like that we were adding EOIs
     from a thread"""
-    childAdded = QtCore.pyqtSignal(object)
+    childAdded = pyqtSignal(object)
 
 
-class custom_signal(QtCore.QObject):
+class custom_signal(QObject):
     """This method will contain the signal that will allow for the linear region selector to be
     where the current score/EOI is so the user can change if they want"""
 
-    set_lr_signal = QtCore.pyqtSignal(str, str)
+    set_lr_signal = pyqtSignal(str, str)
 
 
-class ProgressSignal(QtCore.QObject):
+class ProgressSignal(QObject):
     """Signal for detection progress updates."""
-    progress = QtCore.pyqtSignal(str)  # Emits status message like "Hilbert: 45%"
+    progress = pyqtSignal(str)  # Emits status message like "Hilbert: 45%"
 
 
 class ScoreWindow(QtWidgets.QWidget):

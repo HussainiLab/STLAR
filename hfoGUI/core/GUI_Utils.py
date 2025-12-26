@@ -1,5 +1,18 @@
 import pyqtgraph as pg
 from pyqtgraph.Qt import QtGui, QtCore, QtWidgets
+
+# Import Signal, Slot, and QObject from the Qt backend
+try:
+    from PyQt5.QtCore import pyqtSignal, pyqtSlot, QObject
+    from PyQt5.QtWidgets import QAction
+except ImportError:
+    try:
+        from PyQt6.QtCore import pyqtSignal, pyqtSlot, QObject
+        from PyQt6.QtGui import QAction
+    except ImportError:
+        from PySide6.QtCore import Signal as pyqtSignal, Slot as pyqtSlot, QObject
+        from PySide6.QtGui import QAction
+
 import exporters
 import os
 import time
@@ -26,7 +39,8 @@ def background(self):  # defines the background for each window
         os.mkdir(self.SETTINGS_DIR)
 
     # Window icon disabled (image assets removed)
-    self.deskW, self.deskH = QtWidgets.QDesktopWidget().availableGeometry().getRect()[2:] #gets the window resolution
+    screen = QtWidgets.QApplication.primaryScreen().availableGeometry()
+    self.deskW, self.deskH = screen.width(), screen.height() #gets the window resolution
     self.setGeometry(0, 0, int(self.deskW/2), int(self.deskH/1.5))  # Sets the window size, 800x460 is the size of our window
 
     QtWidgets.QApplication.setStyle(QtWidgets.QStyleFactory.create('Fusion'))
@@ -52,7 +66,7 @@ def background(self):  # defines the background for each window
         app._custom_palette_applied = True
 
 
-class Worker(QtCore.QObject):
+class Worker(QObject):
     # def __init__(self, main_window, thread):
     def __init__(self, function, *args, **kwargs):
         super(Worker, self).__init__()
@@ -61,9 +75,9 @@ class Worker(QtCore.QObject):
         self.kwargs = kwargs
         self.start.connect(self.run)
 
-    start = QtCore.pyqtSignal(str)
+    start = pyqtSignal(str)
 
-    @QtCore.pyqtSlot()
+    @pyqtSlot()
     def run(self):
 
         self.function(*self.args, **self.kwargs)
@@ -72,16 +86,19 @@ class Worker(QtCore.QObject):
 def center(self):
     """centers the window on the screen"""
     frameGm = self.frameGeometry()
-    screen = QtWidgets.QApplication.desktop().screenNumber(QtWidgets.QApplication.desktop().cursor().pos())
-    centerPoint = QtWidgets.QApplication.desktop().screenGeometry(screen).center()
+    screen = QtWidgets.QApplication.primaryScreen().availableGeometry()
+    centerPoint = screen.center()
     frameGm.moveCenter(centerPoint)
     self.move(frameGm.topLeft())
 
 
-class Communicate(QtCore.QObject):
+class Communicate(QObject):
     """A custom pyqtsignal so that errors and popups can be called from the threads
     to the main window"""
-    myGUI_signal = QtCore.pyqtSignal(str)
+    myGUI_signal = pyqtSignal(str)
+    
+    def __init__(self, parent=None):
+        super(Communicate, self).__init__(parent)
 
 
 def find_consec(data):
@@ -141,9 +158,7 @@ class CustomViewBox(pg.ViewBox):
         """
         if self.menu is None:
             self.menu = QtWidgets.QMenu()
-            self.save_plot = QtWidgets.QAction("Save Figure", self.menu)
-            self.save_plot.triggered.connect(self.export)
-            self.menu.addAction(self.save_plot)
+            self.save_plot = self.menu.addAction("Save Figure", self.export)
         return self.menu
 
     def export(self):
@@ -196,7 +211,7 @@ class PltWidget(pg.PlotWidget):
         super(PltWidget, self).__init__(parent, viewBox=CustomViewBox())
 
 
-@QtCore.pyqtSlot()
+@pyqtSlot()
 def raise_w(new_window, old_window, source=''):
     """ raise the current window"""
     if 'ChooseFile' in str(new_window):
@@ -242,7 +257,7 @@ def raise_w(new_window, old_window, source=''):
         old_window.hide()
 
 
-@QtCore.pyqtSlot()
+@pyqtSlot()
 def raise_detection_window(new_window, old_window):
     """ raise the current window"""
     if any(analysis in str(new_window) for analysis in ['Hilbert', ]):
