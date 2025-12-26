@@ -34,7 +34,7 @@ Use defaults or adjust:
 
 ### Single File Detection
 ```bash
-conda run -n pyhfogui python -m stlar consensus-batch \
+python -m stlar consensus-batch \
   --file path/to/data.egf \
   --voting-strategy majority \
   --output path/to/results
@@ -42,7 +42,7 @@ conda run -n pyhfogui python -m stlar consensus-batch \
 
 ### Batch Directory Processing
 ```bash
-conda run -n pyhfogui python -m stlar consensus-batch \
+python -m stlar consensus-batch \
   --file path/to/data/directory/ \
   --voting-strategy majority \
   --verbose

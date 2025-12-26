@@ -2,8 +2,6 @@
 
 STLAR (pronounced Stellar) is a Spatio-Temporal LFP analysis tool combining hfoGUI and Spatial Spectral Mapper.
 
-![STLAR Logo](docs/assets/stlar_logo.png)
-
 ## Features
 
 ### 🕐 Temporal Analysis
@@ -45,6 +43,9 @@ git clone https://github.com/HussainiLab/STLAR.git
 cd STLAR
 
 # Install dependencies
+pip install -r requirements.txt
+
+# (Optional) install package locally
 pip install -e .
 ```
 
@@ -112,7 +113,7 @@ heatmaps = spatial.create_frequency_maps(lfp_data, position_data)
 ### Temporal Analysis (HFO Detection)
 - Location: `hfoGUI/` and `stlar/`
 - Entry: `python -m stlar`
-- See: [docs/PYHFO_SETUP.md](docs/PYHFO_SETUP.md), [docs/CONSENSUS_QUICKSTART.md](docs/CONSENSUS_QUICKSTART.md)
+- See: [docs/CONSENSUS_QUICKSTART.md](docs/CONSENSUS_QUICKSTART.md), [docs/CONSENSUS_DETECTION.md](docs/CONSENSUS_DETECTION.md)
 
 ### Spatial Analysis (Spectral Mapper)
 - Location: `spatial_mapper/`
@@ -125,12 +126,11 @@ This project unifies:
 - [PyhfoGUI](https://github.com/HussainiLab/PyhfoGUI) - Temporal LFP analysis
 - [Spatial_Spectral_Mapper](https://github.com/HussainiLab/Spatial_Spectral_Mapper) - Spatial LFP analysis
 
-Legacy code preserved in `legacy/` folder with full commit history.
+<!-- Legacy code note removed: no `legacy/` folder in repo -->
 
 ## Documentation
 
 ### HFO Detection (Temporal Analysis)
-- [PyHFO Setup Guide](docs/PYHFO_SETUP.md)
 - [Consensus Detection Overview](docs/CONSENSUS_DETECTION.md)
 - [Consensus Quick Start](docs/CONSENSUS_QUICKSTART.md)
 - [Consensus Summary](docs/CONSENSUS_SUMMARY.md)
