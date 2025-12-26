@@ -8,7 +8,7 @@ A **consensus detection system** has been implemented for HFO (High-Frequency Os
 
 ### Core Components (Backend)
 
-All consensus functions are in `stlar/core/Detector.py`:
+All consensus functions are in `hfoGUI/core/Detector.py`:
 
 1. **`consensus_detect_events()`** - Main entry point
    - Runs Hilbert, STE, and MNI detectors in parallel
@@ -30,7 +30,7 @@ All consensus functions are in `stlar/core/Detector.py`:
 
 ### GUI Integration
 
-#### New Window: ConsensusParametersWindow (Score.py)
+#### New Window: ConsensusParametersWindow (`hfoGUI/core/Score.py`)
 
 Interactive parameter configuration window with three grouped parameter sections:
 
@@ -54,7 +54,7 @@ Consensus-detected events are assigned IDs with prefix **"CON"** (e.g., CON1, CO
 
 ### CLI Support
 
-New command: `consensus-batch` for headless processing
+Command: `consensus-batch` for headless processing (via `python -m stlar`)
 
 ```bash
 python -m stlar consensus-batch \
@@ -188,7 +188,7 @@ Balanced parameters chosen to avoid overly aggressive detection:
 
 ## Testing
 
-Unit tests in `test_consensus.py`:
+Unit tests in `tests/test_consensus.py`:
 - ✓ Merge overlaps function
 - ✓ Vote consensus function (all strategies)
 - ✓ Detector integration on synthetic HFO data
@@ -204,29 +204,19 @@ All tests pass successfully.
 
 ## Files Modified
 
-1. **stlar/core/Detector.py**
-   - Added `consensus_detect_events()`, `_merge_overlaps()`, `_vote_consensus()`
-   - ~150 lines
+1. **hfoGUI/core/Detector.py**
+   - `consensus_detect_events()`, `_merge_overlaps()`, `_vote_consensus()`
 
-2. **stlar/core/Score.py**
-   - Added `ConsensusParametersWindow` class
-   - Added `ConsensusDetection()` function
-   - Updated `findEOIs()` to handle Consensus option
-   - Added consensus_thread to ScoreWindow
-   - Updated id_abbreviations dict
-   - Added Consensus to dropdown methods list
-   - ~350 lines
+2. **hfoGUI/core/Score.py**
+   - `ConsensusParametersWindow` UI
+   - `ConsensusDetection()` worker integration
 
-3. **stlar/cli.py**
-   - Added `_process_consensus_file()` function
-   - Added consensus-batch parser
-   - Added `run_consensus_batch()` function
-   - Updated imports and __all__
-   - ~100 lines
+3. **hfoGUI/cli.py**
+   - `_process_consensus_file()`
+   - `consensus-batch` parser and runner
 
 4. **stlar/__main__.py**
-   - Added consensus-batch command handler
-   - Updated imports
+   - Delegates CLI to `hfoGUI.__main__`
 
 ## Version
 

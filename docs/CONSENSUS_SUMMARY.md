@@ -12,14 +12,14 @@ A **consensus-based HFO detection system** has been successfully implemented, co
 
 ## What Was Built
 
-### 1. Backend (Detector.py) - ~150 lines
+### 1. Backend (`hfoGUI/core/Detector.py`)
 - `consensus_detect_events()` - Main voting function
 - `_merge_overlaps()` - Event deduplication helper
 - `_vote_consensus()` - Smart voting logic with 3 strategies
-- Support for Hilbert, STE, and MNI detectors
+- Hilbert, STE, and MNI detector helpers
 
-### 2. GUI (Score.py) - ~350 lines
-- New `ConsensusParametersWindow` class
+### 2. GUI (`hfoGUI/core/Score.py`)
+- `ConsensusParametersWindow` class
   - Interactive parameter configuration
   - Grouped UI for each detector's 3-5 parameters
   - Voting strategy selector (Strict/Majority/Any)
@@ -30,8 +30,8 @@ A **consensus-based HFO detection system** has been successfully implemented, co
   - Settings saved and reloadable
   - Event IDs prefixed "CON" (CON1, CON2, etc.)
 
-### 3. CLI (cli.py) - ~100 lines
-- New `consensus-batch` command
+### 3. CLI (`hfoGUI/cli.py`)
+- `consensus-batch` command
 - Full parameter control via command-line flags
 - Batch directory processing support
 - Settings output to JSON for reproducibility
@@ -177,16 +177,12 @@ Single-detector training:    Consensus-detector training:
 
 ---
 
-## Files Modified
+## Implemented In
 
-| File | Changes | Lines |
-|------|---------|-------|
-| `stlar/core/Detector.py` | Added consensus functions | +150 |
-| `stlar/core/Score.py` | Added GUI window + detection function | +350 |
-| `stlar/cli.py` | Added CLI command + batch processor | +100 |
-| `stlar/__main__.py` | Added consensus-batch handler | +5 |
-
-**Total new code**: ~605 lines (well-organized, thoroughly documented)
+- `hfoGUI/core/Detector.py`
+- `hfoGUI/core/Score.py`
+- `hfoGUI/cli.py`
+- `stlar/__main__.py`
 
 ---
 
