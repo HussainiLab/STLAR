@@ -1,6 +1,6 @@
-# STLAR: Spatio-Temporal LFP Analysis & Research
+# STLAR: Spatio-Temporal LFP Analyzer
 
-Unified spatio-temporal LFP analysis tool combining PyhfoGUI and Spatial_Spectral_Mapper.
+STLAR (pronounced Stellar) is a Spatio-Temporal LFP analysis tool combining hfoGUI and Spatial Spectral Mapper.
 
 ![STLAR Logo](docs/assets/stlar_logo.png)
 
