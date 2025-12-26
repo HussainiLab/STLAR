@@ -307,7 +307,7 @@ class Window(QtWidgets.QWidget):  # defines the window class (main window)
         if self.GraphLoaded:
             self.current_time_object.setText(str(self.scrollbar.value() * 1000 / self.SourceFs))
 
-    def changeCurrentGraph(self, source):
+    def changeCurrentGraph(self, source, *args):
         if not self.GraphLoaded:
             return
 
@@ -457,7 +457,7 @@ class Window(QtWidgets.QWidget):  # defines the window class (main window)
                 except ValueError:
                     self.current_time = None
 
-            elif 'Plot Spike' in parameter:
+            elif 'Plot Spikes' in parameter:
                 self.plot_spikes = self.graph_parameter_fields[position[0], position[1] + 1].isChecked()
             elif 'Start Time' in parameter:
                 try:
@@ -1140,7 +1140,7 @@ def run_intan_converter():
         print(f"Error running Intan converter: {e}")
 
 
-def ImportSet(main_window, graph_options_window, score_window, tf_plots_window):
+def ImportSet(main_window, graph_options_window, score_window, tf_plots_window, *args):
     """Updates the fields of the graph options window when the .set file changes"""
     if hasattr(main_window, 'scrollbar_thread'):
         main_window.scrollbar_thread.terminate()
@@ -1254,6 +1254,35 @@ def ImportSet(main_window, graph_options_window, score_window, tf_plots_window):
 
     clear_all(main_window, graph_options_window, score_window, tf_plots_window)
 
+    # Ensure sensible defaults for plotting parameters if empty
+    try:
+        # Window Size default: 1000 ms
+        ws_i, ws_j = main_window.graph_parameter_field_positions.get('Window Size(ms):', (None, None))
+        if ws_i is not None:
+            ws_field = main_window.graph_parameter_fields[ws_i, ws_j + 1]
+            if not ws_field.text().strip():
+                ws_field.setText('1000')
+        # Current Time default: 0 ms
+        ct_i, ct_j = main_window.graph_parameter_field_positions.get('Current Time(ms):', (None, None))
+        if ct_i is not None:
+            ct_field = main_window.graph_parameter_fields[ct_i, ct_j + 1]
+            if not ct_field.text().strip():
+                ct_field.setText('0')
+        # Start/Stop Time defaults
+        st_i, st_j = main_window.graph_parameter_field_positions.get('Start Time(ms):', (None, None))
+        if st_i is not None:
+            st_field = main_window.graph_parameter_fields[st_i, st_j + 1]
+            if not st_field.text().strip():
+                st_field.setText('0')
+        sp_i, sp_j = main_window.graph_parameter_field_positions.get('Stop Time(ms):', (None, None))
+        if sp_i is not None:
+            sp_field = main_window.graph_parameter_fields[sp_i, sp_j + 1]
+            if not sp_field.text().strip():
+                # default stop time to window size initially
+                sp_field.setText(main_window.graph_parameter_fields[ws_i, ws_j + 1].text())
+    except Exception:
+        pass
+
     main_window.scrollbar_thread.start()
     main_window.scrollbar_thread_worker = Worker(main_window.setCurrentTime)
     main_window.scrollbar_thread_worker.moveToThread(main_window.scrollbar_thread)
@@ -1344,7 +1373,8 @@ def run():
 
     setting_w.RePlotTFSignal.myGUI_signal.connect(tf_plot_w.RePlot)
 
-    sys.exit(app.exec_())  # prevents the window from immediately exiting out
+    # Use exec() for Qt6/PySide6, exec_() for Qt5
+    sys.exit(app.exec() if hasattr(app, 'exec') else app.exec_())
 
 
 if __name__ == '__main__':
