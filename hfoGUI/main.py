@@ -8,6 +8,7 @@ from pyqtgraph.Qt import QtCore, QtWidgets
 import sys
 import time
 import functools
+import re
 from core.animal_tracking import grab_position_data
 from core.GUI_Utils import background, Communicate, CustomViewBox, center, Worker, raise_w
 from core.GraphSettings import GraphSettingsWindows
@@ -1360,6 +1361,101 @@ def plotCheckChanged(main_window, settings_window):
         settings_window.Plot()
 
 
+def validate_and_plot_spikes(main_window, settings_window, checked):
+    """Validate spike files before allowing Plot Spikes to be enabled.
+    If validation fails, revert the checkbox and show a popup.
+    """
+    try:
+        # Ensure we have a boolean
+        if not isinstance(checked, bool):
+            checked = bool(checked)
+        if checked:
+            setfile = getattr(main_window, 'current_set_filename', '')
+            if not setfile:
+                QtWidgets.QMessageBox.information(
+                    main_window,
+                    "Missing .set",
+                    "Import a '.set' file before enabling Plot Spikes."
+                )
+                # revert checkbox
+                for key, pos in main_window.graph_parameter_field_positions.items():
+                    if 'Plot' in key:
+                        i, j = pos
+                        cb = main_window.graph_parameter_fields.get((i, j + 1))
+                        if cb:
+                            cb.blockSignals(True)
+                            cb.setChecked(False)
+                            cb.blockSignals(False)
+                        break
+                return
+
+            session_path, set_filename = os.path.split(setfile)
+            session = os.path.splitext(set_filename)[0]
+            if not os.path.isdir(session_path):
+                missing_msg = "Session directory not found: %s" % session_path
+                QtWidgets.QMessageBox.information(main_window, "Missing Files", missing_msg)
+                # revert
+                for key, pos in main_window.graph_parameter_field_positions.items():
+                    if 'Plot' in key:
+                        i, j = pos
+                        cb = main_window.graph_parameter_fields.get((i, j + 1))
+                        if cb:
+                            cb.blockSignals(True)
+                            cb.setChecked(False)
+                            cb.blockSignals(False)
+                        break
+                return
+
+            files = os.listdir(session_path)
+            # patterns for tetrode files: session.N or session.N.clu
+            tetrode_exists = any(re.match(r'^%s\.\d+$' % re.escape(session), f) for f in files)
+            tetrode_exists = tetrode_exists or any(re.match(r'^%s\.\d+\.clu$' % re.escape(session), f) for f in files)
+
+            # patterns for cut/clu files: session_N.cut, session.N.cut, session.N.clu
+            cut_exists = any(re.match(r'^%s_[0-9]+\.cut$' % re.escape(session), f) for f in files)
+            cut_exists = cut_exists or any(re.match(r'^%s\.\d+\.cut$' % re.escape(session), f) for f in files)
+            cut_exists = cut_exists or any(re.match(r'^%s\.\d+\.clu$' % re.escape(session), f) for f in files)
+
+            if not (tetrode_exists and cut_exists):
+                msg_lines = ["Cannot enable Plot Spikes — missing files:"]
+                if not tetrode_exists:
+                    msg_lines.append(f"- Tetrode files (e.g., {session}.1, {session}.2)")
+                if not cut_exists:
+                    msg_lines.append(f"- Cut/Clu files (e.g., {session}_1.cut, {session}.1.clu)")
+                QtWidgets.QMessageBox.information(main_window, "Missing Spike Files", "\n".join(msg_lines))
+                # revert checkbox
+                for key, pos in main_window.graph_parameter_field_positions.items():
+                    if 'Plot' in key:
+                        i, j = pos
+                        cb = main_window.graph_parameter_fields.get((i, j + 1))
+                        if cb:
+                            cb.blockSignals(True)
+                            cb.setChecked(False)
+                            cb.blockSignals(False)
+                        break
+                return
+
+    except Exception as e:
+        # If validation fails unexpectedly, revert and show error
+        try:
+            for key, pos in main_window.graph_parameter_field_positions.items():
+                if 'Plot' in key:
+                    i, j = pos
+                    cb = main_window.graph_parameter_fields.get((i, j + 1))
+                    if cb:
+                        cb.blockSignals(True)
+                        cb.setChecked(False)
+                        cb.blockSignals(False)
+                    break
+        except Exception:
+            pass
+        QtWidgets.QMessageBox.information(main_window, "Error", f"Error validating spike files: {e}")
+        return
+
+    # Passed validation (or unchecked) — proceed to plotting logic
+    plotCheckChanged(main_window, settings_window)
+
+
 def run():
     app = QtWidgets.QApplication(sys.argv)
 
@@ -1401,7 +1497,8 @@ def run():
     main_w.spatial_map_btn.clicked.connect(main_w.open_spatial_mapper)
     main_w.main_window_fields[i_set_btn, j_set_btn].clicked.connect(lambda: raise_w(chooseSet, main_w, source='Set'))
     main_w.main_window_fields[i_intan_btn, j_intan_btn].clicked.connect(run_intan_converter)
-    main_w.graph_parameter_fields[i_plot, j_plot+1].stateChanged.connect(lambda: plotCheckChanged(main_w, setting_w))
+    # Use clicked(bool) so we can block enabling before toggle takes effect repeatedly
+    main_w.graph_parameter_fields[i_plot, j_plot+1].clicked.connect(lambda checked, mw=main_w, sw=setting_w: validate_and_plot_spikes(mw, sw, checked))
 
     # Connect Update Spikes button
     if hasattr(main_w, 'update_spikes_btn'):
