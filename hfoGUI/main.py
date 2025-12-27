@@ -293,8 +293,37 @@ class Window(QtWidgets.QWidget):  # defines the window class (main window)
                 self.PopUpMessage(f"Spatial mapper not found at {spatial_mapper_path}")
                 return
             
-            # Run the spatial mapper in a separate process
-            subprocess.Popen([sys.executable, spatial_mapper_path])
+            # Try to get the currently loaded EEG/EGF file
+            eeg_file = None
+            ppm = None
+            if hasattr(self, 'graph_settings_window'):
+                gs = self.graph_settings_window
+                # Iterate through loaded sources to find EEG/EGF file
+                for source_file in gs.loaded_sources.keys():
+                    if '.eeg' in source_file.lower() or '.egf' in source_file.lower():
+                        eeg_file = source_file
+                        break
+                
+                # Try to get PPM value from graph settings
+                for option_value, (i, j) in gs.graph_header_option_positions.items():
+                    if 'PPM (pixels/meter)' in option_value:
+                        try:
+                            ppm_text = gs.graph_header_option_fields[i, j + 1].text()
+                            if ppm_text and ppm_text.strip():
+                                ppm = float(ppm_text)
+                        except (ValueError, KeyError):
+                            pass
+                        break
+            
+            if eeg_file is None:
+                self.PopUpMessage("No EEG/EGF file loaded. Please load a source file in Graph Settings first.")
+                return
+            
+            # Run the spatial mapper in a separate process with the EEG file and optional PPM as arguments
+            cmd = [sys.executable, spatial_mapper_path, eeg_file]
+            if ppm is not None:
+                cmd.append(str(ppm))
+            subprocess.Popen(cmd)
         except Exception as e:
             self.PopUpMessage(f"Error opening Spatial Mapper: {str(e)}")
 

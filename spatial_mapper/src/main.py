@@ -992,9 +992,11 @@ class frequencyPlotWindow(QWidget):
         Class which handles frequency map plotting on UI
     '''
 
-    def __init__(self):
+    def __init__(self, eeg_file=None, ppm=None):
         
         QWidget.__init__(self)
+        self.eeg_file_arg = eeg_file  # Store the EEG file passed from command line
+        self.ppm_arg = ppm  # Store the PPM value passed from command line
         
         # Setting main window geometry
         self.center()
@@ -1072,7 +1074,7 @@ class frequencyPlotWindow(QWidget):
         self.tracking_Label = QLabel()
         self.binned_analysis_window = None  # Reference to separate binned analysis window
         
-        ppmTextBox = QLineEdit(self)
+        self.ppmTextBox = QLineEdit(self)
         chunkSizeTextBox = QLineEdit(self)
         speedTextBox = QLineEdit()
         quit_button = QPushButton('Quit', self)
@@ -1114,7 +1116,7 @@ class frequencyPlotWindow(QWidget):
         windowTypeBox.addItem("blackmanharris")
         windowTypeBox.addItem("boxcar")
         speedTextBox.setPlaceholderText("Ex: Type 5,10 for 5cms to 10cms range filter")
-        ppmTextBox.setText("511")
+        self.ppmTextBox.setText("511")
         chunkSizeTextBox.setText("10")
         
         # Set font sizes of label headers
@@ -1132,7 +1134,7 @@ class frequencyPlotWindow(QWidget):
         self.power_Label.setFixedHeight(220)
         
         # Resize widgets to fixed width
-        resizeWidgets = [windowTypeBox, chunkSizeTextBox, speedTextBox, ppmTextBox, 
+        resizeWidgets = [windowTypeBox, chunkSizeTextBox, speedTextBox, self.ppmTextBox, 
                          browse_button, browse_folder_button]
         for widget in resizeWidgets:
             widget.setFixedWidth(300)
@@ -1154,7 +1156,7 @@ class frequencyPlotWindow(QWidget):
         self.layout.addWidget(window_Label, 2, 0)
         self.layout.addWidget(windowTypeBox, 2, 1)
         self.layout.addWidget(ppm_Label, 3, 0)
-        self.layout.addWidget(ppmTextBox, 3, 1)
+        self.layout.addWidget(self.ppmTextBox, 3, 1)
         self.layout.addWidget(chunkSize_Label, 4, 0)
         self.layout.addWidget(chunkSizeTextBox, 4, 1)
         self.layout.addWidget(speed_Label, 5, 0)
@@ -1185,7 +1187,7 @@ class frequencyPlotWindow(QWidget):
         self.graph_Label.close()
         
         # Widget signaling
-        ppmTextBox.textChanged[str].connect(partial(self.textBoxChanged, 'ppm'))
+        self.ppmTextBox.textChanged[str].connect(partial(self.textBoxChanged, 'ppm'))
         chunkSizeTextBox.textChanged[str].connect(partial(self.textBoxChanged, 'chunk_size'))
         speedTextBox.textChanged[str].connect(partial(self.textBoxChanged, 'speed'))
         quit_button.clicked.connect(self.quitClicked)
@@ -1198,6 +1200,65 @@ class frequencyPlotWindow(QWidget):
         self.slider.valueChanged[int].connect(self.sliderChanged)
         windowTypeBox.activated[str].connect(self.windowChanged)
         
+        # Auto-load EEG file if passed from command line
+        if self.eeg_file_arg:
+            QTimer.singleShot(100, self.loadFileFromArgument)
+        
+    # ------------------------------------------- #  
+    
+    def loadFileFromArgument(self):
+        '''
+            Auto-load the EEG/EGF file passed from STLAR main window.
+            Also set PPM if provided.
+        '''
+        if not self.eeg_file_arg or not os.path.exists(self.eeg_file_arg):
+            return
+        
+        try:
+            # Set the active folder
+            self.active_folder = os.path.dirname(os.path.realpath(self.eeg_file_arg))
+            self.files = [None, None]
+            
+            # Determine file type and set accordingly
+            ext = os.path.splitext(self.eeg_file_arg)[1].lower()
+            if ('eeg' in ext) or ('egf' in ext):
+                self.files[1] = self.eeg_file_arg
+            
+            # Try to find matching .pos file
+            if self.files[1]:
+                base_no_ext = os.path.splitext(self.files[1])[0]
+                candidate_pos = base_no_ext + '.pos'
+                candidate_pos_upper = base_no_ext + '.POS'
+                if os.path.exists(candidate_pos):
+                    self.files[0] = candidate_pos
+                elif os.path.exists(candidate_pos_upper):
+                    self.files[0] = candidate_pos_upper
+                else:
+                    # Try glob for any .pos sharing the same base name segment before last dot
+                    base_dir = os.path.dirname(self.files[1])
+                    base_name = os.path.basename(base_no_ext)
+                    # Find any file that starts with base_name and ends with .pos
+                    for name in os.listdir(base_dir):
+                        if name.lower().endswith('.pos') and name.startswith(base_name):
+                            self.files[0] = os.path.join(base_dir, name)
+                            break
+            
+            # If we have both files, set session text
+            if self.files[1] and self.files[0]:
+                self.session_Text.setText(str(self.files[1]))
+            
+            # Set PPM if provided
+            if self.ppm_arg is not None:
+                try:
+                    ppm_value = float(self.ppm_arg)
+                    self.ppm = ppm_value
+                    # Update the PPM text box
+                    self.ppmTextBox.setText(str(int(ppm_value)))
+                except (ValueError, TypeError):
+                    pass
+        except Exception as e:
+            print(f"Error loading file from argument: {e}")
+    
     # ------------------------------------------- #  
     
     def textBoxChanged(self, label):
@@ -2078,10 +2139,20 @@ def main():
     
     '''
         Main function invokes application start.
+        Accepts optional command-line arguments for EEG file path and PPM value.
     '''
     
     app = QApplication(sys.argv)
-    screen = frequencyPlotWindow()
+    
+    # Check if an EEG file was passed as command-line argument
+    eeg_file = None
+    ppm = None
+    if len(sys.argv) > 1:
+        eeg_file = sys.argv[1]
+    if len(sys.argv) > 2:
+        ppm = sys.argv[2]
+    
+    screen = frequencyPlotWindow(eeg_file, ppm)
     screen.show()
     sys.exit(app.exec_())
     
