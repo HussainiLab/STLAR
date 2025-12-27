@@ -62,10 +62,7 @@ class Window(QtWidgets.QWidget):  # defines the window class (main window)
 
         self.graph_settings_btn = QtWidgets.QPushButton("Graph Settings", self)
         self.graph_settings_btn.setToolTip("Click if you want to add/remove waveforms, and edit the graph")
-
-        self.plot_pos_btn = QtWidgets.QPushButton("Plot Trajectory", self)
-        self.plot_pos_btn.setToolTip("Plot trajectory from a .pos file")
-
+ 
         self.score_btn = QtWidgets.QPushButton("Score", self)
         self.score_btn.setToolTip("Click if you want to score the EEG file")
 
@@ -77,9 +74,12 @@ class Window(QtWidgets.QWidget):  # defines the window class (main window)
         self.TF_btn = QtWidgets.QPushButton("T-F Plots", self)
         self.TF_btn.setToolTip("Click to open a window showing the Time-Frequency plots (Stockwell)")
 
+        self.plot_pos_btn = QtWidgets.QPushButton("Position", self)
+        self.plot_pos_btn.setToolTip("Plot position from a .pos file")
+        
         btn_layout = QtWidgets.QHBoxLayout()
 
-        button_order = [self.graph_settings_btn, self.plot_pos_btn, self.score_btn, self.TF_btn, quit_btn]
+        button_order = [self.graph_settings_btn, self.score_btn, self.TF_btn, self.plot_pos_btn, quit_btn]
         for button in button_order:
             btn_layout.addWidget(button)
 
