@@ -27,9 +27,16 @@ def _build_output_paths(data_path: Path, set_path: Optional[Path], output: Optio
     session_base = set_path.stem if set_path else data_path.stem
 
     if output:
-        output_dir = output.parent
-        scores_path = output_dir / "{}.txt".format(session_base)
-        settings_path = output_dir / "{}_settings.json".format(session_base)
+        output_path = Path(output)
+        # If output has a suffix (e.g., .txt), treat it as a file path
+        if output_path.suffix:
+            scores_path = output_path
+            settings_path = output_path.parent / "{}_settings.json".format(output_path.stem)
+        else:
+            # Treat as directory
+            output_dir = output_path
+            scores_path = output_dir / "{}_{}.txt".format(session_base, method_tag)
+            settings_path = output_dir / "{}_{}_settings.json".format(session_base, method_tag)
     else:
         base_dir = set_path.parent if set_path else data_path.parent
         scores_dir = base_dir / 'HFOScores' / session_base
@@ -472,3 +479,25 @@ def run_dl_batch(args: argparse.Namespace):
 
 
 __all__ = ['build_parser', 'run_hilbert_batch', 'run_ste_batch', 'run_mni_batch', 'run_consensus_batch', 'run_dl_batch']
+
+
+def main():
+    parser = build_parser()
+    args = parser.parse_args()
+
+    if args.command == 'hilbert-batch':
+        run_hilbert_batch(args)
+    elif args.command == 'ste-batch':
+        run_ste_batch(args)
+    elif args.command == 'mni-batch':
+        run_mni_batch(args)
+    elif args.command == 'consensus-batch':
+        run_consensus_batch(args)
+    elif args.command == 'dl-batch':
+        run_dl_batch(args)
+    else:
+        parser.print_help()
+
+
+if __name__ == '__main__':
+    main()
