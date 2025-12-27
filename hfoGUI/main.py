@@ -76,10 +76,13 @@ class Window(QtWidgets.QWidget):  # defines the window class (main window)
 
         self.plot_pos_btn = QtWidgets.QPushButton("Position", self)
         self.plot_pos_btn.setToolTip("Plot position from a .pos file")
+
+        self.spatial_map_btn = QtWidgets.QPushButton("Spatial Map", self)
+        self.spatial_map_btn.setToolTip("Open the Spatial Map GUI for analyzing neural activity in space")
         
         btn_layout = QtWidgets.QHBoxLayout()
 
-        button_order = [self.graph_settings_btn, self.score_btn, self.TF_btn, self.plot_pos_btn, quit_btn]
+        button_order = [self.graph_settings_btn, self.score_btn, self.TF_btn, self.plot_pos_btn, self.spatial_map_btn, quit_btn]
         for button in button_order:
             btn_layout.addWidget(button)
 
@@ -276,6 +279,53 @@ class Window(QtWidgets.QWidget):  # defines the window class (main window)
         self.score_x2 = float(value2)
         self.lr.show()
         self.lr.setRegion([self.score_x1/1000, self.score_x2/1000])
+
+    def open_spatial_mapper(self):
+        """Open the Spatial Map GUI from spatial_mapper/src/main.py"""
+        try:
+            import subprocess
+            import sys
+            # Get the path to the spatial_mapper main.py
+            spatial_mapper_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
+                                               'spatial_mapper', 'src', 'main.py')
+            
+            if not os.path.exists(spatial_mapper_path):
+                self.PopUpMessage(f"Spatial mapper not found at {spatial_mapper_path}")
+                return
+            
+            # Try to get the currently loaded EEG/EGF file
+            eeg_file = None
+            ppm = None
+            if hasattr(self, 'graph_settings_window'):
+                gs = self.graph_settings_window
+                # Iterate through loaded sources to find EEG/EGF file
+                for source_file in gs.loaded_sources.keys():
+                    if '.eeg' in source_file.lower() or '.egf' in source_file.lower():
+                        eeg_file = source_file
+                        break
+                
+                # Try to get PPM value from graph settings
+                for option_value, (i, j) in gs.graph_header_option_positions.items():
+                    if 'PPM (pixels/meter)' in option_value:
+                        try:
+                            ppm_text = gs.graph_header_option_fields[i, j + 1].text()
+                            if ppm_text and ppm_text.strip():
+                                ppm = float(ppm_text)
+                        except (ValueError, KeyError):
+                            pass
+                        break
+            
+            if eeg_file is None:
+                self.PopUpMessage("No EEG/EGF file loaded. Please load a source file in Graph Settings first.")
+                return
+            
+            # Run the spatial mapper in a separate process with the EEG file and optional PPM as arguments
+            cmd = [sys.executable, spatial_mapper_path, eeg_file]
+            if ppm is not None:
+                cmd.append(str(ppm))
+            subprocess.Popen(cmd)
+        except Exception as e:
+            self.PopUpMessage(f"Error opening Spatial Mapper: {str(e)}")
 
     def close_app(self):
 
@@ -1349,6 +1399,7 @@ def run():
     main_w.score_btn.clicked.connect(lambda: raise_w(score_w, main_w))
     main_w.graph_settings_btn.clicked.connect(lambda: raise_w(setting_w, main_w))
     main_w.plot_pos_btn.clicked.connect(main_w.plot_pos_trajectory)
+    main_w.spatial_map_btn.clicked.connect(main_w.open_spatial_mapper)
     main_w.main_window_fields[i_set_btn, j_set_btn].clicked.connect(lambda: raise_w(chooseSet, main_w, source='Set'))
     main_w.main_window_fields[i_intan_btn, j_intan_btn].clicked.connect(run_intan_converter)
     main_w.graph_parameter_fields[i_plot, j_plot+1].stateChanged.connect(lambda: plotCheckChanged(main_w, setting_w))
