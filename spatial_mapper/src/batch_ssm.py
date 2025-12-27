@@ -19,6 +19,7 @@ import subprocess
 import matplotlib
 from core.processors.spectral_functions import export_binned_analysis_to_csv, visualize_binned_analysis, export_binned_analysis_jpgs
 matplotlib.use('Agg')  # Use Agg backend - no display needed
+from matplotlib import pyplot as plt
 import os
 os.environ['QT_QPA_PLATFORM'] = 'offscreen'  # Set Qt to offscreen mode
 
@@ -341,6 +342,7 @@ Examples:
         help="Export per-chunk JPG visualizations for binned analysis (mean power, percent power, dominant band per chunk; occupancy once)"
     )
     
+    
     args = parser.parse_args()
     
     # Parse speed filter
@@ -460,14 +462,14 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
     print(f"PPM: {ppm}, Chunk: {chunk_size}s, Speed: {low_speed}-{high_speed} cm/s")
     print(f"Memory: {mem_before:.1f} MB")
     
+    
     # Create batch worker with mock signals
     worker = BatchWorker(output_dir)
     
     print("[1/5] Starting data processing...")
     print(f"  Timeout set to {timeout_seconds} seconds")
-    
+
     try:
-        # Set timeout alarm (Windows doesn't support signal.alarm, so we check timing manually)
         # Run initialization with worker as 'self' parameter
         result = initialize_fMap(
             worker,
@@ -484,6 +486,8 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
         import traceback
         traceback.print_exc()
         raise
+
+    
     
     # Unpack legacy/new result signature
     if len(result) == 6:
@@ -513,13 +517,215 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
 
     # Export binned analysis outputs if available
     try:
-        if binned_data is not None:
+        if binned_data is None:
+            pass
+        elif not export_binned_jpgs:
+            print("  → Binned data available but --export-binned-jpgs not set; skipping binned export.")
+        else:
             if binned_data.get('type') == 'polar':
-                print("  ⚠ Polar binned analysis detected. Batch export for polar data is skipped (GUI only).")
+                # Export polar binned analysis in batch: produce JPG visualizations and CSV summaries
+                print("  → Polar binned analysis detected. Exporting polar JPGs and CSV summaries...")
+                output_folder = os.path.join(output_dir, f"{base_name}_binned")
+                os.makedirs(output_folder, exist_ok=True)
+
+                bands = binned_data['bands']
+                n_chunks = binned_data['time_chunks']
+
+                # Export per-chunk polar power and percent-power (2x8 grids per band)
+                from matplotlib.ticker import FuncFormatter
+                theta = np.linspace(-np.pi, np.pi, 9)
+                r = [0, 0.5, 1]
+                T, R = np.meshgrid(theta, r)
+
+                export_count = 0
+                for chunk_idx in range(n_chunks):
+                    # Power plots (2x8 polar grid, one panel per band)
+                    fig, axes = plt.subplots(2, 4, figsize=(16, 8), subplot_kw={'projection': 'polar'})
+                    fig.suptitle(f'Polar Bins - Chunk {chunk_idx + 1} (Frequency Band Power)', fontsize=14, fontweight='bold')
+                    for idx, band in enumerate(bands):
+                        if idx >= 8: break
+                        ax = axes.flatten()[idx]
+                        data = binned_data['bin_power_timeseries'][band][:, :, chunk_idx]
+                        im = ax.pcolormesh(T, R, data, cmap='turbo', shading='flat')
+                        ax.set_title(band)
+                        ax.set_yticklabels([])
+                        ax.set_xticklabels([])
+                        ax.grid(True, alpha=0.3)
+                        cbar = plt.colorbar(im, ax=ax, pad=0.05, shrink=0.8)
+                        cbar.set_label('Power', fontsize=8)
+                    for idx in range(len(bands), 8):
+                        axes.flatten()[idx].axis('off')
+                    plt.tight_layout()
+                    jpg_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx+1:02d}_polar_power.jpg")
+                    fig.savefig(jpg_path, format='jpg', pil_kwargs={'quality':85}, bbox_inches='tight')
+                    plt.close(fig)
+                    export_count += 1
+
+                    # Percent power plots
+                    fig, axes = plt.subplots(2, 4, figsize=(16, 8), subplot_kw={'projection': 'polar'})
+                    fig.suptitle(f'Polar Bins - Chunk {chunk_idx + 1} (Frequency Band Percent Power)', fontsize=14, fontweight='bold')
+                    # compute total power per bin for this chunk
+                    total = np.zeros((2,8))
+                    for band in bands:
+                        total += binned_data['bin_power_timeseries'][band][:, :, chunk_idx]
+                    for idx, band in enumerate(bands):
+                        if idx >= 8: break
+                        ax = axes.flatten()[idx]
+                        band_power = binned_data['bin_power_timeseries'][band][:, :, chunk_idx]
+                        with np.errstate(divide='ignore', invalid='ignore'):
+                            pct = np.where(total>0, (band_power/total)*100.0, 0.0)
+                        im = ax.pcolormesh(T, R, pct, cmap='turbo', shading='flat', vmin=0, vmax=100)
+                        ax.set_title(band)
+                        ax.set_yticklabels([])
+                        ax.set_xticklabels([])
+                        ax.grid(True, alpha=0.3)
+                        cbar = plt.colorbar(im, ax=ax, pad=0.05, shrink=0.8)
+                        cbar.set_label('%', fontsize=8)
+                    for idx in range(len(bands), 8):
+                        axes.flatten()[idx].axis('off')
+                    plt.tight_layout()
+                    jpg_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx+1:02d}_polar_percent.jpg")
+                    fig.savefig(jpg_path, format='jpg', pil_kwargs={'quality':85}, bbox_inches='tight')
+                    plt.close(fig)
+                    export_count += 1
+
+                # Occupancy and dominant-band exports
+                # Occupancy (2x8)
+                fig_occ, ax_occ = plt.subplots(figsize=(8,6), subplot_kw={'projection':'polar'})
+                occ = binned_data['bin_occupancy']
+                im_occ = ax_occ.pcolormesh(T, R, occ, cmap='turbo', shading='flat')
+                ax_occ.set_title('Bin Occupancy')
+                ax_occ.set_yticklabels([])
+                cbar1 = plt.colorbar(im_occ, ax=ax_occ, pad=0.05)
+                cbar1.set_label('Samples', fontsize=9)
+                occ_path = os.path.join(output_folder, f"{base_name}_polar_occupancy.jpg")
+                fig_occ.savefig(occ_path, format='jpg', pil_kwargs={'quality':85}, bbox_inches='tight')
+                plt.close(fig_occ)
+                export_count += 1
+
+                # Dominant band per chunk (as numeric map and per-chunk polar plots)
+                band_map = {band: idx for idx, band in enumerate(bands)}
+                for chunk_idx in range(n_chunks):
+                    dom = binned_data['bin_dominant_band'][chunk_idx]
+                    numeric_dom = np.zeros((2,8))
+                    for r_idx in range(2):
+                        for s_idx in range(8):
+                            numeric_dom[r_idx, s_idx] = band_map.get(dom[r_idx, s_idx], 0)
+                    fig_dom = plt.figure(figsize=(6,5))
+                    ax_dom = fig_dom.add_subplot(111, projection='polar')
+                    im_dom = ax_dom.pcolormesh(T, R, numeric_dom, cmap='tab10', shading='flat', vmin=0, vmax=len(bands)-1)
+                    ax_dom.set_title(f'Dominant Band - Chunk {chunk_idx+1}')
+                    ax_dom.set_yticklabels([])
+                    cbar2 = plt.colorbar(im_dom, ax=ax_dom, ticks=range(len(bands)), pad=0.05)
+                    cbar2.set_ticklabels(bands, fontsize=8)
+                    dom_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx+1:02d}_polar_dominant.jpg")
+                    fig_dom.savefig(dom_path, format='jpg', pil_kwargs={'quality':85}, bbox_inches='tight')
+                    plt.close(fig_dom)
+                    export_count += 1
+
+                print(f"  ✓ Exported {export_count} polar JPG(s) to: {output_folder}")
+                # Also provide Excel summaries (mean power per band, percent power per band, occupancy, dominant counts)
+                output_prefix = os.path.join(output_folder, f"{base_name}_binned")
+                try:
+                    import openpyxl
+                    use_excel = True
+                except ImportError:
+                    use_excel = False
+
+                # Prepare data
+                percent_mean = {}
+                mean_power = {}
+                for band in bands:
+                    data = binned_data['bin_power_timeseries'][band]  # shape (2,8,n_chunks)
+                    mean_power[band] = np.mean(data, axis=2)
+                # percent power per chunk then mean
+                n_chunks = binned_data['time_chunks']
+                for t in range(n_chunks):
+                    total_power_chunk = np.zeros_like(binned_data['bin_power_timeseries'][bands[0]][:, :, 0])
+                    for band in bands:
+                        total_power_chunk += binned_data['bin_power_timeseries'][band][:, :, t]
+                # compute mean percent across time
+                for band in bands:
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        pct = np.zeros_like(mean_power[band])
+                        total = np.sum([binned_data['bin_power_timeseries'][b] for b in bands], axis=0)
+                        # total shape (2,8,n_chunks)
+                        # compute percent per chunk then mean across chunks
+                        per_chunk = np.where(total>0, (binned_data['bin_power_timeseries'][band] / total) * 100.0, 0.0)
+                        percent_mean[band] = np.mean(per_chunk, axis=2)
+
+                # Dominant band counts per band
+                dominant_counts = {band: np.zeros_like(mean_power[bands[0]]) for band in bands}
+                for chunk_data in binned_data['bin_dominant_band']:
+                    for r_idx in range(chunk_data.shape[0]):
+                        for s_idx in range(chunk_data.shape[1]):
+                            band = chunk_data[r_idx, s_idx]
+                            if band in dominant_counts:
+                                dominant_counts[band][r_idx, s_idx] += 1
+
+                if use_excel:
+                    try:
+                        # Mean power workbook
+                        mean_file = f"{output_prefix}_mean_power.xlsx"
+                        wb_mean = openpyxl.Workbook()
+                        wb_mean.remove(wb_mean.active)
+                        for band in bands:
+                            ws = wb_mean.create_sheet(title=band)
+                            for row in mean_power[band]:
+                                ws.append([float(val) for val in row])
+                        wb_mean.save(mean_file)
+
+                        # Percent power workbook
+                        percent_file = f"{output_prefix}_percent_power.xlsx"
+                        wb_pct = openpyxl.Workbook()
+                        wb_pct.remove(wb_pct.active)
+                        for band in bands:
+                            ws = wb_pct.create_sheet(title=band)
+                            for row in percent_mean[band]:
+                                ws.append([float(val) for val in row])
+                        wb_pct.save(percent_file)
+
+                        # Occupancy workbook
+                        occ_file = f"{output_prefix}_occupancy.xlsx"
+                        wb_occ = openpyxl.Workbook()
+                        ws_occ = wb_occ.active
+                        ws_occ.title = 'Occupancy'
+                        for row in occ:
+                            ws_occ.append([float(val) for val in row])
+                        wb_occ.save(occ_file)
+
+                        # Dominant band counts workbook
+                        dominant_file = f"{output_prefix}_dominant_band.xlsx"
+                        wb_dom = openpyxl.Workbook()
+                        wb_dom.remove(wb_dom.active)
+                        for band in bands:
+                            ws = wb_dom.create_sheet(title=band)
+                            counts = dominant_counts[band]
+                            for row in counts:
+                                ws.append([float(val) for val in row])
+                        wb_dom.save(dominant_file)
+
+                        print(f"  ✓ Excel exported to: {output_folder} ({mean_file}, {percent_file})")
+                    except Exception as e:
+                        print(f"  ⚠ Failed to write Excel files: {e}")
+                        # fallback to CSV
+                        use_excel = False
+
+                if not use_excel:
+                    # Save CSV fallbacks
+                    try:
+                        occ_csv = os.path.join(output_folder, f"{base_name}_polar_occupancy.csv")
+                        np.savetxt(occ_csv, occ, delimiter=',')
+                        for band in bands:
+                            out_csv = os.path.join(output_folder, f"{base_name}_polar_mean_{band}.csv")
+                            np.savetxt(out_csv, mean_power[band], delimiter=',')
+                        print(f"  ✓ CSV summaries saved to: {output_folder} (openpyxl not installed)")
+                    except Exception as e:
+                        print(f"  ⚠ Failed to save CSV summaries: {e}")
                 return
 
             # Determine output location based on whether per-chunk export is requested
-            if export_binned_jpgs:
+            if args.export_binned_jpgs:
                 # Export everything (Excel + JPGs) to subfolder
                 output_folder = os.path.join(output_dir, f"{base_name}_binned_analysis")
                 if not os.path.exists(output_folder):
