@@ -1540,8 +1540,40 @@ class GraphSettingsWindows(QtWidgets.QWidget):
             if 'Load Data' in option:
                 break
 
+        # Ensure that a valid .set file is present on the main window. If not, try to read
+        # the Set Filename field and update mainWindow.current_set_filename. If still not
+        # available, prompt the user to import a set and abort loading the profile.
+        try:
+            set_ok = hasattr(self.mainWindow, 'current_set_filename') and bool(self.mainWindow.current_set_filename)
+            if not set_ok or not os.path.exists(self.mainWindow.current_set_filename):
+                # Try to read Set Filename field from main window widgets
+                for key, val in getattr(self.mainWindow, 'main_window_field_positions', {}).items():
+                    if 'Set Filename' in key:
+                        i_set_text, j_set_text = val
+                        try:
+                            text = self.mainWindow.main_window_fields[i_set_text, j_set_text + 1].text()
+                        except Exception:
+                            text = ''
+                        if text and text != 'Import a Set file!':
+                            # update mainWindow.current_set_filename and continue
+                            self.mainWindow.current_set_filename = text
+                            set_ok = os.path.exists(text)
+                        break
+            if not set_ok:
+                # Inform user that a .set must be imported first
+                self.mainWindow.ErrorDialogue.myGUI_signal.emit("ImportSetError")
+                return
+        except Exception:
+            # If anything goes wrong here, abort loading profile and notify user
+            self.mainWindow.ErrorDialogue.myGUI_signal.emit("ImportSetError")
+            return
+
         new_profile = self.graph_header_option_fields[i, j+1].currentText()
-        if new_profile == self.current_profile:
+        # If same profile selected, reload only if the set file changed or there are no sources
+        current_set = getattr(self.mainWindow, 'current_set_filename', '')
+        already_loaded_for_set = getattr(self, 'profile_loaded_set_filename', None)
+        if new_profile == self.current_profile and already_loaded_for_set == current_set and self.graphs.topLevelItemCount() > 0:
+            # nothing to do
             return
         else:
 
@@ -1573,10 +1605,44 @@ class GraphSettingsWindows(QtWidgets.QWidget):
                             new_item.setText(option_index, source_value)
                             option_index += 1
                             break
+                # If this source is 'Speed', ensure matching .pos exists for current set
+                try:
+                    session_path, set_filename = os.path.split(self.mainWindow.current_set_filename)
+                    session = os.path.splitext(set_filename)[0]
+                except Exception:
+                    session_path = None
+                    session = None
+
+                src_val = source.get('Source:', '') if isinstance(source, dict) else ''
+                if isinstance(src_val, str) and 'Speed' in src_val:
+                    # require a .pos file matching session
+                    if session_path and session:
+                        pos_path = os.path.join(session_path, f"{session}.pos")
+                        if not os.path.exists(pos_path):
+                            QtWidgets.QMessageBox.information(
+                                self.mainWindow,
+                                "Missing .pos",
+                                f"Profile contains Speed source but no matching .pos file found for set:\n{self.mainWindow.current_set_filename}\nSkipping Speed source."
+                            )
+                            # skip adding this Speed source
+                            continue
+                    else:
+                        QtWidgets.QMessageBox.information(
+                            self.mainWindow,
+                            "Missing .set",
+                            "A valid .set file is required to load Speed sources."
+                        )
+                        continue
+
                 self.graphs.addTopLevelItem(new_item)
 
             # setting the new current profile
             self.current_profile = new_profile
+            # remember which set file this profile was applied to
+            try:
+                self.profile_loaded_set_filename = self.mainWindow.current_set_filename
+            except Exception:
+                self.profile_loaded_set_filename = None
 
             self.ActiveSourceSignal.myGUI_signal.emit('update')
             # Re-plot synchronously to keep the view updated
