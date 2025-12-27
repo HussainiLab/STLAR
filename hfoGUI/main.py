@@ -95,7 +95,7 @@ class Window(QtWidgets.QWidget):  # defines the window class (main window)
         # ------------- grid layout ------------------------
 
         self.main_window_parameters = [
-            'Import Set', 'Intan Convert', 'Set Filename:', '', '', '', '',
+            'Import Set', 'Set Filename:', '', '', 'Intan Convert', '', '',
         ]
 
         self.main_window_fields = {}
@@ -314,15 +314,14 @@ class Window(QtWidgets.QWidget):  # defines the window class (main window)
                         except (ValueError, KeyError):
                             pass
                         break
-            
-            if eeg_file is None:
-                self.PopUpMessage("No EEG/EGF file loaded. Please load a source file in Graph Settings first.")
-                return
-            
-            # Run the spatial mapper in a separate process with the EEG file and optional PPM as arguments
-            cmd = [sys.executable, spatial_mapper_path, eeg_file]
-            if ppm is not None:
-                cmd.append(str(ppm))
+            # Build command to run spatial mapper. If eeg_file present, pass it (and optional ppm).
+            cmd = [sys.executable, spatial_mapper_path]
+            if eeg_file is not None:
+                cmd.append(eeg_file)
+                if ppm is not None:
+                    cmd.append(str(ppm))
+
+            # Launch Spatial Map (no args ok — user can pick files in its GUI)
             subprocess.Popen(cmd)
         except Exception as e:
             self.PopUpMessage(f"Error opening Spatial Mapper: {str(e)}")
