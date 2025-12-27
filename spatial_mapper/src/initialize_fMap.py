@@ -283,7 +283,18 @@ def initialize_fMap(self, files: list, ppm: int, chunk_size: int, window_type: s
         self.signals.progress.emit(progress_indicator*20)
     
     print("  → Computing tracking chunks...")
-    pos_x_chunks, pos_y_chunks = compute_tracking_chunks(new_pos_x, new_pos_y, new_pos_t, chunk_size, n_chunks=len(chunks))
+    # Compute tracking chunks locally to include time chunks for accurate EOI mapping
+    pos_x_chunks = []
+    pos_y_chunks = []
+    pos_t_chunks = []
+    for i in range(len(chunks)):
+        t_start = i * chunk_size
+        t_end = (i + 1) * chunk_size
+        mask = (new_pos_t >= t_start) & (new_pos_t < t_end)
+        pos_x_chunks.append(new_pos_x[mask])
+        pos_y_chunks.append(new_pos_y[mask])
+        pos_t_chunks.append(new_pos_t[mask])
+
     # Compute binned analysis (multi-band, time-tracked)
     try:
         if "Circle" in arena_shape or "Ellipse" in arena_shape:
@@ -313,4 +324,4 @@ def initialize_fMap(self, files: list, ppm: int, chunk_size: int, window_type: s
 
     self.signals.text_progress.emit("Data loaded!")
     
-    return freq_maps, plot_data, chosen_times, scaling_factor_crossband, chunk_pows_perBand, (pos_x_chunks, pos_y_chunks), binned_data, arena_shape
+    return freq_maps, plot_data, chosen_times, scaling_factor_crossband, chunk_pows_perBand, (pos_x_chunks, pos_y_chunks, pos_t_chunks), binned_data, arena_shape

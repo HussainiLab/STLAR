@@ -284,6 +284,7 @@ class Window(QtWidgets.QWidget):  # defines the window class (main window)
     def open_spatial_mapper(self):
         """Open the Spatial Map GUI from spatial_mapper/src/main.py"""
         try:
+            import tempfile
             import subprocess
             import sys
             # Get the path to the spatial_mapper main.py
@@ -315,14 +316,72 @@ class Window(QtWidgets.QWidget):  # defines the window class (main window)
                         except (ValueError, KeyError):
                             pass
                         break
-            # Build command to run spatial mapper. If eeg_file present, pass it (and optional ppm).
+            
+            # Fallback: if eeg_file is still None, try to infer from current set filename
+            if eeg_file is None and hasattr(self, 'current_set_filename') and self.current_set_filename:
+                if os.path.exists(self.current_set_filename):
+                    base_path = os.path.splitext(self.current_set_filename)[0]
+                    # Check for .egf or .eeg
+                    if os.path.exists(base_path + '.egf'):
+                        eeg_file = base_path + '.egf'
+                    elif os.path.exists(base_path + '.eeg'):
+                        eeg_file = base_path + '.eeg'
+            
+            # Check for EOIs and save to a temp file
+            eoi_temp_file = None
+            if hasattr(self, 'score_window') and self.score_window.EOI.topLevelItemCount() > 0:
+                try:
+                    import csv
+                    # Find start and stop columns
+                    start_col = -1
+                    stop_col = -1
+                    for key, val in self.score_window.EOI_headers.items():
+                        if 'Start Time' in key:
+                            start_col = val
+                        elif 'Stop Time' in key:
+                            stop_col = val
+                    
+                    if start_col != -1 and stop_col != -1:
+                        eoi_data = []
+                        for i in range(self.score_window.EOI.topLevelItemCount()):
+                            item = self.score_window.EOI.topLevelItem(i)
+                            try:
+                                # Convert ms to s
+                                start_s = float(item.text(start_col)) / 1000.0
+                                stop_s = float(item.text(stop_col)) / 1000.0
+                                eoi_data.append([start_s, stop_s])
+                            except ValueError:
+                                continue
+                        
+                        if eoi_data:
+                            # Create temp file
+                            temp_f = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.csv', newline='', encoding='utf-8')
+                            writer = csv.writer(temp_f)
+                            writer.writerow(['Start(s)', 'Stop(s)']) # Header
+                            writer.writerows(eoi_data)
+                            eoi_temp_file = temp_f.name
+                            temp_f.close()
+                except Exception as e:
+                    print(f"Could not save temporary EOI file: {e}")
+                    eoi_temp_file = None
+            
+            # If no EOIs were found/saved, warn the user but allow them to proceed
+            if not eoi_temp_file:
+                QtWidgets.QMessageBox.information(self, "Spatial Mapper Info", 
+                    "No EOIs (Events of Interest) found in the Score Window.\n\n"
+                    "To visualize events on the spatial map, please run detection or load scores "
+                    "in the Score Window FIRST, then click Spatial Map.\n\n"
+                    "Opening Spatial Mapper without EOIs...")
+
+            # Build command to run spatial mapper.
             cmd = [sys.executable, spatial_mapper_path]
             if eeg_file is not None:
                 cmd.append(eeg_file)
-                if ppm is not None:
-                    cmd.append(str(ppm))
+                ppm_str = str(ppm) if ppm is not None else 'None'
+                cmd.append(ppm_str)
+                if eoi_temp_file:
+                    cmd.append(eoi_temp_file)
 
-            # Launch Spatial Map (no args ok — user can pick files in its GUI)
             subprocess.Popen(cmd)
         except Exception as e:
             self.PopUpMessage(f"Error opening Spatial Mapper: {str(e)}")
