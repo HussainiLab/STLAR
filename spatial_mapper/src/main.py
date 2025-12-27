@@ -33,7 +33,7 @@ from core.processors.spectral_functions import (
     visualize_binned_occupancy_and_dominant
 )
 from core.worker_thread import WorkerSignals
-from PyQt5.QtGui import QPixmap, QFont
+from PyQt5.QtGui import QPixmap, QFont, QImage
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtWidgets import *
 from core.worker_thread.Worker import Worker
@@ -260,7 +260,10 @@ class BatchWorkerThread(QThread):
         cumulative_sum = 0.0
         
         if tracking_data:
-            pos_x_chunks, pos_y_chunks = tracking_data
+            if len(tracking_data) == 3:
+                pos_x_chunks, pos_y_chunks, _ = tracking_data
+            else:
+                pos_x_chunks, pos_y_chunks = tracking_data
             
             for i in range(len(pos_x_chunks)):
                 distance_cm_in_bin = 0.0
@@ -363,9 +366,10 @@ class BinnedAnalysisWindow(QDialog):
         Displays frequency band power, occupancy, and dominant band heatmaps.
     '''
     
-    def __init__(self, parent=None, binned_data=None, files=None, active_folder=None):
+    def __init__(self, parent=None, binned_data=None, files=None, active_folder=None, eoi_segments=None):
         super().__init__(parent)
         self.binned_data = binned_data
+        self.eoi_segments = eoi_segments
         self.files = files or [None, None]
         self.active_folder = active_folder or os.getcwd()
         self.current_chunk = 0
@@ -803,9 +807,10 @@ class BinnedAnalysisWindow(QDialog):
         plt.tight_layout()
         return fig, axes
 
-    def updateBinnedData(self, binned_data, files=None, active_folder=None):
+    def updateBinnedData(self, binned_data, files=None, active_folder=None, eoi_segments=None):
         '''Update binned data when new session is loaded'''
         self.binned_data = binned_data
+        self.eoi_segments = eoi_segments
         if files:
             self.files = files
         if active_folder:
@@ -992,11 +997,13 @@ class frequencyPlotWindow(QWidget):
         Class which handles frequency map plotting on UI
     '''
 
-    def __init__(self, eeg_file=None, ppm=None):
+    def __init__(self, eeg_file=None, ppm=None, eoi_file=None):
         
         QWidget.__init__(self)
         self.eeg_file_arg = eeg_file  # Store the EEG file passed from command line
         self.ppm_arg = ppm  # Store the PPM value passed from command line
+        self.eoi_file_arg = eoi_file # Store the EOI file passed from command line
+        self.eoi_segments = {} # Holds processed EOI segments for plotting
         
         # Setting main window geometry
         self.center()
@@ -1085,6 +1092,11 @@ class frequencyPlotWindow(QWidget):
         self.render_button = QPushButton('Re-Render', self)
         save_button = QPushButton('Save data', self)
         self.slider = QSlider(Qt.Horizontal)
+        self.full_duration_btn = QPushButton('Full Duration', self)
+        self.full_duration_btn.setCheckable(True)
+        self.full_duration_btn.clicked.connect(self.toggleFullDuration)
+        self.full_duration_btn.setFixedWidth(100)
+        self.load_eoi_btn = QPushButton('Load EOIs', self)
         self.bar = QProgressBar(self)
         
         # Create canvases for embedded plotting
@@ -1143,6 +1155,7 @@ class frequencyPlotWindow(QWidget):
         quit_button.setFixedWidth(150)
         save_button.setFixedWidth(150)
         self.render_button.setFixedWidth(150)
+        self.load_eoi_btn.setFixedWidth(150)
 
         # Placing widgets
         # Swap positions: Browse file (left), Browse folder (right)
@@ -1151,6 +1164,7 @@ class frequencyPlotWindow(QWidget):
         self.layout.addWidget(quit_button, 0, 2, alignment=Qt.AlignRight)
         self.layout.addWidget(session_Label, 1, 0)
         self.layout.addWidget(self.session_Text, 1, 1)
+        self.layout.addWidget(self.load_eoi_btn, 1, 2, alignment=Qt.AlignLeft) # Add Load EOI button
         self.layout.addWidget(self.render_button, 1, 2, alignment=Qt.AlignRight)
         self.layout.addWidget(save_button, 2, 2, alignment=Qt.AlignRight)
         self.layout.addWidget(window_Label, 2, 0)
@@ -1173,8 +1187,13 @@ class frequencyPlotWindow(QWidget):
         # Place binned analysis button near the bottom-right
         self.layout.addWidget(self.binned_analysis_btn, 9, 2, alignment=Qt.AlignRight)
         self.layout.addWidget(timeSlider_Label, 8, 0)
-        self.layout.addWidget(self.slider, 8, 1)
-        self.layout.addWidget(self.timeInterval_Label, 8, 3)
+        
+        slider_layout = QHBoxLayout()
+        slider_layout.addWidget(self.slider)
+        slider_layout.addWidget(self.full_duration_btn)
+        self.layout.addLayout(slider_layout, 8, 1)
+        
+        self.layout.addWidget(self.timeInterval_Label, 8, 2)
         self.layout.addWidget(self.progressBar_Label, 9, 3)
         self.layout.setSpacing(10)
         
@@ -1196,6 +1215,7 @@ class frequencyPlotWindow(QWidget):
         self.graph_mode_button.clicked.connect(self.switch_graph)
         save_button.clicked.connect(self.saveClicked)
         self.render_button.clicked.connect(self.runSession)
+        self.load_eoi_btn.clicked.connect(self.loadEOIFile)
         self.binned_analysis_btn.clicked.connect(self.openBinnedAnalysisWindow)
         self.slider.valueChanged[int].connect(self.sliderChanged)
         windowTypeBox.activated[str].connect(self.windowChanged)
@@ -1256,6 +1276,10 @@ class frequencyPlotWindow(QWidget):
                     self.ppmTextBox.setText(str(int(ppm_value)))
                 except (ValueError, TypeError):
                     pass
+            
+            # Auto-run if files are loaded via argument
+            if self.files[0] and self.files[1]:
+                self.runSession()
         except Exception as e:
             print(f"Error loading file from argument: {e}")
     
@@ -1619,8 +1643,10 @@ class frequencyPlotWindow(QWidget):
         cumulative_distances = []
         cumulative_sum = 0.0
         
-        if self.tracking_data is not None and len(self.tracking_data) == 2:
-            pos_x_chunks, pos_y_chunks = self.tracking_data
+        if self.tracking_data is not None:
+            # Handle both 2-tuple and 3-tuple
+            pos_x_chunks = self.tracking_data[0]
+            pos_y_chunks = self.tracking_data[1]
             
             for i in range(len(pos_x_chunks)):
                 distance_cm_in_bin = 0.0
@@ -1832,25 +1858,80 @@ class frequencyPlotWindow(QWidget):
     
     # ------------------------------------------- #
     
+    def updatePowerDisplayFull(self):
+        '''
+            Update the power label to show average power distribution over the full duration.
+        '''
+        if self.chunk_powers_data is None:
+            return
+        
+        freq_band_ranges = {
+            'Delta': '1-3 Hz', 'Theta': '4-12 Hz', 'Beta': '13-20 Hz',
+            'Low Gamma': '35-55 Hz', 'High Gamma': '65-120 Hz',
+            'Ripple': '80-250 Hz', 'Fast Ripple': '250-500 Hz'
+        }
+        freq_bands = list(freq_band_ranges.keys())
+        
+        total_power = 0
+        band_powers = {}
+        
+        for band in freq_bands:
+            if band in self.chunk_powers_data:
+                vals = [x[0] for x in self.chunk_powers_data[band]]
+                s = sum(vals)
+                band_powers[band] = s
+                total_power += s
+        
+        if total_power > 0:
+            display_text = "<b>Full Duration Power Distribution:</b><br>"
+            for band in freq_bands:
+                if band in band_powers:
+                    percentage = (band_powers[band] / total_power) * 100
+                    freq_range = freq_band_ranges[band]
+                    display_text += f"{band} ({freq_range}): {percentage:.2f}%<br>"
+            self.power_Label.setHtml(display_text)
+        else:
+            self.power_Label.setPlainText("No data available")
+
+    # ------------------------------------------- #
+    
     def sliderChanged(self, value): 
         
         '''
             Create a slider that allows the user to sift through each chunk and
-            view how the graph/frequency maps change as a function of time. 
+            view how the graph/frequency maps change as a function of time.
+            Also handles Full Duration view.
         '''
 
         # Sliders value acts as chunk index
         self.chunk_index = value 
         
+        is_full = hasattr(self, 'full_duration_btn') and self.full_duration_btn.isChecked()
+        
         # If we have data to plot, plot the graph
         if self.plot_flag:
             if self.plot_data is not None:
-                freq, pdf = self.plot_data[value][0]
                 self.graph_canvas.axes.cla()
                 
-                # Plot with modern styling
-                self.graph_canvas.axes.plot(freq, pdf, linewidth=2, color='#2E86AB', alpha=0.9)
-                self.graph_canvas.axes.fill_between(freq, pdf, alpha=0.3, color='#2E86AB')
+                if is_full:
+                    # Average PSD across all chunks
+                    all_pdfs = []
+                    freq = None
+                    for chunk in self.plot_data:
+                        f, p = chunk[0]
+                        if freq is None: freq = f
+                        all_pdfs.append(p)
+                    
+                    if all_pdfs:
+                        avg_pdf = np.mean(all_pdfs, axis=0)
+                        self.graph_canvas.axes.plot(freq, avg_pdf, linewidth=2, color='#2E86AB', alpha=0.9)
+                        self.graph_canvas.axes.fill_between(freq, avg_pdf, alpha=0.3, color='#2E86AB')
+                        self.graph_canvas.axes.set_title("Average Power Spectral Density (Full Duration)", fontsize=10)
+                else:
+                    freq, pdf = self.plot_data[value][0]
+                    # Plot with modern styling
+                    self.graph_canvas.axes.plot(freq, pdf, linewidth=2, color='#2E86AB', alpha=0.9)
+                    self.graph_canvas.axes.fill_between(freq, pdf, alpha=0.3, color='#2E86AB')
                 
                 # Add frequency band shading
                 freq_bands = {
@@ -1862,7 +1943,7 @@ class frequencyPlotWindow(QWidget):
                     'Ripple': (80, 250, '#FCBAD3'),
                     'Fast Ripple': (250, 500, '#A8D8EA')
                 }
-                y_max = pdf.max() * 1.1
+                # y_max = pdf.max() * 1.1
                 for band_name, (low, high, color) in freq_bands.items():
                     self.graph_canvas.axes.axvspan(low, high, alpha=0.1, color=color, label=band_name)
                 
@@ -1880,32 +1961,92 @@ class frequencyPlotWindow(QWidget):
                 self.graph_canvas.draw()
         # Else if we have maps to plot, plot the frequency maps    
         elif self.images is not None:
-            self.imageMapper.setPixmap(self.images[value])
+            if is_full:
+                avg_pixmap = self._calculate_average_pixmap(self.images)
+                self.imageMapper.setPixmap(avg_pixmap)
+            else:
+                self.imageMapper.setPixmap(self.images[value])
         
         if self.tracking_data is not None:
             self.tracking_canvas.axes.cla()
             self.tracking_canvas.axes.set_xlabel('X - coordinates')
             self.tracking_canvas.axes.set_ylabel('Y - coordinates')
-            self.tracking_canvas.axes.plot(self.tracking_data[0][value], self.tracking_data[1][value], linewidth=0.5)
+            
+            if is_full:
+                # Plot all chunks
+                x_all = [item for sublist in self.tracking_data[0] for item in sublist]
+                y_all = [item for sublist in self.tracking_data[1] for item in sublist]
+                self.tracking_canvas.axes.plot(x_all, y_all, linewidth=0.5, color='#D3D3D3', alpha=0.6)
+                self.tracking_canvas.axes.set_title("Full Path", fontsize=10)
+                
+                # Plot all EOIs
+                if self.eoi_segments:
+                    for chunk_idx, segments in self.eoi_segments.items():
+                        for seg_x, seg_y in segments:
+                            self.tracking_canvas.axes.plot(seg_x, seg_y, color='red', linewidth=1.5, alpha=0.8)
+            else:
+                self.tracking_canvas.axes.plot(self.tracking_data[0][value], self.tracking_data[1][value], linewidth=0.5, color='#D3D3D3')
+                
+                # Plot EOIs if available for this chunk
+                if value in self.eoi_segments:
+                    for seg_x, seg_y in self.eoi_segments[value]:
+                        self.tracking_canvas.axes.plot(seg_x, seg_y, color='red', linewidth=1.5, alpha=0.8)
+            
             self.tracking_canvas.draw()
         # Reflect chunk and its nominal time range (consistent with binned slider)
         if self.pos_t is not None and self.chunk_size is not None:
-            total_chunks = (self.slider.maximum() + 1) if self.slider is not None else 1
-            t_start = value * self.chunk_size
-            # Clamp end to actual duration for the last chunk if binned data is available
-            if hasattr(self, 'binned_data') and self.binned_data and 'duration' in self.binned_data:
-                duration = float(self.binned_data.get('duration', (total_chunks * self.chunk_size)))
-                t_end_nominal = (value + 1) * self.chunk_size
-                t_end = min(t_end_nominal, duration)
+            if is_full:
+                total_duration = float(self.pos_t[-1])
+                self.timeInterval_Label.setText(f"Full Duration (0-{total_duration:.0f}s)")
             else:
-                t_end = (value + 1) * self.chunk_size
-            self.timeInterval_Label.setText(f"Chunk {value+1}/{total_chunks} ({t_start:.0f}-{t_end:.0f}s)")
+                total_chunks = (self.slider.maximum() + 1) if self.slider is not None else 1
+                t_start = value * self.chunk_size
+                # Clamp end to actual duration for the last chunk if binned data is available
+                if hasattr(self, 'binned_data') and self.binned_data and 'duration' in self.binned_data:
+                    duration = float(self.binned_data.get('duration', (total_chunks * self.chunk_size)))
+                    t_end_nominal = (value + 1) * self.chunk_size
+                    t_end = min(t_end_nominal, duration)
+                else:
+                    t_end = (value + 1) * self.chunk_size
+                self.timeInterval_Label.setText(f"Chunk {value+1}/{total_chunks} ({t_start:.0f}-{t_end:.0f}s)")
         
         # Update power display with current chunk's frequency band percentages
-        self.updatePowerDisplay(value)
-        
-        # Update power display with current chunk's frequency band percentages
-        self.updatePowerDisplay(value)
+        if is_full:
+            self.updatePowerDisplayFull()
+        else:
+            self.updatePowerDisplay(value)
+
+    # ------------------------------------------- #
+    
+    def toggleFullDuration(self):
+        '''Toggle between chunk view and full duration view'''
+        is_full = self.full_duration_btn.isChecked()
+        self.slider.setEnabled(not is_full)
+        self.sliderChanged(self.slider.value())
+
+    def _calculate_average_pixmap(self, pixmaps):
+        '''Average a list of QPixmaps'''
+        if not pixmaps: return QPixmap()
+        try:
+            # Use RGBA8888 for consistent 4-byte alignment to avoid stride/skew issues
+            img0 = pixmaps[0].toImage().convertToFormat(QImage.Format_RGBA8888)
+            w, h = img0.width(), img0.height()
+            ptr = img0.bits()
+            ptr.setsize(h * w * 4)
+            arr_sum = np.frombuffer(ptr, np.uint8).reshape((h, w, 4)).astype(np.float32)
+            
+            for i in range(1, len(pixmaps)):
+                img = pixmaps[i].toImage().convertToFormat(QImage.Format_RGBA8888)
+                ptr = img.bits()
+                ptr.setsize(h * w * 4)
+                arr_sum += np.frombuffer(ptr, np.uint8).reshape((h, w, 4)).astype(np.float32)
+            
+            arr_avg = (arr_sum / len(pixmaps)).astype(np.uint8)
+            result_img = QImage(arr_avg.data, w, h, w * 4, QImage.Format_RGBA8888)
+            return QPixmap.fromImage(result_img.copy())
+        except Exception as e:
+            print(f"Error averaging pixmaps: {e}")
+            return pixmaps[0]
     
     # ------------------------------------------- #  
     
@@ -1940,6 +2081,13 @@ class frequencyPlotWindow(QWidget):
 
         cbutton = self.sender()
         
+        # Determine if this is an auto-run/re-render (files already set) or interactive browse
+        is_rerender_or_auto = False
+        if cbutton is None:
+            is_rerender_or_auto = True
+        elif cbutton.text() == 'Re-Render':
+            is_rerender_or_auto = True
+        
         # Prepare error dialog window 
         boolean_check = True
         self.error_dialog = QErrorMessage()
@@ -1966,7 +2114,7 @@ class frequencyPlotWindow(QWidget):
             
         # If all checks pass, and we are not in re-render mode, query user for files.
         if boolean_check: 
-            if cbutton.text() != 'Re-Render':
+            if not is_rerender_or_auto:
                 run_flag = self.openFileNamesDialog()
                 # If the user did not choose the correct files, do not execute thread.
                 if not run_flag:
@@ -1985,7 +2133,8 @@ class frequencyPlotWindow(QWidget):
             else: 
                 # If no files chosen
                 if self.files[0] == self.files[1] == None:
-                     self.error_dialog.showMessage("You haven't selected a session yet from Browse file")
+                     if cbutton: # Only show error if triggered by button click
+                        self.error_dialog.showMessage("You haven't selected a session yet from Browse file")
                      return
 
                 else: 
@@ -2013,6 +2162,82 @@ class frequencyPlotWindow(QWidget):
         
     # ------------------------------------------- #  
     
+    def loadEOIFile(self):
+        '''Manually load an EOI file via dialog'''
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getOpenFileName(self, "Load EOI File", self.active_folder, 
+                                                 "CSV/Text Files (*.csv *.txt);;All Files (*)", options=options)
+        if file_path:
+            self.eoi_file_arg = file_path
+            self.processEOIs()
+            # Refresh current plot
+            if self.chunk_index is not None:
+                self.sliderChanged(self.chunk_index)
+            QMessageBox.information(self, "EOIs Loaded", f"Loaded EOIs from {os.path.basename(file_path)}")
+
+    # ------------------------------------------- #  
+    
+    def processEOIs(self):
+        '''Process EOI file and map to tracking segments'''
+        self.eoi_segments = {}
+        if not self.eoi_file_arg or not os.path.exists(self.eoi_file_arg):
+            return
+
+        try:
+            eois = []
+            with open(self.eoi_file_arg, 'r') as f:
+                reader = csv.reader(f)
+                for row in reader:
+                    if not row: continue
+                    
+                    # Handle tab separation if csv reader didn't split it
+                    if len(row) == 1 and '\t' in row[0]:
+                        parts = row[0].split('\t')
+                    else:
+                        parts = row
+                        
+                    try:
+                        # Try parsing as (Start, Stop) - e.g. temp file (seconds)
+                        start = float(parts[0])
+                        stop = float(parts[1])
+                        eois.append((start, stop))
+                    except (ValueError, IndexError):
+                        # Try parsing as (ID, Start, Stop) - e.g. HFO score file (ms)
+                        try:
+                            start = float(parts[1]) / 1000.0
+                            stop = float(parts[2]) / 1000.0
+                            eois.append((start, stop))
+                        except (ValueError, IndexError):
+                            continue
+            
+            if not eois or self.tracking_data is None:
+                return
+            
+            # Handle 3-tuple (with time chunks) or 2-tuple (legacy)
+            if len(self.tracking_data) == 3:
+                x_chunks, y_chunks, t_chunks = self.tracking_data
+                
+                for i, (chunk_x, chunk_y, chunk_t) in enumerate(zip(x_chunks, y_chunks, t_chunks)):
+                    if len(chunk_t) == 0: continue
+                    
+                    for start, stop in eois:
+                        # Find indices where time is within EOI
+                        idx_start = np.searchsorted(chunk_t, start)
+                        idx_end = np.searchsorted(chunk_t, stop)
+                        
+                        if idx_end > idx_start:
+                            if i not in self.eoi_segments: self.eoi_segments[i] = []
+                            self.eoi_segments[i].append((chunk_x[idx_start:idx_end], chunk_y[idx_start:idx_end]))
+            else:
+                print("Warning: Legacy tracking data format (no time chunks). Cannot map EOIs accurately.")
+                    
+            print(f"Processed {len(eois)} EOIs into segments.")
+            
+        except Exception as e:
+            print(f"Error processing EOIs: {e}")
+
+    # ------------------------------------------- #  
+    
     def setData(self, data):
 
         '''
@@ -2031,6 +2256,9 @@ class frequencyPlotWindow(QWidget):
         self.tracking_data = data[5]
         self.binned_data = data[6] if len(data) > 6 else None
         
+        # Process EOIs now that we have tracking data
+        self.processEOIs()
+        
         # Update tracking label with arena shape if available
         if len(data) > 7:
             self.tracking_Label.setText(f"Animal tracking<br><span style='font-size:12pt'>{data[7]}</span>")
@@ -2039,7 +2267,7 @@ class frequencyPlotWindow(QWidget):
         
         # Update the binned analysis window if it's open
         if self.binned_analysis_window is not None and self.binned_analysis_window.isVisible():
-            self.binned_analysis_window.updateBinnedData(self.binned_data, self.files, self.active_folder)
+            self.binned_analysis_window.updateBinnedData(self.binned_data, self.files, self.active_folder, self.eoi_segments)
         
         # Slider limits
         self.slider.setMinimum(0)
@@ -2070,7 +2298,8 @@ class frequencyPlotWindow(QWidget):
                 parent=self,
                 binned_data=self.binned_data,
                 files=self.files,
-                active_folder=self.active_folder
+                active_folder=self.active_folder,
+                eoi_segments=self.eoi_segments
             )
         
         self.binned_analysis_window.show()
@@ -2147,12 +2376,15 @@ def main():
     # Check if an EEG file was passed as command-line argument
     eeg_file = None
     ppm = None
+    eoi_file = None
     if len(sys.argv) > 1:
         eeg_file = sys.argv[1]
     if len(sys.argv) > 2:
         ppm = sys.argv[2]
+    if len(sys.argv) > 3:
+        eoi_file = sys.argv[3]
     
-    screen = frequencyPlotWindow(eeg_file, ppm)
+    screen = frequencyPlotWindow(eeg_file, ppm, eoi_file)
     screen.show()
     sys.exit(app.exec_())
     

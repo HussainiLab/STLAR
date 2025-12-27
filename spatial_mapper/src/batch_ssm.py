@@ -500,7 +500,12 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
     
     print("[3/5] Extracting tracking data...")
     # Extract tracking data
-    pos_x_chunks, pos_y_chunks = tracking_data if tracking_data else (None, None)
+    if tracking_data:
+        # Handle 3-tuple (x, y, t) or 2-tuple (x, y)
+        pos_x_chunks = tracking_data[0]
+        pos_y_chunks = tracking_data[1]
+    else:
+        pos_x_chunks, pos_y_chunks = None, None
     
     print("[4/5] Exporting to CSV...")
     # Export to CSV
