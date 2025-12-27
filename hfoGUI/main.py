@@ -886,49 +886,41 @@ class Window(QtWidgets.QWidget):  # defines the window class (main window)
             )
             return
 
-        # Detect arena shape
-        import cv2
-        
         # Filter NaNs
         valid_mask = np.isfinite(x) & np.isfinite(y)
         x_clean = x[valid_mask]
         y_clean = y[valid_mask]
 
         arena_shape = "box" # Default
-        circularity = 0.0
-        extent = 0.0
+        aspect_ratio = 0.0
+        r_99 = 0.0
 
-        if x_clean.size > 0:
-            # Normalize to 0-1000 range for sufficient precision
+        if x_clean.size > 100:
+            # Calculate bounds
             x_min_val, x_max_val = np.min(x_clean), np.max(x_clean)
             y_min_val, y_max_val = np.min(y_clean), np.max(y_clean)
             
-            if (x_max_val - x_min_val) > 0 and (y_max_val - y_min_val) > 0:
-                scale = 1000.0
-                x_scaled = ((x_clean - x_min_val) / (x_max_val - x_min_val) * scale).astype(np.float32)
-                y_scaled = ((y_clean - y_min_val) / (y_max_val - y_min_val) * scale).astype(np.float32)
-                
-                points = np.column_stack((x_scaled, y_scaled))
-                hull = cv2.convexHull(points)
-                
-                area = cv2.contourArea(hull)
-                perimeter = cv2.arcLength(hull, True)
-                
-                if perimeter > 0:
-                    circularity = 4 * np.pi * area / (perimeter ** 2)
-                    # Calculate extent (Area / Bounding Box Area)
-                    # Since we scaled to 0-1000, bounding box area is 1000*1000 = 1,000,000
-                    extent = area / 1000000.0
+            width = x_max_val - x_min_val
+            height = y_max_val - y_min_val
 
-                    # Square is pi/4 ~= 0.785
-                    # Circle is 1.0
-                    # Threshold of 0.89 separates them well, but checking extent helps distinguish rounded boxes
-                    if circularity > 0.89 and extent < 0.85:
-                        arena_shape = "circle"
-                    else:
-                        arena_shape = "box"
+            if width > 0 and height > 0:
+                # Normalize coordinates to [-1, 1]
+                norm_x = 2 * (x_clean - x_min_val) / width - 1
+                norm_y = 2 * (y_clean - y_min_val) / height - 1
 
-        title_ppm = f".pos Trajectory  (PPM: {ppm_value}, Arena: {arena_shape}, Circ: {circularity:.2f}, Extent: {extent:.2f})"
+                # Calculate radius from center
+                r = np.sqrt(norm_x**2 + norm_y**2)
+                r_99 = np.percentile(r, 99)
+                aspect_ratio = width / height
+
+                # r_99 > 1.15 implies corners are visited (Square/Rect)
+                # r_99 <= 1.15 implies circular/elliptical boundary
+                if r_99 <= 1.15:
+                    arena_shape = "circle"
+                else:
+                    arena_shape = "box"
+
+        title_ppm = f".pos Trajectory  (PPM: {ppm_value}, Arena: {arena_shape}, AR: {aspect_ratio:.2f}, R99: {r_99:.2f})"
         if self.pos_plot_window is None:
             self.pos_plot_window = QtWidgets.QDialog(self)
             self.pos_plot_window.setWindowTitle(title_ppm)
