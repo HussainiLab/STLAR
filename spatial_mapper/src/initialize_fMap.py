@@ -218,6 +218,14 @@ def initialize_fMap(self, files: list, ppm: int, chunk_size: int, window_type: s
     # Extract position data and filter with speed filter settings
     pos_x, pos_y, pos_t, arena_size =  grab_position_data(pos_file , ppm)
     
+    # Remove last 1 second from position data to avoid end-of-recording artifacts
+    if len(pos_t) > 0 and pos_t[-1] > 1.0:
+        cutoff = pos_t[-1] - 1.0
+        mask = pos_t <= cutoff
+        pos_x = pos_x[mask]
+        pos_y = pos_y[mask]
+        pos_t = pos_t[mask]
+    
     # Detect arena shape
     arena_shape = detect_arena_shape(pos_x, pos_y)
     print(f"  → Detected Arena Shape: {arena_shape}")
@@ -239,6 +247,8 @@ def initialize_fMap(self, files: list, ppm: int, chunk_size: int, window_type: s
             zero_chunk = np.zeros_like(chunks[0])
             for _ in range(expected_chunks - len(chunks)):
                 chunks.append(zero_chunk)
+        elif len(chunks) > expected_chunks:
+            chunks = chunks[:expected_chunks]
     
     print("  → Computing scaling factors and powers...")
     # Grab scaling factors. We compute this outside the loop since we only need it once. 
