@@ -622,7 +622,7 @@ def compute_binned_freq_analysis(pos_x: np.ndarray, pos_y: np.ndarray, pos_t: np
 
 # =========================================================================== #
 
-def export_binned_analysis_to_csv(binned_data: dict, output_path: str):
+def export_binned_analysis_to_csv(binned_data: dict, output_path: str, pos_x_chunks=None, pos_y_chunks=None, eoi_segments=None):
     
     '''
         Exports binned frequency analysis to Excel files with multiple sheets per metric
@@ -660,108 +660,197 @@ def export_binned_analysis_to_csv(binned_data: dict, output_path: str):
     # Percent power mean across time chunks
     percent_power_mean = {band: np.mean(percent_power[band], axis=2) for band in bands}
 
+    # Helper to reshape (4,4,n_chunks) -> (n_chunks, 16) and add Chunk column
+    def prepare_matrix(data_3d):
+        flat = data_3d.reshape(16, -1).T
+        chunks_col = np.arange(1, n_chunks + 1).reshape(-1, 1)
+        return np.hstack([chunks_col, flat])
+
+    # Prepare per-chunk matrices
+    power_per_chunk = {band: prepare_matrix(binned_data['bin_power_timeseries'][band]) for band in bands}
+
+    # Percent power (per chunk)
+    percent_per_chunk = {}
+    all_bands_power = np.stack([binned_data['bin_power_timeseries'][b] for b in bands])
+    total_power = np.sum(all_bands_power, axis=0)  # (4, 4, n_chunks)
+    for band in bands:
+        with np.errstate(divide='ignore', invalid='ignore'):
+            pct_data = np.where(total_power > 0, (binned_data['bin_power_timeseries'][band] / total_power) * 100.0, 0.0)
+        percent_per_chunk[band] = prepare_matrix(pct_data)
+
+    # Dominant band per chunk matrix (strings)
+    dom_data = np.array(binned_data['bin_dominant_band'])  # (n_chunks, 4, 4)
+    dom_data_T = dom_data.transpose(1, 2, 0)  # (4,4,n_chunks)
+    dom_export_matrix = prepare_matrix(dom_data_T)
+
+    # Occupancy per chunk: prefer explicit timeseries if present in binned_data,
+    # else compute from pos_x_chunks/pos_y_chunks if provided.
+    occ_timeseries_matrix = None
+    occ_ts = None
+    if 'bin_occupancy_timeseries' in binned_data:
+        occ_ts = binned_data['bin_occupancy_timeseries']
+    elif pos_x_chunks is not None and pos_y_chunks is not None:
+        # compute occupancy timeseries (counts per bin per chunk)
+        x_edges = binned_data.get('x_bin_edges')
+        y_edges = binned_data.get('y_bin_edges')
+        n_chunks = binned_data['time_chunks']
+        occ_ts = np.zeros((4, 4, n_chunks))
+        for chunk_idx in range(min(n_chunks, len(pos_x_chunks))):
+            xs = np.array(pos_x_chunks[chunk_idx])
+            ys = np.array(pos_y_chunks[chunk_idx])
+            if xs.size == 0:
+                continue
+            x_inds = np.clip(np.digitize(xs, x_edges) - 1, 0, 3)
+            y_inds = np.clip(np.digitize(ys, y_edges) - 1, 0, 3)
+            for xi, yi in zip(x_inds, y_inds):
+                occ_ts[xi, yi, chunk_idx] += 1
+    # If we have occ_ts, convert to percent per chunk and prepare matrix
+    if occ_ts is not None:
+        occ_sums = np.sum(occ_ts, axis=(0, 1))
+        with np.errstate(divide='ignore', invalid='ignore'):
+            occ_pct = np.where(occ_sums[None, None, :] > 0, (occ_ts / occ_sums[None, None, :]) * 100.0, 0.0)
+        occ_timeseries_matrix = prepare_matrix(occ_pct)
+
     if use_excel:
-        # Mean power workbook
-        mean_power_file = f"{output_path}_mean_power.xlsx"
+        try:
+            import openpyxl
+        except ImportError:
+            use_excel = False
+
+    if use_excel:
+        bin_headers = ["Chunk"] + [f"Bin_{i+1}" for i in range(16)]
+
+        # Save per-chunk mean power (one workbook with one sheet per band)
+        mean_power_file = f"{output_path}_mean_power_per_chunk.xlsx"
         wb_mean = openpyxl.Workbook()
-        # Remove default sheet
         wb_mean.remove(wb_mean.active)
         for band in bands:
             ws = wb_mean.create_sheet(title=band)
-            mean_power = binned_data['bin_statistics'][band]['mean']
-            for row in mean_power:
+            ws.append(bin_headers)
+            matrix = power_per_chunk[band]
+            for row in matrix:
                 ws.append([float(val) for val in row])
         wb_mean.save(mean_power_file)
 
-        # Percent power workbook (mean percent per bin)
-        percent_file = f"{output_path}_percent_power.xlsx"
+        # Save percent power per chunk
+        percent_file = f"{output_path}_percent_power_per_chunk.xlsx"
         wb_pct = openpyxl.Workbook()
         wb_pct.remove(wb_pct.active)
         for band in bands:
             ws = wb_pct.create_sheet(title=band)
-            mean_pct = percent_power_mean[band]
-            for row in mean_pct:
+            ws.append(bin_headers)
+            matrix = percent_per_chunk[band]
+            for row in matrix:
                 ws.append([float(val) for val in row])
         wb_pct.save(percent_file)
 
-        # Occupancy workbook
-        occ_file = f"{output_path}_occupancy.xlsx"
-        wb_occ = openpyxl.Workbook()
-        ws_occ = wb_occ.active
-        ws_occ.title = 'Occupancy'
-        occ = binned_data['bin_occupancy']
-        for row in occ:
-            ws_occ.append([float(val) for val in row])
-        wb_occ.save(occ_file)
-
-        # Dominant band counts workbook (one sheet per band)
-        dominant_file = f"{output_path}_dominant_band.xlsx"
-        wb_dom = openpyxl.Workbook()
-        wb_dom.remove(wb_dom.active)
-        dominant_counts = {band: np.zeros((4, 4)) for band in bands}
-        for chunk_data in binned_data['bin_dominant_band']:
-            for x in range(4):
-                for y in range(4):
-                    band = chunk_data[x, y]
-                    dominant_counts[band][x, y] += 1
-        for band in bands:
-            ws = wb_dom.create_sheet(title=band)
-            counts = dominant_counts[band]
-            for row in counts:
+        # If occupancy timeseries exists, save percent occupancy per chunk
+        occ_ts_file = None
+        if occ_timeseries_matrix is not None:
+            occ_ts_file = f"{output_path}_percent_occupancy_per_chunk.xlsx"
+            wb_occ_ts = openpyxl.Workbook()
+            ws = wb_occ_ts.active
+            ws.title = 'Percent Occupancy'
+            ws.append(bin_headers)
+            for row in occ_timeseries_matrix:
                 ws.append([float(val) for val in row])
-        wb_dom.save(dominant_file)
+            wb_occ_ts.save(occ_ts_file)
+
+        # Dominant band per chunk (single sheet, strings)
+        dom_file = f"{output_path}_dominant_band_per_chunk.xlsx"
+        wb_dom = openpyxl.Workbook()
+        ws_dom = wb_dom.active
+        ws_dom.title = 'Dominant Band'
+        ws_dom.append(bin_headers)
+        for row in dom_export_matrix:
+            ws_dom.append([row[0]] + list(row[1:]))
+        wb_dom.save(dom_file)
+
+        files = [mean_power_file, percent_file, dom_file]
+        if occ_ts_file is not None:
+            files.append(occ_ts_file)
+
+        # EOIs per chunk if provided: compute and save
+        eoi_file = None
+        if eoi_segments is not None:
+            n_chunks = binned_data['time_chunks']
+            eoi_counts_per_chunk = np.zeros((4, 4, n_chunks))
+            x_edges = binned_data.get('x_bin_edges')
+            y_edges = binned_data.get('y_bin_edges')
+            for chunk_idx, segments in eoi_segments.items():
+                if chunk_idx >= n_chunks: continue
+                for seg in segments:
+                    xs = np.array(seg[0])
+                    ys = np.array(seg[1])
+                    if xs.size == 0: continue
+                    x_inds = np.clip(np.digitize(xs, x_edges) - 1, 0, 3)
+                    y_inds = np.clip(np.digitize(ys, y_edges) - 1, 0, 3)
+                    for xi, yi in zip(x_inds, y_inds):
+                        eoi_counts_per_chunk[xi, yi, chunk_idx] += 1
+            eoi_export_matrix = prepare_matrix(eoi_counts_per_chunk)
+            eoi_file = f"{output_path}_eois_per_chunk.xlsx"
+            wb_eoi = openpyxl.Workbook()
+            ws = wb_eoi.active
+            ws.title = 'EOIs'
+            ws.append(bin_headers)
+            for row in eoi_export_matrix:
+                ws.append([float(val) for val in row])
+            wb_eoi.save(eoi_file)
+            files.append(eoi_file)
 
         return {
             'format': 'excel',
-            'files': [mean_power_file, percent_file, occ_file, dominant_file],
+            'files': files,
             'reason': None
         }
-    
+
     else:
-        # Fallback to CSV format
+        # CSV fallback: export per-chunk matrices
         csv_files = []
-        for band in binned_data['bands']:
-            mean_power = binned_data['bin_statistics'][band]['mean']
-            out_file = f"{output_path}_binned_{band}_mean_power.csv"
-            with open(out_file, 'w', newline='') as f:
-                writer = csv.writer(f)
-                for row in mean_power:
-                    writer.writerow(row.tolist())
+        for band in bands:
+            out_file = f"{output_path}_mean_power_{band}_per_chunk.csv"
+            np.savetxt(out_file, power_per_chunk[band], delimiter=',')
             csv_files.append(out_file)
 
-        # Percent power mean per band
         for band in bands:
-            mean_pct = percent_power_mean[band]
-            out_file = f"{output_path}_binned_{band}_percent_power.csv"
-            with open(out_file, 'w', newline='') as f:
-                writer = csv.writer(f)
-                for row in mean_pct:
-                    writer.writerow(row.tolist())
+            out_file = f"{output_path}_percent_power_{band}_per_chunk.csv"
+            np.savetxt(out_file, percent_per_chunk[band], delimiter=',')
             csv_files.append(out_file)
-        
-        occ_out = f"{output_path}_bin_occupancy.csv"
-        occ = binned_data['bin_occupancy']
-        with open(occ_out, 'w', newline='') as f:
+
+        # Occupancy per chunk CSV if available
+        if occ_timeseries_matrix is not None:
+            occ_out = f"{output_path}_percent_occupancy_per_chunk.csv"
+            np.savetxt(occ_out, occ_timeseries_matrix, delimiter=',')
+            csv_files.append(occ_out)
+
+        # Dominant band per chunk (strings)
+        dom_out = f"{output_path}_dominant_band_per_chunk.csv"
+        with open(dom_out, 'w', newline='') as f:
             writer = csv.writer(f)
-            for row in occ:
+            for row in dom_export_matrix:
                 writer.writerow(row.tolist())
-        csv_files.append(occ_out)
-        
-        dominant_counts = {band: np.zeros((4, 4)) for band in bands}
-        for chunk_data in binned_data['bin_dominant_band']:
-            for x in range(4):
-                for y in range(4):
-                    band = chunk_data[x, y]
-                    dominant_counts[band][x, y] += 1
-        
-        for band in bands:
-            out_file = f"{output_path}_bin_dominant_{band}_frequency.csv"
-            counts = dominant_counts[band]
-            with open(out_file, 'w', newline='') as f:
-                writer = csv.writer(f)
-                for row in counts:
-                    writer.writerow(row.tolist())
-            csv_files.append(out_file)
+        csv_files.append(dom_out)
+
+        # EOIs per chunk CSV if provided
+        if eoi_segments is not None:
+            n_chunks = binned_data['time_chunks']
+            eoi_counts_per_chunk = np.zeros((4, 4, n_chunks))
+            x_edges = binned_data.get('x_bin_edges')
+            y_edges = binned_data.get('y_bin_edges')
+            for chunk_idx, segments in eoi_segments.items():
+                if chunk_idx >= n_chunks: continue
+                for seg in segments:
+                    xs = np.array(seg[0])
+                    ys = np.array(seg[1])
+                    if xs.size == 0: continue
+                    x_inds = np.clip(np.digitize(xs, x_edges) - 1, 0, 3)
+                    y_inds = np.clip(np.digitize(ys, y_edges) - 1, 0, 3)
+                    for xi, yi in zip(x_inds, y_inds):
+                        eoi_counts_per_chunk[xi, yi, chunk_idx] += 1
+            eoi_export_matrix = prepare_matrix(eoi_counts_per_chunk)
+            eoi_out = f"{output_path}_eois_per_chunk.csv"
+            np.savetxt(eoi_out, eoi_export_matrix, delimiter=',')
+            csv_files.append(eoi_out)
 
         return {
             'format': 'csv',
