@@ -1136,134 +1136,165 @@ def export_binned_analysis_jpgs(binned_data: dict, output_folder: str, base_name
     bands = binned_data['bands']
     n_chunks = binned_data['time_chunks']
     export_count = 0
-    
-    # Export mean power for all chunks (JPG, quality 85)
+
+    # Compute vmin/vmax across all chunks per band for consistent color scales
+    vmin_all = {}
+    vmax_all = {}
+    for band in bands:
+        timeseries_data = binned_data['bin_power_timeseries'][band]
+        vmin_all[band] = np.nanmin(timeseries_data)
+        vmax_all[band] = np.nanmax(timeseries_data)
+
+    # Export mean power + occupancy for all chunks (uses GUI styling)
+    from matplotlib.ticker import FuncFormatter
     for chunk_idx in range(n_chunks):
         fig, axes = plt.subplots(2, 4, figsize=(16, 8))
-        fig.suptitle(f'4x4 Spatial Bins - Chunk {chunk_idx} (Frequency Band Power)', 
+        fig.suptitle(f'4x4 Spatial Bins - Chunk {chunk_idx + 1:02d} (Frequency Band Power & Occupancy)',
                      fontsize=14, fontweight='bold')
-        
-        # Get min/max across all chunks for consistent color scale
-        vmin_all = {}
-        vmax_all = {}
-        for band in bands:
-            timeseries_data = binned_data['bin_power_timeseries'][band]
-            vmin_all[band] = np.min(timeseries_data)
-            vmax_all[band] = np.max(timeseries_data)
-        
+
         # First row: First 4 bands
         for idx, band in enumerate(bands[:4]):
             chunk_power = binned_data['bin_power_timeseries'][band][:, :, chunk_idx]
-            im = axes[0, idx].imshow(chunk_power, cmap='hot', aspect='auto',
+            im = axes[0, idx].imshow(chunk_power, cmap='turbo', aspect='equal', interpolation='nearest',
                                      vmin=vmin_all[band], vmax=vmax_all[band])
             axes[0, idx].set_title(f'{band}')
             axes[0, idx].set_xticks([0, 1, 2, 3])
             axes[0, idx].set_yticks([0, 1, 2, 3])
             axes[0, idx].grid(True, alpha=0.3)
             cbar = plt.colorbar(im, ax=axes[0, idx])
+            cbar.ax.yaxis.set_major_formatter(FuncFormatter(lambda x, pos: f'{x*1e-3:g}K' if x >= 1000 else f'{x:g}'))
             cbar.set_label('Power', fontsize=9)
-        
+
         # Second row: Remaining bands
         remaining_bands = bands[4:]
         for idx, band in enumerate(remaining_bands):
             chunk_power = binned_data['bin_power_timeseries'][band][:, :, chunk_idx]
-            im = axes[1, idx].imshow(chunk_power, cmap='hot', aspect='auto',
+            im = axes[1, idx].imshow(chunk_power, cmap='turbo', aspect='equal', interpolation='nearest',
                                      vmin=vmin_all[band], vmax=vmax_all[band])
             axes[1, idx].set_title(f'{band}')
             axes[1, idx].set_xticks([0, 1, 2, 3])
             axes[1, idx].set_yticks([0, 1, 2, 3])
             axes[1, idx].grid(True, alpha=0.3)
             cbar = plt.colorbar(im, ax=axes[1, idx])
+            cbar.ax.yaxis.set_major_formatter(FuncFormatter(lambda x, pos: f'{x*1e-3:g}K' if x >= 1000 else f'{x:g}'))
             cbar.set_label('Power', fontsize=9)
-        
-        # Hide unused subplots
-        for idx in range(len(remaining_bands), 4):
+
+        # 8th slot: Occupancy (try timeseries first, else total occupancy)
+        ax_occ = axes[1, 3]
+        occ_data = None
+        if 'bin_occupancy_timeseries' in binned_data:
+            occ_data = binned_data['bin_occupancy_timeseries'][:, :, chunk_idx]
+        else:
+            occ = binned_data.get('bin_occupancy')
+            if occ is not None:
+                # normalize to percent
+                total = np.sum(occ)
+                if total > 0:
+                    occ_data = (occ / total) * 100.0
+
+        if occ_data is not None:
+            total = np.sum(occ_data)
+            if total > 0:
+                occ_plot = occ_data if occ_data.max() <= 100 else (occ_data / total) * 100.0
+            else:
+                occ_plot = occ_data
+            im = ax_occ.imshow(occ_plot, cmap='turbo', aspect='equal', interpolation='nearest')
+            ax_occ.set_title('Occupancy (%)')
+            ax_occ.set_xticks([0, 1, 2, 3])
+            ax_occ.set_yticks([0, 1, 2, 3])
+            ax_occ.grid(True, alpha=0.3)
+            cbar = plt.colorbar(im, ax=ax_occ)
+            cbar.set_label('%', fontsize=9)
+        else:
+            ax_occ.text(0.5, 0.5, 'No Data', ha='center', va='center')
+            ax_occ.axis('off')
+
+        # Hide any unused subplots if necessary
+        for idx in range(len(remaining_bands), 3):
             axes[1, idx].axis('off')
-        
+
         plt.tight_layout()
-        jpg_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx}_mean_power.jpg")
+        jpg_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx+1:02d}_mean_power.jpg")
         fig.savefig(jpg_path, format='jpg', pil_kwargs={'quality': 85}, bbox_inches='tight')
         plt.close(fig)
         export_count += 1
-    
-    # Export percent power for all chunks (JPG, quality 85)
+
+    # Export percent power + occupancy for all chunks
     for chunk_idx in range(n_chunks):
         fig, axes = plt.subplots(2, 4, figsize=(16, 8))
-        fig.suptitle(f'4x4 Spatial Bins - Chunk {chunk_idx} (Frequency Band Percent Power)', 
+        fig.suptitle(f'4x4 Spatial Bins - Chunk {chunk_idx + 1:02d} (Frequency Band Percent Power & Occupancy)',
                      fontsize=14, fontweight='bold')
-        
-        # Precompute percent power for this chunk
+
+        # Compute percent power for this chunk
         percent_power_chunk = {}
         total_power_chunk = np.zeros((4, 4))
         for band in bands:
             total_power_chunk += binned_data['bin_power_timeseries'][band][:, :, chunk_idx]
-        
+
         for band in bands:
             band_power_chunk = binned_data['bin_power_timeseries'][band][:, :, chunk_idx]
             with np.errstate(divide='ignore', invalid='ignore'):
                 pct = np.where(total_power_chunk > 0, (band_power_chunk / total_power_chunk) * 100.0, 0.0)
             percent_power_chunk[band] = pct
-        
-        # Get min/max for percent across all chunks
-        vmin_all = {}
-        vmax_all = {}
-        for band in bands:
-            vmin_all[band] = 0
-            vmax_all[band] = 100
-        
-        # First row: First 4 bands
+
+        # Display bands
         for idx, band in enumerate(bands[:4]):
-            im = axes[0, idx].imshow(percent_power_chunk[band], cmap='hot', aspect='auto',
-                                     vmin=vmin_all[band], vmax=vmax_all[band])
+            im = axes[0, idx].imshow(percent_power_chunk[band], cmap='turbo', aspect='equal', interpolation='nearest', vmin=0, vmax=100)
             axes[0, idx].set_title(f'{band}')
             axes[0, idx].set_xticks([0, 1, 2, 3])
             axes[0, idx].set_yticks([0, 1, 2, 3])
             axes[0, idx].grid(True, alpha=0.3)
             cbar = plt.colorbar(im, ax=axes[0, idx])
             cbar.set_label('%', fontsize=9)
-        
-        # Second row: Remaining bands
+
         remaining_bands = bands[4:]
         for idx, band in enumerate(remaining_bands):
-            im = axes[1, idx].imshow(percent_power_chunk[band], cmap='hot', aspect='auto',
-                                     vmin=vmin_all[band], vmax=vmax_all[band])
+            im = axes[1, idx].imshow(percent_power_chunk[band], cmap='turbo', aspect='equal', interpolation='nearest', vmin=0, vmax=100)
             axes[1, idx].set_title(f'{band}')
             axes[1, idx].set_xticks([0, 1, 2, 3])
             axes[1, idx].set_yticks([0, 1, 2, 3])
             axes[1, idx].grid(True, alpha=0.3)
             cbar = plt.colorbar(im, ax=axes[1, idx])
             cbar.set_label('%', fontsize=9)
-        
-        # Hide unused subplots
-        for idx in range(len(remaining_bands), 4):
+
+        # Occupancy in the 8th slot
+        ax_occ = axes[1, 3]
+        occ_data = None
+        if 'bin_occupancy_timeseries' in binned_data:
+            occ_data = binned_data['bin_occupancy_timeseries'][:, :, chunk_idx]
+        else:
+            occ = binned_data.get('bin_occupancy')
+            if occ is not None:
+                total = np.sum(occ)
+                if total > 0:
+                    occ_data = (occ / total) * 100.0
+
+        if occ_data is not None:
+            im = ax_occ.imshow(occ_data, cmap='turbo', aspect='equal', interpolation='nearest', vmin=0, vmax=100)
+            ax_occ.set_title('Occupancy (%)')
+            ax_occ.set_xticks([0, 1, 2, 3])
+            ax_occ.set_yticks([0, 1, 2, 3])
+            ax_occ.grid(True, alpha=0.3)
+            cbar = plt.colorbar(im, ax=ax_occ)
+            cbar.set_label('%', fontsize=9)
+        else:
+            ax_occ.text(0.5, 0.5, 'No Data', ha='center', va='center')
+            ax_occ.axis('off')
+
+        for idx in range(len(remaining_bands), 3):
             axes[1, idx].axis('off')
-        
+
         plt.tight_layout()
-        jpg_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx}_percent_power.jpg")
+        jpg_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx+1:02d}_percent_power.jpg")
         fig.savefig(jpg_path, format='jpg', pil_kwargs={'quality': 85}, bbox_inches='tight')
         plt.close(fig)
         export_count += 1
-    
-    # Export occupancy only once
-    fig_occ = plt.figure(figsize=(6, 5))
-    ax = fig_occ.add_subplot(111)
-    occ = binned_data['bin_occupancy']
-    im = ax.imshow(occ, cmap='viridis', aspect='auto')
-    ax.set_title('Bin Occupancy (Total Time Spent)', fontsize=12, fontweight='bold')
-    ax.set_xticks([0, 1, 2, 3])
-    ax.set_yticks([0, 1, 2, 3])
-    ax.grid(True, alpha=0.3)
-    cbar = plt.colorbar(im, ax=ax)
-    cbar.set_label('Occupancy (samples)', fontsize=9)
-    jpg_path = os.path.join(output_folder, f"{base_name}_occupancy.jpg")
-    fig_occ.savefig(jpg_path, format='jpg', pil_kwargs={'quality': 85}, bbox_inches='tight')
-    plt.close(fig_occ)
-    export_count += 1
-    
-    # Export dominant band per chunk
+
+    # Export dominant band + EOI per chunk (combined)
     for chunk_idx in range(n_chunks):
-        fig, ax = plt.subplots(figsize=(6, 5))
-        
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+        # Dominant band (left)
         dominant_chunk = binned_data['bin_dominant_band'][chunk_idx]
         band_map = {band: idx for idx, band in enumerate(bands)}
         numeric_dominant = np.zeros((4, 4))
@@ -1271,23 +1302,59 @@ def export_binned_analysis_jpgs(binned_data: dict, output_folder: str, base_name
             for y in range(4):
                 band = dominant_chunk[x, y]
                 numeric_dominant[x, y] = band_map.get(band, 0)
-        
-        im = ax.imshow(numeric_dominant, cmap='tab10', aspect='auto', vmin=0, vmax=len(bands)-1)
-        ax.set_title(f'Dominant Band - Chunk {chunk_idx}', fontsize=12, fontweight='bold')
-        ax.set_xticks([0, 1, 2, 3])
-        ax.set_yticks([0, 1, 2, 3])
-        ax.grid(True, alpha=0.3)
-        
-        cbar = plt.colorbar(im, ax=ax, ticks=range(len(bands)))
-        cbar.set_ticklabels(bands, fontsize=8)
-        cbar.set_label('Band', fontsize=9)
-        
+
+        im1 = axes[0].imshow(numeric_dominant, cmap='tab10', aspect='equal', interpolation='nearest', vmin=0, vmax=len(bands)-1)
+        axes[0].set_title(f'Dominant Band - Chunk {chunk_idx + 1:02d}')
+        axes[0].set_xticks([0, 1, 2, 3])
+        axes[0].set_yticks([0, 1, 2, 3])
+        axes[0].grid(True, alpha=0.3)
+        cbar1 = plt.colorbar(im1, ax=axes[0], ticks=range(len(bands)))
+        cbar1.set_ticklabels(bands, fontsize=8)
+        cbar1.set_label('Band', fontsize=9)
+
+        # EOI distribution (right)
+        occ_hist = None
+        if isinstance(binned_data.get('eoi_segments'), dict):
+            # If caller provided eoi_segments inside binned_data
+            eoi_segments = binned_data.get('eoi_segments')
+        else:
+            eoi_segments = None
+
+        if eoi_segments and chunk_idx in eoi_segments:
+            segs = eoi_segments[chunk_idx]
+            # Try to compute bounds from binned_data if available
+            min_x = binned_data.get('min_x') if binned_data.get('min_x') is not None else 0
+            max_x = binned_data.get('max_x') if binned_data.get('max_x') is not None else 1
+            min_y = binned_data.get('min_y') if binned_data.get('min_y') is not None else 0
+            max_y = binned_data.get('max_y') if binned_data.get('max_y') is not None else 1
+            x_edges = np.linspace(min_x, max_x, 5)
+            y_edges = np.linspace(min_y, max_y, 5)
+            eoi_x_all = []
+            eoi_y_all = []
+            for seg in segs:
+                eoi_x_all.extend(seg[0])
+                eoi_y_all.extend(seg[1])
+            if eoi_x_all:
+                H, _, _ = np.histogram2d(eoi_x_all, eoi_y_all, bins=[x_edges, y_edges])
+                occ_hist = np.flipud(H.T)
+
+        if occ_hist is None:
+            occ_hist = np.zeros((4, 4))
+
+        im2 = axes[1].imshow(occ_hist, cmap='turbo', aspect='equal', interpolation='nearest')
+        axes[1].set_title(f'EOI Distribution - Chunk {chunk_idx + 1:02d}')
+        axes[1].set_xticks([0, 1, 2, 3])
+        axes[1].set_yticks([0, 1, 2, 3])
+        axes[1].grid(True, alpha=0.3)
+        cbar2 = plt.colorbar(im2, ax=axes[1])
+        cbar2.set_label('EOI Count', fontsize=9)
+
         plt.tight_layout()
-        jpg_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx}_dominant_band.jpg")
+        jpg_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx+1:02d}_dominant_eoi.jpg")
         fig.savefig(jpg_path, format='jpg', pil_kwargs={'quality': 85}, bbox_inches='tight')
         plt.close(fig)
         export_count += 1
-    
+
     return export_count
 
 
