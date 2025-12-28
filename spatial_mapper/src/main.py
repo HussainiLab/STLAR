@@ -16,6 +16,7 @@ import csv
 import glob
 from pathlib import Path
 import subprocess
+from matplotlib.patches import Ellipse
 
 from PyQt5.QtWidgets import QMessageBox
 from functools import partial
@@ -268,13 +269,8 @@ class BatchWorkerThread(QThread):
             for i in range(len(pos_x_chunks)):
                 distance_cm_in_bin = 0.0
                 
-                if i == 0:
-                    x_bin = pos_x_chunks[i]
-                    y_bin = pos_y_chunks[i]
-                else:
-                    prev_len = len(pos_x_chunks[i-1])
-                    x_bin = pos_x_chunks[i][prev_len:]
-                    y_bin = pos_y_chunks[i][prev_len:]
+                x_bin = pos_x_chunks[i]
+                y_bin = pos_y_chunks[i]
                 
                 if len(x_bin) > 1:
                     dx = np.diff(np.array(x_bin))
@@ -753,13 +749,17 @@ class BinnedAnalysisWindow(QDialog):
         
         # Left panel: Occupancy
         occupancy = self.binned_data['bin_occupancy']
+        total_samples = np.sum(occupancy)
+        if total_samples > 0:
+            occupancy = (occupancy / total_samples) * 100.0
+            
         im1 = axes[0].imshow(occupancy, cmap='turbo', aspect='equal', interpolation='nearest')
-        axes[0].set_title('Bin Occupancy (Total Time Spent)')
+        axes[0].set_title('Bin Occupancy (% Time Spent)')
         axes[0].set_xticks([0, 1, 2, 3])
         axes[0].set_yticks([0, 1, 2, 3])
         axes[0].grid(True, alpha=0.3)
         cbar1 = plt.colorbar(im1, ax=axes[0])
-        cbar1.set_label('Occupancy (samples)', fontsize=9)
+        cbar1.set_label('Occupancy (%)', fontsize=9)
         
         # Right panel: Dominant band for specific chunk
         dominant_chunk = self.binned_data['bin_dominant_band'][chunk_idx]
@@ -800,11 +800,15 @@ class BinnedAnalysisWindow(QDialog):
         
         # Left: Occupancy
         occupancy = self.binned_data['bin_occupancy']
+        total_samples = np.sum(occupancy)
+        if total_samples > 0:
+            occupancy = (occupancy / total_samples) * 100.0
+            
         im1 = axes[0].pcolormesh(T, R, occupancy, cmap='turbo', shading='flat')
-        axes[0].set_title('Bin Occupancy')
+        axes[0].set_title('Bin Occupancy (%)')
         axes[0].set_yticklabels([])
         cbar1 = plt.colorbar(im1, ax=axes[0], pad=0.1)
-        cbar1.set_label('Samples', fontsize=9)
+        cbar1.set_label('%', fontsize=9)
         
         # Right: Dominant Band
         dominant_chunk = self.binned_data['bin_dominant_band'][chunk_idx]
@@ -1017,6 +1021,10 @@ class BinnedAnalysisWindow(QDialog):
             ax = fig_occ.add_subplot(111, projection='polar' if is_polar else None)
             occ = self.binned_data['bin_occupancy']
             
+            total_samples = np.sum(occ)
+            if total_samples > 0:
+                occ = (occ / total_samples) * 100.0
+            
             if is_polar:
                 theta = np.linspace(-np.pi, np.pi, 9)
                 r = [0, 1.0/np.sqrt(2), 1]
@@ -1025,10 +1033,10 @@ class BinnedAnalysisWindow(QDialog):
             else:
                 im = ax.imshow(occ, cmap='turbo', aspect='auto')
                 
-            ax.set_title('Bin Occupancy (Total Time Spent)', fontsize=12, fontweight='bold')
+            ax.set_title('Bin Occupancy (% Time Spent)', fontsize=12, fontweight='bold')
             ax.grid(True, alpha=0.3)
             cbar = plt.colorbar(im, ax=ax)
-            cbar.set_label('Occupancy (samples)', fontsize=9)
+            cbar.set_label('Occupancy (%)', fontsize=9)
             jpg_path = os.path.join(output_folder, f"{base_name}_occupancy.jpg")
             fig_occ.savefig(jpg_path, format='jpg', pil_kwargs={'quality': 85}, bbox_inches='tight')
             plt.close(fig_occ)
@@ -1901,17 +1909,9 @@ class frequencyPlotWindow(QWidget):
             for i in range(len(pos_x_chunks)):
                 distance_cm_in_bin = 0.0
                 
-                # Get the positions for this bin only (not cumulative from start)
-                if i == 0:
-                    # First bin: use all positions in the first chunk
-                    x_bin = pos_x_chunks[i]
-                    y_bin = pos_y_chunks[i]
-                else:
-                    # Subsequent bins: positions from previous chunk end to current chunk end
-                    # Since chunks are cumulative from 0, we need to subtract
-                    prev_len = len(pos_x_chunks[i-1])
-                    x_bin = pos_x_chunks[i][prev_len:]
-                    y_bin = pos_y_chunks[i][prev_len:]
+                # Get the positions for this bin only
+                x_bin = pos_x_chunks[i]
+                y_bin = pos_y_chunks[i]
                 
                 # Calculate distance within this specific bin only
                 if len(x_bin) > 1:
@@ -1934,6 +1934,11 @@ class frequencyPlotWindow(QWidget):
                 cumulative_distances.append(cumulative_sum)
         
         header = ["Time Bin (s)", "Distance Per Bin (cm)", "Cumulative Distance (cm)"] + band_labels + percent_labels
+        
+        # Check for EOIs
+        has_eois = hasattr(self, 'eoi_segments') and self.eoi_segments
+        if has_eois:
+            header.append("EOI Count")
         
         # Determine chunk size for proper time bin labeling
         chunk_size = self.chunk_size if self.chunk_size is not None else 10
@@ -1989,6 +1994,13 @@ class frequencyPlotWindow(QWidget):
                     row.append("")
                 else:
                     row.append(round((float(v) / total_power) * 100.0, 3))
+            
+            if has_eois:
+                count = 0
+                if i in self.eoi_segments:
+                    count = len(self.eoi_segments[i])
+                row.append(count)
+            
             data_rows.append(row)
         
         # Write Excel or CSV
@@ -2222,6 +2234,14 @@ class frequencyPlotWindow(QWidget):
             self.tracking_canvas.axes.set_xlabel('X - coordinates')
             self.tracking_canvas.axes.set_ylabel('Y - coordinates')
             
+            # Set fixed limits and aspect ratio to prevent jitter
+            if hasattr(self, 'track_xlim'):
+                self.tracking_canvas.axes.set_xlim(self.track_xlim)
+                self.tracking_canvas.axes.set_ylim(self.track_ylim)
+                self.tracking_canvas.axes.set_aspect('equal', adjustable='box')
+                # Draw bins
+                self._draw_tracking_bins(self.tracking_canvas.axes)
+            
             if is_full:
                 # Plot all chunks
                 x_all = [item for sublist in self.tracking_data[0] for item in sublist]
@@ -2273,6 +2293,46 @@ class frequencyPlotWindow(QWidget):
         is_full = self.full_duration_btn.isChecked()
         self.slider.setEnabled(not is_full)
         self.sliderChanged(self.slider.value())
+
+    def _draw_tracking_bins(self, ax):
+        '''Draw spatial bins (polar or grid) on the tracking plot'''
+        if not hasattr(self, 'data_bounds'): return
+        min_x, max_x, min_y, max_y = self.data_bounds
+        
+        is_polar = False
+        if hasattr(self, 'binned_data') and self.binned_data:
+             is_polar = (self.binned_data.get('type') == 'polar')
+        elif hasattr(self, 'arena_shape'):
+             is_polar = ("Circle" in self.arena_shape or "Ellipse" in self.arena_shape)
+             
+        if is_polar:
+            width = max_x - min_x
+            height = max_y - min_y
+            center_x = min_x + width/2
+            center_y = min_y + height/2
+            
+            # Outer (r=1)
+            e1 = Ellipse((center_x, center_y), width, height, fill=False, edgecolor='gray', linestyle='--', alpha=0.5)
+            ax.add_patch(e1)
+            # Inner (r=0.707)
+            scale = 1.0 / np.sqrt(2)
+            e2 = Ellipse((center_x, center_y), width*scale, height*scale, fill=False, edgecolor='gray', linestyle='--', alpha=0.5)
+            ax.add_patch(e2)
+            
+            # Sectors
+            angles = np.linspace(-np.pi, np.pi, 9)
+            for theta in angles:
+                x_edge = center_x + (width/2) * np.cos(theta)
+                y_edge = center_y + (height/2) * np.sin(theta)
+                ax.plot([center_x, x_edge], [center_y, y_edge], color='gray', linestyle='--', alpha=0.5, linewidth=0.8)
+        else:
+            # 4x4 Grid
+            x_edges = np.linspace(min_x, max_x, 5)
+            y_edges = np.linspace(min_y, max_y, 5)
+            for x in x_edges:
+                ax.axvline(x, color='gray', linestyle='--', alpha=0.5, linewidth=0.8)
+            for y in y_edges:
+                ax.axhline(y, color='gray', linestyle='--', alpha=0.5, linewidth=0.8)
 
     def _calculate_average_pixmap(self, pixmaps):
         '''Average a list of QPixmaps'''
@@ -2506,14 +2566,35 @@ class frequencyPlotWindow(QWidget):
         self.tracking_data = data[5]
         self.binned_data = data[6] if len(data) > 6 else None
         
+        # Calculate global bounds for tracking plot
+        if self.tracking_data:
+            try:
+                all_x = np.concatenate(self.tracking_data[0])
+                all_y = np.concatenate(self.tracking_data[1])
+                if len(all_x) > 0:
+                    min_x, max_x = np.min(all_x), np.max(all_x)
+                    min_y, max_y = np.min(all_y), np.max(all_y)
+                    self.data_bounds = (min_x, max_x, min_y, max_y)
+                    
+                    w = max_x - min_x
+                    h = max_y - min_y
+                    pad_x = w * 0.1 if w > 0 else 1.0
+                    pad_y = h * 0.1 if h > 0 else 1.0
+                    self.track_xlim = (min_x - pad_x, max_x + pad_x)
+                    self.track_ylim = (min_y - pad_y, max_y + pad_y)
+            except Exception as e:
+                print(f"Error calculating tracking bounds: {e}")
+        
         # Process EOIs now that we have tracking data
         self.processEOIs()
         
         # Update tracking label with arena shape if available
         if len(data) > 7:
             self.tracking_Label.setText(f"Animal tracking<br><span style='font-size:12pt'>{data[7]}</span>")
+            self.arena_shape = data[7]
         else:
             self.tracking_Label.setText("Animal tracking")
+            self.arena_shape = "Unknown"
         
         # Update the binned analysis window if it's open
         if self.binned_analysis_window is not None and self.binned_analysis_window.isVisible():
