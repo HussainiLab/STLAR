@@ -116,6 +116,7 @@ def compute_polar_binned_analysis(pos_x, pos_y, pos_t, fs, chunks, chunk_size, c
     # Initialize outputs: Shape (Rings, Sectors, Time)
     bin_power_timeseries = {band: np.zeros((n_rings, n_sectors, n_chunks)) for band in bands}
     bin_occupancy = np.zeros((n_rings, n_sectors))
+    bin_occupancy_timeseries = np.zeros((n_rings, n_sectors, n_chunks))
     bin_dominant_band = np.empty((n_chunks, n_rings, n_sectors), dtype=object)
     
     for i in range(n_chunks):
@@ -134,6 +135,7 @@ def compute_polar_binned_analysis(pos_x, pos_y, pos_t, fs, chunks, chunk_size, c
         counts = np.bincount(flat_indices, minlength=n_rings*n_sectors)
         chunk_occupancy = counts.reshape((n_rings, n_sectors))
         bin_occupancy += chunk_occupancy
+        bin_occupancy_timeseries[:, :, i] = chunk_occupancy
         
         # Mask of visited bins in this chunk
         visited_mask = chunk_occupancy > 0
@@ -162,6 +164,7 @@ def compute_polar_binned_analysis(pos_x, pos_y, pos_t, fs, chunks, chunk_size, c
         'bands': bands,
         'bin_power_timeseries': bin_power_timeseries,
         'bin_occupancy': bin_occupancy,
+        'bin_occupancy_timeseries': bin_occupancy_timeseries,
         'bin_dominant_band': bin_dominant_band
     }
 

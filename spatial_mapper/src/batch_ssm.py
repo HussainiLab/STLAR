@@ -149,6 +149,57 @@ def find_recording_files(directory):
     return list(recordings.values())
 
 
+def find_eoi_file(electrophys_file):
+    """Find associated EOI file (CSV or HFOScores)"""
+    base_path = os.path.splitext(electrophys_file)[0]
+    base_name = os.path.basename(base_path)
+    parent_dir = os.path.dirname(electrophys_file)
+    
+    # 1. Check for {basename}_EOI.csv
+    csv_candidate = f"{base_path}_EOI.csv"
+    if os.path.exists(csv_candidate):
+        return csv_candidate
+        
+    # 2. Check for HFOScores/{basename}/{basename}_HIL.txt (or similar)
+    # Try standard HFO detection outputs
+    for tag in ['HIL', 'STE', 'MNI', 'DL', 'CON']:
+        score_path = os.path.join(parent_dir, 'HFOScores', base_name, f"{base_name}_{tag}.txt")
+        if os.path.exists(score_path):
+            return score_path
+            
+    return None
+
+def load_eois(eoi_file):
+    """Load EOIs from CSV or Score file. Returns list of (start, stop) in seconds."""
+    eois = []
+    try:
+        with open(eoi_file, 'r') as f:
+            reader = csv.reader(f, delimiter='\t' if eoi_file.endswith('.txt') else ',')
+            for row in reader:
+                if not row: continue
+                # Skip header if present (heuristic: first col is string "ID" or similar)
+                if "ID" in row[0] or "Start" in row[0]: continue
+                
+                try:
+                    # HFO Score format: ID, Start(ms), Stop(ms), ...
+                    # CSV format: Start(s), Stop(s) OR Start(ms), Stop(ms) (heuristic)
+                    
+                    # Assume HFO Score format (ms) if 3+ columns and file is .txt
+                    if eoi_file.endswith('.txt') and len(row) >= 3:
+                        start = float(row[1]) / 1000.0
+                        stop = float(row[2]) / 1000.0
+                        eois.append((start, stop))
+                    elif len(row) >= 2:
+                        # Assume seconds for simple CSV
+                        start = float(row[0])
+                        stop = float(row[1])
+                        eois.append((start, stop))
+                except (ValueError, IndexError):
+                    continue
+    except Exception as e:
+        print(f"  ⚠ Error loading EOIs from {eoi_file}: {e}")
+    return eois
+
 def export_to_csv(output_path, pos_t, chunk_powers_data, chunk_size, ppm, 
                   pos_x_chunks, pos_y_chunks):
     """Export analysis results to Excel (or CSV fallback)"""
@@ -182,8 +233,11 @@ def export_to_csv(output_path, pos_t, chunk_powers_data, chunk_size, ppm,
         for i in range(len(pos_x_chunks)):
             distance_cm_in_bin = 0.0
             
-            x_bin = pos_x_chunks[i]
-            y_bin = pos_y_chunks[i]
+            i   y_bin = pos_y_chunks[i]
+            else:
+                prev_len = len(pos_x_chunks[i-1])
+                x_bin = pos_x_chunks[i][prev_len:]
+                y_bin = pos_y_chunks[i][prev_len:]
             
             if len(x_bin) > 1:
                 dx = np.diff(np.array(x_bin))
@@ -502,6 +556,33 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
     else:
         pos_x_chunks, pos_y_chunks = None, None
     
+    # Process EOIs if available
+    eoi_segments = {}
+    eoi_file = find_eoi_file(electrophys_file)
+    if eoi_file and tracking_data:
+        print(f"[3.5/5] Processing EOIs from {os.path.basename(eoi_file)}...")
+        eois = load_eois(eoi_file)
+        if eois:
+            # Map EOIs to spatial segments
+            # tracking_data is (x_chunks, y_chunks, t_chunks)
+            if len(tracking_data) == 3:
+                x_chunks, y_chunks, t_chunks = tracking_data
+                for i, (chunk_x, chunk_y, chunk_t) in enumerate(zip(x_chunks, y_chunks, t_chunks)):
+                    if len(chunk_t) == 0: continue
+                    for start, stop in eois:
+                        # Find indices where time is within EOI
+                        # Use searchsorted for speed
+                        idx_start = np.searchsorted(chunk_t, start)
+                        idx_end = np.searchsorted(chunk_t, stop)
+                        
+                        if idx_end > idx_start:
+                            if i not in eoi_segments: eoi_segments[i] = []
+                            eoi_segments[i].append((chunk_x[idx_start:idx_end], chunk_y[idx_start:idx_end]))
+            print(f"  → Mapped {len(eois)} EOIs to {sum(len(v) for v in eoi_segments.values())} spatial segments")
+    elif eoi_file:
+        print(f"  ⚠ EOI file found but no tracking data available.")
+
+    
     print("[4/5] Exporting to CSV...")
     # Export to CSV
     export_to_csv(
@@ -593,20 +674,57 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
                 # Occupancy (2x8)
                 fig_occ, ax_occ = plt.subplots(figsize=(8,6), subplot_kw={'projection':'polar'})
                 occ = binned_data['bin_occupancy']
-                
-                total_samples = np.sum(occ)
-                if total_samples > 0:
-                    occ = (occ / total_samples) * 100.0
-                
                 im_occ = ax_occ.pcolormesh(T, R, occ, cmap='turbo', shading='flat')
-                ax_occ.set_title('Bin Occupancy (%)')
-                ax_occ.set_yticklabels([])
-                cbar1 = plt.colorbar(im_occ, ax=ax_occ, pad=0.05)
-                cbar1.set_label('%', fontsize=9)
-                occ_path = os.path.join(output_folder, f"{base_name}_polar_occupancy.jpg")
-                fig_occ.savefig(occ_path, format='jpg', pil_kwargs={'quality':85}, bbox_inches='tight')
+                ax_occ.set_title('Bin Occupancy')f"{base_name}_polar_occupancy.jpg")
                 plt.close(fig_occ)
                 export_count += 1
+tution (JPGs + Per Chunk Data)
+                eoi_counts_per_chunk = np.zeros((2, 8, n_chunks)
+                    # Calculate bounds for normalization
+                    all_x = np.concatenate(pos_x_chunks)
+                    all_y = np.concatenate(pos_y_chunks)
+                    min_x, max_x = np.min(all_x), np.max(all_x)
+                    min_y, max_y = np.min(all_y), np.max(all_y)
+                    width = max_x - min_x
+                    height = max_y - min_y
+                    if width == 0: width = 1
+                    if height == 0: height = 1
+
+                    for chunk_idx in range(n_chunks):
+                        # Calculate EOI heatmap for this chunk
+                        H_chunk = np.zeros((2, 8))
+                        if chunk_idx in eoi_segments:
+                            for seg in eoi_segments[chunk_idx]:
+                                nx = 2 * (np.array(seg[0]) - min_x) / width - 1
+                                ny = 2 * (np.array(seg[1]) - min_y) / height - 1
+                                r = np.sqrt(nx**2 + ny**2)
+                                theta = np.arctan2(ny, nx)
+                                
+                                equal_area_radius = 1.0 / np.sqrt(2.0)
+                                r_bins = [0, equal_area_radius, np.inf]
+                                r_indices = np.clip(np.digitize(r, r_bins) - 1, 0, 1)
+                                
+                                theta_edges = np.linspace(-np.pi, np.pi, 9)
+                                th_indices = np.clip(np.digitize(theta, theta_edges) - 1, 0, 7)
+                                
+                                for ri, ti in zip(r_indices, th_indices):
+                                    H_chunk[ri, ti] += 1
+                                    eoi_counts_per_chunk[ri, ti, chunk_idx] += 1
+                        
+                        # Export JPG for this chunk
+                        fig_eoi, ax_eoi = plt.subplots(figsize=(6,5), subplot_kw={'projection':'polar'})
+                        im_eoi = ax_eoi.pcolormesh(T, R, H_chunk, cmap='turbo', shading='flat')
+                        ax_eoi.set_title(f'EOI Distribution - Chunk {chunk_idx+1}')
+                        ax_eoi.set_yticklabels([])
+                        cbar_eoi = plt.colorbar(im_eoi, ax=ax_eoi, pad=0.05)
+                        cbar_eoi.set_label('Count', fontsize=9)
+                        eoi_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx+1:02d}_polar_eoi.jpg")
+                        fig_eoi.savefig(eoi_path, format='jpg', pil_kwargs={'quality':85}, bbox_inches='tight')
+                        plt.close(fig_eoi)
+                        export_count += 1
+                else:
+                    # If no EOIs, we can't plot, but we initialized eoi_counts_per_chunk to zeros
+                    pass
 
                 # Dominant band per chunk (as numeric map and per-chunk polar plots)
                 band_map = {band: idx for idx, band in enumerate(bands)}
@@ -637,6 +755,14 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
                 except ImportError:
                     use_excel = False
 
+                # Helper to reshape (2, 8, n_chunks) -> (n_chunks, 16) and add Chunk column
+                def prepare_matrix(data_3d):
+                    # reshape to (16, n_chunks) -> transpose to (n_chunks, 16)
+                    flat = data_3d.reshape(16, -1).T
+                    # Add chunk column (1-based)
+                    chunks_col = np.arange(1, n_chunks + 1).reshape(-1, 1)
+                    return np.hstack([chunks_col, flat])
+
                 # Prepare data
                 percent_mean = {}
                 mean_power = {}
@@ -658,6 +784,15 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
                         # compute percent per chunk then mean across chunks
                         per_chunk = np.where(total>0, (binned_data['bin_power_timeseries'][band] / total) * 100.0, 0.0)
                         percent_mean[band] = np.mean(per_chunk, axis=2)
+                
+                # Prepare per-chunk occupancy (percent)
+                occupancy_per_chunk = None
+                if 'bin_occupancy_timeseries' in binned_data:
+                    occ_ts = binned_data['bin_occupancy_timeseries']
+                    occ_sums = np.sum(occ_ts, axis=(0, 1))
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        occ_pct = np.where(occ_sums > 0, (occ_ts / occ_sums[None, None, :]) * 100.0, 0.0)
+                    occupancy_per_chunk = prepare_matrix(occ_pct)
 
                 # Dominant band counts per band
                 dominant_counts = {band: np.zeros_like(mean_power[bands[0]]) for band in bands}
@@ -669,6 +804,8 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
                                 dominant_counts[band][r_idx, s_idx] += 1
 
                 if use_excel:
+                    bin_headers = ["Chunk"] + [f"Inner_S{i+1}" for i in range(8)] + [f"Outer_S{i+1}" for i in range(8)]
+                    
                     try:
                         # Mean power workbook
                         mean_file = f"{output_prefix}_mean_power.xlsx"
@@ -709,8 +846,30 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
                             for row in counts:
                                 ws.append([float(val) for val in row])
                         wb_dom.save(dominant_file)
+                        
+                        # EOI Per Chunk workbook
+                        eoi_file = f"{output_prefix}_eoi_per_chunk.xlsx"
+                        wb_eoi = openpyxl.Workbook()
+                        ws_eoi = wb_eoi.active
+                        ws_eoi.title = 'EOI Per Chunk'
+                        ws_eoi.append(bin_headers)
+                        eoi_export = prepare_matrix(eoi_counts_per_chunk)
+                        for row in eoi_export:
+                            ws_eoi.append([float(val) for val in row])
+                        wb_eoi.save(eoi_file)
+                        
+                        # Occupancy Per Chunk workbook
+                        if occupancy_per_chunk is not None:
+                            occ_chunk_file = f"{output_prefix}_occupancy_per_chunk.xlsx"
+                            wb_occ_chunk = openpyxl.Workbook()
+                            ws_occ_chunk = wb_occ_chunk.active
+                            ws_occ_chunk.title = 'Occupancy Per Chunk'
+                            ws_occ_chunk.append(bin_headers)
+                            for row in occupancy_per_chunk:
+                                ws_occ_chunk.append([float(val) for val in row])
+                            wb_occ_chunk.save(occ_chunk_file)
 
-                        print(f"  ✓ Excel exported to: {output_folder} ({mean_file}, {percent_file})")
+                        print(f"  ✓ Excel exported to: {output_folder} (Mean, Percent, Occ, Dom, EOI)")
                     except Exception as e:
                         print(f"  ⚠ Failed to write Excel files: {e}")
                         # fallback to CSV
@@ -718,12 +877,19 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
 
                 if not use_excel:
                     # Save CSV fallbacks
-                    try:
-                        occ_csv = os.path.join(output_folder, f"{base_name}_polar_occupancy.csv")
+
                         np.savetxt(occ_csv, occ, delimiter=',')
                         for band in bands:
                             out_csv = os.path.join(output_folder, f"{base_name}_polar_mean_{band}.csv")
                             np.savetxt(out_csv, mean_power[band], delimiter=',')
+                        
+                        eoi_csv = os.path.join(output_folder, f"{base_name}_polar_eoi_per_chunk.csv")
+                        np.savetxt(eoi_csv, prepare_matrix(eoi_counts_per_chunk), delimiter=',')
+                        
+                        if occupancy_per_chunk is not None:
+                            occ_chunk_csv = os.path.join(output_folder, f"{base_name}_polar_occupancy_per_chunk.csv")
+                            np.savetxt(occ_chunk_csv, occupancy_per_chunk, delimiter=',')
+                            
                         print(f"  ✓ CSV summaries saved to: {output_folder} (openpyxl not installed)")
                     except Exception as e:
                         print(f"  ⚠ Failed to save CSV summaries: {e}")

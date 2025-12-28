@@ -451,7 +451,7 @@ class BinnedAnalysisWindow(QDialog):
         
         # Left column: Mean power
         left_layout = QVBoxLayout()
-        left_label = QLabel("Frequency Band Power")
+        left_label = QLabel("Frequency Band Power & Occupancy")
         left_label.setFont(QFont("", 11, QFont.Bold))
         left_layout.addWidget(left_label)
         
@@ -463,9 +463,9 @@ class BinnedAnalysisWindow(QDialog):
         left_layout.addWidget(self.power_scroll)
         display_layout.addLayout(left_layout, 2)
         
-        # Right column: Occupancy and Dominant Band (stacked)
+        # Right column: Dominant Band & EOI Distribution
         right_layout = QVBoxLayout()
-        right_label = QLabel("Occupancy & Dominant Band")
+        right_label = QLabel("Dominant Band & EOI Distribution")
         right_label.setFont(QFont("", 11, QFont.Bold))
         right_layout.addWidget(right_label)
         
@@ -476,15 +476,6 @@ class BinnedAnalysisWindow(QDialog):
         self.occ_scroll.setWidget(self.occ_label)
         right_layout.addWidget(self.occ_scroll)
         display_layout.addLayout(right_layout, 1)
-        
-        # EOI Plot (below Occupancy)
-        right_layout.addSpacing(10)
-        self.eoi_scroll = QScrollArea(self)
-        self.eoi_scroll.setWidgetResizable(True)
-        self.eoi_label = QLabel()
-        self.eoi_label.setAlignment(Qt.AlignCenter)
-        self.eoi_scroll.setWidget(self.eoi_label)
-        right_layout.addWidget(self.eoi_scroll)
         
         main_layout.addLayout(display_layout, 1)
         
@@ -563,27 +554,16 @@ class BinnedAnalysisWindow(QDialog):
                     power_pixmap = power_pixmap.scaledToWidth(1000, Qt.SmoothTransformation)
                 self.power_label.setPixmap(power_pixmap)
             
-            # Render occupancy and dominant band in memory
+            # Render Dominant Band & EOI in memory
             if self.binned_data.get('type') == 'polar':
-                fig_occ, _ = self._create_polar_occupancy_heatmap(self.current_chunk)
+                fig_dom_eoi, _ = self._create_polar_dominant_eoi_heatmap(self.current_chunk)
             else:
-                fig_occ, _ = self._create_occupancy_heatmap(self.current_chunk)
-            occ_pixmap = self._fig_to_pixmap(fig_occ)
+                fig_dom_eoi, _ = self._create_dominant_eoi_heatmap(self.current_chunk)
+            occ_pixmap = self._fig_to_pixmap(fig_dom_eoi)
             if not occ_pixmap.isNull():
                 if occ_pixmap.width() > 600:
                     occ_pixmap = occ_pixmap.scaledToWidth(600, Qt.SmoothTransformation)
                 self.occ_label.setPixmap(occ_pixmap)
-            
-            # Render EOI heatmap in memory
-            if self.binned_data.get('type') == 'polar':
-                fig_eoi, _ = self._create_polar_eoi_heatmap(self.current_chunk)
-            else:
-                fig_eoi, _ = self._create_eoi_heatmap(self.current_chunk)
-            eoi_pixmap = self._fig_to_pixmap(fig_eoi)
-            if not eoi_pixmap.isNull():
-                if eoi_pixmap.width() > 600:
-                    eoi_pixmap = eoi_pixmap.scaledToWidth(600, Qt.SmoothTransformation)
-                self.eoi_label.setPixmap(eoi_pixmap)
             
             self.status_label.setText(f"Chunk {self.current_chunk + 1} rendered")
         except Exception as e:
@@ -600,6 +580,15 @@ class BinnedAnalysisWindow(QDialog):
         plt.close(fig)
         return pixmap
     
+    def _get_bounds(self):
+        '''Calculate global bounds from tracking data'''
+        if self.tracking_data:
+            all_x = np.concatenate(self.tracking_data[0])
+            all_y = np.concatenate(self.tracking_data[1])
+            if len(all_x) > 0:
+                return np.min(all_x), np.max(all_x), np.min(all_y), np.max(all_y)
+        return 0, 1, 0, 1
+
     def _create_power_heatmap(self, chunk_idx, show_percent=False):
         '''Create power heatmap figure (does not save)'''
         n_chunks = self.binned_data['time_chunks']
@@ -608,7 +597,7 @@ class BinnedAnalysisWindow(QDialog):
         
         fig, axes = plt.subplots(2, 4, figsize=(16, 8))
         power_type = "Percent Power" if show_percent else "Power"
-        fig.suptitle(f'4x4 Spatial Bins - Chunk {chunk_idx + 1} (Frequency Band {power_type})', 
+        fig.suptitle(f'4x4 Spatial Bins - Chunk {chunk_idx + 1} (Frequency Band {power_type} & Occupancy)', 
                      fontsize=14, fontweight='bold')
         
         bands = self.binned_data['bands']
@@ -676,9 +665,37 @@ class BinnedAnalysisWindow(QDialog):
                 cbar.ax.yaxis.set_major_formatter(FuncFormatter(lambda x, pos: f'{x*1e-3:g}K' if x >= 1000 else f'{x:g}'))
             cbar.set_label('%' if show_percent else 'Power', fontsize=9)
         
-        # Hide unused subplots
-        for idx in range(len(remaining_bands), 4):
-            axes[1, idx].axis('off')
+        # 8th slot: Occupancy (Dynamic per chunk)
+        ax_occ = axes[1, 3]
+        occ_data = None
+        
+        # Try to get pre-calculated timeseries (Polar usually has this)
+        if 'bin_occupancy_timeseries' in self.binned_data:
+             occ_data = self.binned_data['bin_occupancy_timeseries'][:, :, chunk_idx]
+        # Fallback: Calculate from tracking data for 4x4 if missing
+        elif self.tracking_data:
+             min_x, max_x, min_y, max_y = self._get_bounds()
+             if chunk_idx < len(self.tracking_data[0]):
+                 cx = self.tracking_data[0][chunk_idx]
+                 cy = self.tracking_data[1][chunk_idx]
+                 x_edges = np.linspace(min_x, max_x, 5)
+                 y_edges = np.linspace(min_y, max_y, 5)
+                 H, _, _ = np.histogram2d(cx, cy, bins=[x_edges, y_edges])
+                 occ_data = np.flipud(H.T)
+        
+        if occ_data is not None:
+             total = np.sum(occ_data)
+             if total > 0: occ_data = (occ_data / total) * 100.0
+             im = ax_occ.imshow(occ_data, cmap='turbo', aspect='equal', interpolation='nearest')
+             ax_occ.set_title('Occupancy (%)')
+             ax_occ.set_xticks([0, 1, 2, 3])
+             ax_occ.set_yticks([0, 1, 2, 3])
+             ax_occ.grid(True, alpha=0.3)
+             cbar = plt.colorbar(im, ax=ax_occ)
+             cbar.set_label('%', fontsize=9)
+        else:
+             ax_occ.text(0.5, 0.5, "No Data", ha='center', va='center')
+             ax_occ.axis('off')
         
         plt.tight_layout()
         return fig, axes
@@ -691,7 +708,7 @@ class BinnedAnalysisWindow(QDialog):
             
         fig, axes = plt.subplots(2, 4, figsize=(16, 8), subplot_kw={'projection': 'polar'})
         power_type = "Percent Power" if show_percent else "Power"
-        fig.suptitle(f'Polar Bins - Chunk {chunk_idx + 1} (Frequency Band {power_type})', 
+        fig.suptitle(f'Polar Bins - Chunk {chunk_idx + 1} (Frequency Band {power_type} & Occupancy)', 
                      fontsize=14, fontweight='bold')
         
         bands = self.binned_data['bands']
@@ -732,36 +749,38 @@ class BinnedAnalysisWindow(QDialog):
                 cbar.ax.yaxis.set_major_formatter(FuncFormatter(lambda x, pos: f'{x*1e-3:g}K' if x >= 1000 else f'{x:g}'))
             cbar.set_label('%' if show_percent else 'Power', fontsize=8)
 
-        # Hide unused subplots
-        for idx in range(len(bands), len(ax_flat)):
-            ax_flat[idx].axis('off')
+        # 8th slot: Occupancy
+        if len(bands) < 8:
+            ax_occ = ax_flat[7]
+            occ_data = None
+            if 'bin_occupancy_timeseries' in self.binned_data:
+                 occ_data = self.binned_data['bin_occupancy_timeseries'][:, :, chunk_idx]
+            
+            if occ_data is not None:
+                 total = np.sum(occ_data)
+                 if total > 0: occ_data = (occ_data / total) * 100.0
+                 im = ax_occ.pcolormesh(T, R, occ_data, cmap='turbo', shading='flat')
+                 ax_occ.set_title('Occupancy (%)')
+                 ax_occ.set_yticklabels([])
+                 ax_occ.set_xticklabels([])
+                 ax_occ.grid(True, alpha=0.3)
+                 cbar = plt.colorbar(im, ax=ax_occ, pad=0.1, shrink=0.8)
+                 cbar.set_label('%', fontsize=8)
+            else:
+                 ax_occ.axis('off')
             
         plt.tight_layout()
         return fig, axes
 
-    def _create_occupancy_heatmap(self, chunk_idx):
-        '''Create occupancy and dominant band heatmap figure (does not save)'''
+    def _create_dominant_eoi_heatmap(self, chunk_idx):
+        '''Create Dominant Band and EOI Distribution heatmap'''
         n_chunks = self.binned_data['time_chunks']
         if chunk_idx < 0 or chunk_idx >= n_chunks:
             chunk_idx = max(0, min(chunk_idx, n_chunks - 1))
         
         fig, axes = plt.subplots(1, 2, figsize=(12, 5))
         
-        # Left panel: Occupancy
-        occupancy = self.binned_data['bin_occupancy']
-        total_samples = np.sum(occupancy)
-        if total_samples > 0:
-            occupancy = (occupancy / total_samples) * 100.0
-            
-        im1 = axes[0].imshow(occupancy, cmap='turbo', aspect='equal', interpolation='nearest')
-        axes[0].set_title('Bin Occupancy (% Time Spent)')
-        axes[0].set_xticks([0, 1, 2, 3])
-        axes[0].set_yticks([0, 1, 2, 3])
-        axes[0].grid(True, alpha=0.3)
-        cbar1 = plt.colorbar(im1, ax=axes[0])
-        cbar1.set_label('Occupancy (%)', fontsize=9)
-        
-        # Right panel: Dominant band for specific chunk
+        # Left panel: Dominant band for specific chunk
         dominant_chunk = self.binned_data['bin_dominant_band'][chunk_idx]
         bands = self.binned_data['bands']
         band_map = {band: idx for idx, band in enumerate(bands)}
@@ -771,22 +790,49 @@ class BinnedAnalysisWindow(QDialog):
                 band = dominant_chunk[x, y]
                 numeric_dominant[x, y] = band_map.get(band, 0)
         
-        im2 = axes[1].imshow(numeric_dominant, cmap='tab10', aspect='equal', interpolation='nearest', vmin=0, vmax=len(bands)-1)
-        axes[1].set_title(f'Dominant Band - Chunk {chunk_idx + 1}')
-        axes[1].set_xticks([0, 1, 2, 3])
-        axes[1].set_yticks([0, 1, 2, 3])
-        axes[1].grid(True, alpha=0.3)
+        im1 = axes[0].imshow(numeric_dominant, cmap='tab10', aspect='equal', interpolation='nearest', vmin=0, vmax=len(bands)-1)
+        axes[0].set_title(f'Dominant Band - Chunk {chunk_idx + 1}')
+        axes[0].set_xticks([0, 1, 2, 3])
+        axes[0].set_yticks([0, 1, 2, 3])
+        axes[0].grid(True, alpha=0.3)
         
         # Add colorbar with band labels
-        cbar2 = plt.colorbar(im2, ax=axes[1], ticks=range(len(bands)))
-        cbar2.set_ticklabels(bands, fontsize=8)
-        cbar2.set_label('Band', fontsize=9)
+        cbar1 = plt.colorbar(im1, ax=axes[0], ticks=range(len(bands)))
+        cbar1.set_ticklabels(bands, fontsize=8)
+        cbar1.set_label('Band', fontsize=9)
+        
+        # Right panel: EOI Distribution
+        if self.eoi_segments:
+            min_x, max_x, min_y, max_y = self._get_bounds()
+            eoi_x, eoi_y = [], []
+            if chunk_idx in self.eoi_segments:
+                for seg in self.eoi_segments[chunk_idx]:
+                    eoi_x.extend(seg[0])
+                    eoi_y.extend(seg[1])
+            
+            x_edges = np.linspace(min_x, max_x, 5)
+            y_edges = np.linspace(min_y, max_y, 5)
+            if eoi_x:
+                H, _, _ = np.histogram2d(eoi_x, eoi_y, bins=[x_edges, y_edges])
+                H = np.flipud(H.T)
+            else:
+                H = np.zeros((4, 4))
+            
+            im2 = axes[1].imshow(H, cmap='turbo', aspect='equal', interpolation='nearest')
+            axes[1].set_title(f'EOI Distribution - Chunk {chunk_idx + 1}')
+            axes[1].set_xticks([0, 1, 2, 3])
+            axes[1].set_yticks([0, 1, 2, 3])
+            axes[1].grid(True, alpha=0.3)
+            cbar2 = plt.colorbar(im2, ax=axes[1])
+            cbar2.set_label('EOI Count', fontsize=9)
+        else:
+            axes[1].axis('off')
         
         plt.tight_layout()
         return fig, axes
     
-    def _create_polar_occupancy_heatmap(self, chunk_idx):
-        '''Create polar occupancy and dominant band heatmap'''
+    def _create_polar_dominant_eoi_heatmap(self, chunk_idx):
+        '''Create polar Dominant Band and EOI Distribution heatmap'''
         n_chunks = self.binned_data['time_chunks']
         if chunk_idx < 0 or chunk_idx >= n_chunks:
             chunk_idx = max(0, min(chunk_idx, n_chunks - 1))
@@ -798,19 +844,7 @@ class BinnedAnalysisWindow(QDialog):
         r = [0, 1.0/np.sqrt(2), 1]
         T, R = np.meshgrid(theta, r)
         
-        # Left: Occupancy
-        occupancy = self.binned_data['bin_occupancy']
-        total_samples = np.sum(occupancy)
-        if total_samples > 0:
-            occupancy = (occupancy / total_samples) * 100.0
-            
-        im1 = axes[0].pcolormesh(T, R, occupancy, cmap='turbo', shading='flat')
-        axes[0].set_title('Bin Occupancy (%)')
-        axes[0].set_yticklabels([])
-        cbar1 = plt.colorbar(im1, ax=axes[0], pad=0.1)
-        cbar1.set_label('%', fontsize=9)
-        
-        # Right: Dominant Band
+        # Left: Dominant Band
         dominant_chunk = self.binned_data['bin_dominant_band'][chunk_idx]
         bands = self.binned_data['bands']
         band_map = {band: idx for idx, band in enumerate(bands)}
@@ -821,128 +855,47 @@ class BinnedAnalysisWindow(QDialog):
                 band = dominant_chunk[r_idx, s_idx]
                 numeric_dominant[r_idx, s_idx] = band_map.get(band, 0)
         
-        im2 = axes[1].pcolormesh(T, R, numeric_dominant, cmap='tab10', shading='flat',
+        im1 = axes[0].pcolormesh(T, R, numeric_dominant, cmap='tab10', shading='flat',
                                  vmin=0, vmax=len(bands)-1)
-        axes[1].set_title(f'Dominant Band - Chunk {chunk_idx + 1}')
-        axes[1].set_yticklabels([])
+        axes[0].set_title(f'Dominant Band - Chunk {chunk_idx + 1}')
+        axes[0].set_yticklabels([])
         
-        cbar2 = plt.colorbar(im2, ax=axes[1], ticks=range(len(bands)), pad=0.1)
-        cbar2.set_ticklabels(bands, fontsize=8)
+        cbar1 = plt.colorbar(im1, ax=axes[0], ticks=range(len(bands)), pad=0.1)
+        cbar1.set_ticklabels(bands, fontsize=8)
+        
+        # Right: EOI Distribution
+        if self.eoi_segments:
+            min_x, max_x, min_y, max_y = self._get_bounds()
+            width = max_x - min_x if max_x > min_x else 1
+            height = max_y - min_y if max_y > min_y else 1
+            
+            H = np.zeros((2, 8))
+            if chunk_idx in self.eoi_segments:
+                for seg in self.eoi_segments[chunk_idx]:
+                    nx = 2 * (np.array(seg[0]) - min_x) / width - 1
+                    ny = 2 * (np.array(seg[1]) - min_y) / height - 1
+                    r_pt = np.sqrt(nx**2 + ny**2)
+                    theta_pt = np.arctan2(ny, nx)
+                    
+                    equal_area_radius = 1.0 / np.sqrt(2.0)
+                    r_bins = [0, equal_area_radius, np.inf]
+                    r_indices = np.clip(np.digitize(r_pt, r_bins) - 1, 0, 1)
+                    
+                    theta_edges = np.linspace(-np.pi, np.pi, 9)
+                    th_indices = np.clip(np.digitize(theta_pt, theta_edges) - 1, 0, 7)
+                    
+                    for ri, ti in zip(r_indices, th_indices):
+                        H[ri, ti] += 1
+            
+            im2 = axes[1].pcolormesh(T, R, H, cmap='turbo', shading='flat')
+            axes[1].set_title(f'EOI Distribution - Chunk {chunk_idx + 1}')
+            axes[1].set_yticklabels([])
+            cbar2 = plt.colorbar(im2, ax=axes[1], pad=0.1)
+            cbar2.set_label('EOI Count', fontsize=9)
+        else:
+            axes[1].axis('off')
         
         plt.tight_layout()
-        return fig, axes
-
-    def _create_eoi_heatmap(self, chunk_idx):
-        '''Create EOI distribution heatmap'''
-        n_chunks = self.binned_data['time_chunks']
-        if chunk_idx < 0 or chunk_idx >= n_chunks:
-            chunk_idx = max(0, min(chunk_idx, n_chunks - 1))
-            
-        fig, ax = plt.subplots(figsize=(6, 5))
-        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-        ax = axes[0]
-        
-        # Calculate bounds from tracking_data
-        if self.tracking_data:
-            all_x = np.concatenate(self.tracking_data[0])
-            all_y = np.concatenate(self.tracking_data[1])
-            min_x, max_x = np.min(all_x), np.max(all_x)
-            min_y, max_y = np.min(all_y), np.max(all_y)
-        else:
-            min_x, max_x, min_y, max_y = 0, 1, 0, 1
-            
-        # Get EOIs for this chunk
-        eoi_x = []
-        eoi_y = []
-        if self.eoi_segments and chunk_idx in self.eoi_segments:
-            for seg in self.eoi_segments[chunk_idx]:
-                eoi_x.extend(seg[0])
-                eoi_y.extend(seg[1])
-        
-        # Binning 4x4
-        x_edges = np.linspace(min_x, max_x, 5)
-        y_edges = np.linspace(min_y, max_y, 5)
-        
-        if eoi_x:
-            H, _, _ = np.histogram2d(eoi_x, eoi_y, bins=[x_edges, y_edges])
-            # Flip for imshow (origin upper)
-            H = np.flipud(H.T)
-        else:
-            H = np.zeros((4, 4))
-            
-        im = ax.imshow(H, cmap='turbo', aspect='equal', interpolation='nearest')
-        ax.set_title(f'EOI Distribution - Chunk {chunk_idx + 1}')
-        ax.set_xticks([0, 1, 2, 3])
-        ax.set_yticks([0, 1, 2, 3])
-        ax.grid(True, alpha=0.3)
-        cbar = plt.colorbar(im, ax=ax)
-        cbar.set_label('EOI Count', fontsize=9)
-        
-        # Hide the second subplot (space reserved for future plot)
-        axes[1].axis('off')
-        
-        plt.tight_layout()
-        return fig, ax
-        return fig, axes
-
-    def _create_polar_eoi_heatmap(self, chunk_idx):
-        '''Create polar EOI distribution heatmap'''
-        n_chunks = self.binned_data['time_chunks']
-        if chunk_idx < 0 or chunk_idx >= n_chunks:
-            chunk_idx = max(0, min(chunk_idx, n_chunks - 1))
-            
-        fig, ax = plt.subplots(figsize=(6, 5), subplot_kw={'projection': 'polar'})
-        fig, axes = plt.subplots(1, 2, figsize=(12, 5), subplot_kw={'projection': 'polar'})
-        ax = axes[0]
-        
-        # Calculate bounds and normalize
-        if self.tracking_data:
-            all_x = np.concatenate(self.tracking_data[0])
-            all_y = np.concatenate(self.tracking_data[1])
-            min_x, max_x = np.min(all_x), np.max(all_x)
-            min_y, max_y = np.min(all_y), np.max(all_y)
-            width = max_x - min_x
-            height = max_y - min_y
-            if width == 0: width = 1
-            if height == 0: height = 1
-        else:
-            min_x, max_x, width, height = 0, 1, 1, 1
-            min_y, max_y = 0, 1
-            
-        H = np.zeros((2, 8))
-        
-        if self.eoi_segments and chunk_idx in self.eoi_segments:
-            for seg in self.eoi_segments[chunk_idx]:
-                nx = 2 * (np.array(seg[0]) - min_x) / width - 1
-                ny = 2 * (np.array(seg[1]) - min_y) / height - 1
-                r = np.sqrt(nx**2 + ny**2)
-                theta = np.arctan2(ny, nx)
-                
-                equal_area_radius = 1.0 / np.sqrt(2.0)
-                r_bins = [0, equal_area_radius, np.inf]
-                r_indices = np.clip(np.digitize(r, r_bins) - 1, 0, 1)
-                
-                theta_edges = np.linspace(-np.pi, np.pi, 9)
-                th_indices = np.clip(np.digitize(theta, theta_edges) - 1, 0, 7)
-                
-                for ri, ti in zip(r_indices, th_indices):
-                    H[ri, ti] += 1
-        
-        theta = np.linspace(-np.pi, np.pi, 9)
-        r = [0, 1.0/np.sqrt(2), 1]
-        T, R = np.meshgrid(theta, r)
-        
-        im = ax.pcolormesh(T, R, H, cmap='turbo', shading='flat')
-        ax.set_title(f'EOI Distribution - Chunk {chunk_idx + 1}')
-        ax.set_yticklabels([])
-        cbar = plt.colorbar(im, ax=ax, pad=0.1)
-        cbar.set_label('EOI Count', fontsize=9)
-        
-        # Hide the second subplot (space reserved for future plot)
-        axes[1].axis('off')
-        
-        plt.tight_layout()
-        return fig, ax
         return fig, axes
 
     def updateBinnedData(self, binned_data, files=None, active_folder=None, eoi_segments=None, tracking_data=None):
@@ -978,7 +931,7 @@ class BinnedAnalysisWindow(QDialog):
         self.status_label.setText("Data updated. Ready for analysis.")
     
     def exportAllPngs(self):
-        '''Export all JPG visualizations (mean, percent for all chunks; occupancy once; dominant band per chunk)'''
+        '''Export all JPG visualizations (Power+Occupancy, Dominant+EOI per chunk)'''
         if self.binned_data is None:
             QMessageBox.information(self, 'Export PNGs', 'No binned data available.')
             return
@@ -993,7 +946,7 @@ class BinnedAnalysisWindow(QDialog):
             n_chunks = self.binned_data['time_chunks']
             export_count = 0
             
-            # Export mean power for all chunks (JPG, quality 85)
+            # Export mean power + occupancy for all chunks
             for chunk_idx in range(n_chunks):
                 if self.binned_data.get('type') == 'polar':
                     fig, _ = self._create_polar_power_heatmap(chunk_idx, show_percent=False)
@@ -1004,7 +957,7 @@ class BinnedAnalysisWindow(QDialog):
                 plt.close(fig)
                 export_count += 1
             
-            # Export percent power for all chunks (JPG, quality 85)
+            # Export percent power + occupancy for all chunks
             for chunk_idx in range(n_chunks):
                 if self.binned_data.get('type') == 'polar':
                     fig, _ = self._create_polar_power_heatmap(chunk_idx, show_percent=True)
@@ -1015,51 +968,13 @@ class BinnedAnalysisWindow(QDialog):
                 plt.close(fig)
                 export_count += 1
             
-            # Export occupancy only once (JPG, quality 85) - use same colormap as GUI
-            fig_occ = plt.figure(figsize=(6, 5))
-            is_polar = self.binned_data.get('type') == 'polar'
-            ax = fig_occ.add_subplot(111, projection='polar' if is_polar else None)
-            occ = self.binned_data['bin_occupancy']
-            
-            total_samples = np.sum(occ)
-            if total_samples > 0:
-                occ = (occ / total_samples) * 100.0
-            
-            if is_polar:
-                theta = np.linspace(-np.pi, np.pi, 9)
-                r = [0, 1.0/np.sqrt(2), 1]
-                T, R = np.meshgrid(theta, r)
-                im = ax.pcolormesh(T, R, occ, cmap='turbo', shading='flat')
-            else:
-                im = ax.imshow(occ, cmap='turbo', aspect='auto')
-                
-            ax.set_title('Bin Occupancy (% Time Spent)', fontsize=12, fontweight='bold')
-            ax.grid(True, alpha=0.3)
-            cbar = plt.colorbar(im, ax=ax)
-            cbar.set_label('Occupancy (%)', fontsize=9)
-            jpg_path = os.path.join(output_folder, f"{base_name}_occupancy.jpg")
-            fig_occ.savefig(jpg_path, format='jpg', pil_kwargs={'quality': 85}, bbox_inches='tight')
-            plt.close(fig_occ)
-            export_count += 1
-            
-            # Export dominant band per chunk (JPG, quality 85)
-            for chunk_idx in range(n_chunks):
-                if is_polar:
-                    fig, _ = self._create_polar_occupancy_heatmap(chunk_idx)
-                else:
-                    fig, _ = self._create_occupancy_heatmap(chunk_idx)
-                jpg_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx+1:02d}_dominant_band.jpg")
-                fig.savefig(jpg_path, format='jpg', pil_kwargs={'quality': 85}, bbox_inches='tight')
-                plt.close(fig)
-                export_count += 1
-            
-            # Export EOI distribution per chunk (JPG, quality 85)
+            # Export dominant band + EOI per chunk
             for chunk_idx in range(n_chunks):
                 if self.binned_data.get('type') == 'polar':
-                    fig, _ = self._create_polar_eoi_heatmap(chunk_idx)
+                    fig, _ = self._create_polar_dominant_eoi_heatmap(chunk_idx)
                 else:
-                    fig, _ = self._create_eoi_heatmap(chunk_idx)
-                jpg_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx+1:02d}_eoi_distribution.jpg")
+                    fig, _ = self._create_dominant_eoi_heatmap(chunk_idx)
+                jpg_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx+1:02d}_dominant_eoi.jpg")
                 fig.savefig(jpg_path, format='jpg', pil_kwargs={'quality': 85}, bbox_inches='tight')
                 plt.close(fig)
                 export_count += 1
@@ -1069,11 +984,9 @@ class BinnedAnalysisWindow(QDialog):
                 self,
                 'Export Complete',
                 f'Exported {export_count} JPG files to:\n{output_folder}\n\n'
-                f'  • {n_chunks} mean power heatmaps\n'
-                f'  • {n_chunks} percent power heatmaps\n'
-                f'  • 1 occupancy heatmap (time-invariant)\n'
-                f'  • {n_chunks} dominant band heatmaps\n'
-                f'  • {n_chunks} EOI distribution heatmaps\n\n'
+                f'  • {n_chunks} mean power & occupancy heatmaps\n'
+                f'  • {n_chunks} percent power & occupancy heatmaps\n'
+                f'  • {n_chunks} dominant band & EOI heatmaps\n\n'
                 f'(JPG format for faster export & smaller file size)'
             )
         except Exception as e:
@@ -1105,23 +1018,32 @@ class BinnedAnalysisWindow(QDialog):
                 
                 # Prepare data
                 bands = self.binned_data['bands']
-                percent_mean = {}
-                mean_power = {}
+                n_chunks = self.binned_data['time_chunks']
                 
-                # Mean power
-                for band in bands:
-                    data = self.binned_data['bin_power_timeseries'][band]
-                    mean_power[band] = np.mean(data, axis=2)
+                power_per_chunk = {}
+                percent_per_chunk = {}
                 
-                # Percent power
+                # Helper to reshape (2, 8, n_chunks) -> (n_chunks, 16) and add Chunk column
+                def prepare_matrix(data_3d):
+                    # reshape to (16, n_chunks) -> transpose to (n_chunks, 16)
+                    flat = data_3d.reshape(16, -1).T
+                    # Add chunk column (1-based)
+                    chunks_col = np.arange(1, n_chunks + 1).reshape(-1, 1)
+                    return np.hstack([chunks_col, flat])
+                
+                # Calculate total power per bin per chunk for percentage
                 all_bands_power = np.stack([self.binned_data['bin_power_timeseries'][b] for b in bands])
-                total_power = np.sum(all_bands_power, axis=0)
+                total_power = np.sum(all_bands_power, axis=0) # (2, 8, n_chunks)
                 
                 for band in bands:
+                    # Power per chunk
+                    data = self.binned_data['bin_power_timeseries'][band]
+                    power_per_chunk[band] = prepare_matrix(data)
+                    
+                    # Percent per chunk
                     with np.errstate(divide='ignore', invalid='ignore'):
-                        band_data = self.binned_data['bin_power_timeseries'][band]
-                        per_chunk = np.where(total_power > 0, (band_data / total_power) * 100.0, 0.0)
-                        percent_mean[band] = np.mean(per_chunk, axis=2)
+                        pct_data = np.where(total_power > 0, (data / total_power) * 100.0, 0.0)
+                    percent_per_chunk[band] = prepare_matrix(pct_data)
                 
                 # Dominant band counts
                 dominant_counts = {band: np.zeros((2, 8)) for band in bands}
@@ -1132,22 +1054,71 @@ class BinnedAnalysisWindow(QDialog):
                             if band in dominant_counts:
                                 dominant_counts[band][r_idx, s_idx] += 1
                 
+                # Occupancy per chunk (Percent)
+                occupancy_per_chunk = None
+                if 'bin_occupancy_timeseries' in self.binned_data:
+                    occ_ts = self.binned_data['bin_occupancy_timeseries']
+                    # Calculate percent occupancy per chunk
+                    occ_sums = np.sum(occ_ts, axis=(0, 1))
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        # Broadcasting: (2,8,n) / (n) -> need (1,1,n) for broadcasting or transpose
+                        occ_pct = np.where(occ_sums > 0, (occ_ts / occ_sums[None, None, :]) * 100.0, 0.0)
+                    occupancy_per_chunk = prepare_matrix(occ_pct)
+
+                # EOI Distribution (Per Chunk)
+                eoi_counts_per_chunk = np.zeros((2, 8, n_chunks))
+                
+                if self.eoi_segments and self.tracking_data:
+                    # Calculate bounds (same as in _create_polar_eoi_heatmap)
+                    all_x = np.concatenate(self.tracking_data[0])
+                    all_y = np.concatenate(self.tracking_data[1])
+                    min_x, max_x = np.min(all_x), np.max(all_x)
+                    min_y, max_y = np.min(all_y), np.max(all_y)
+                    width = max_x - min_x
+                    height = max_y - min_y
+                    if width == 0: width = 1
+                    if height == 0: height = 1
+                    
+                    # Iterate all segments
+                    for chunk_idx, segments in self.eoi_segments.items():
+                        for seg in segments:
+                            nx = 2 * (np.array(seg[0]) - min_x) / width - 1
+                            ny = 2 * (np.array(seg[1]) - min_y) / height - 1
+                            r = np.sqrt(nx**2 + ny**2)
+                            theta = np.arctan2(ny, nx)
+                            
+                            equal_area_radius = 1.0 / np.sqrt(2.0)
+                            r_bins = [0, equal_area_radius, np.inf]
+                            r_indices = np.clip(np.digitize(r, r_bins) - 1, 0, 1)
+                            
+                            theta_edges = np.linspace(-np.pi, np.pi, 9)
+                            th_indices = np.clip(np.digitize(theta, theta_edges) - 1, 0, 7)
+                            
+                            for ri, ti in zip(r_indices, th_indices):
+                                eoi_counts_per_chunk[ri, ti, chunk_idx] += 1
+                
+                eoi_export_matrix = prepare_matrix(eoi_counts_per_chunk)
+                
                 exported_files = []
                 
                 if use_excel:
                     # Helper to save workbook
-                    def save_wb(data_dict, filename):
+                    def save_wb(data_dict, filename, header=None):
                         wb = openpyxl.Workbook()
                         wb.remove(wb.active)
                         for sheet_name, matrix in data_dict.items():
                             ws = wb.create_sheet(title=sheet_name)
+                            if header:
+                                ws.append(header)
                             for row in matrix:
                                 ws.append([float(val) for val in row])
                         wb.save(filename)
                         exported_files.append(filename)
 
-                    save_wb(mean_power, f"{output_prefix}_mean_power.xlsx")
-                    save_wb(percent_mean, f"{output_prefix}_percent_power.xlsx")
+                    bin_headers = ["Chunk"] + [f"Inner_S{i+1}" for i in range(8)] + [f"Outer_S{i+1}" for i in range(8)]
+                    
+                    save_wb(power_per_chunk, f"{output_prefix}_power_per_chunk.xlsx", header=bin_headers)
+                    save_wb(percent_per_chunk, f"{output_prefix}_percent_power_per_chunk.xlsx", header=bin_headers)
                     save_wb(dominant_counts, f"{output_prefix}_dominant_band.xlsx")
                     
                     # Occupancy (single sheet)
@@ -1160,6 +1131,15 @@ class BinnedAnalysisWindow(QDialog):
                     wb_occ.save(occ_file)
                     exported_files.append(occ_file)
                     
+                    # Occupancy Per Chunk
+                    if occupancy_per_chunk is not None:
+                        save_wb({'Occupancy Per Chunk': occupancy_per_chunk}, 
+                                f"{output_prefix}_occupancy_per_chunk.xlsx", header=bin_headers)
+                    
+                    # EOI Distribution Per Chunk
+                    save_wb({'EOI Per Chunk': eoi_export_matrix}, 
+                            f"{output_prefix}_eoi_per_chunk.xlsx", header=bin_headers)
+                    
                     format_str = "EXCEL"
                 else:
                     # CSV Fallback
@@ -1168,9 +1148,18 @@ class BinnedAnalysisWindow(QDialog):
                     exported_files.append(occ_csv)
                     
                     for band in bands:
-                        out_csv = f"{output_prefix}_polar_mean_{band}.csv"
-                        np.savetxt(out_csv, mean_power[band], delimiter=',')
+                        out_csv = f"{output_prefix}_polar_power_{band}.csv"
+                        np.savetxt(out_csv, power_per_chunk[band], delimiter=',')
                         exported_files.append(out_csv)
+                    
+                    eoi_csv = f"{output_prefix}_polar_eoi_per_chunk.csv"
+                    np.savetxt(eoi_csv, eoi_export_matrix, delimiter=',')
+                    exported_files.append(eoi_csv)
+                    
+                    if occupancy_per_chunk is not None:
+                        occ_chunk_csv = f"{output_prefix}_polar_occupancy_per_chunk.csv"
+                        np.savetxt(occ_chunk_csv, occupancy_per_chunk, delimiter=',')
+                        exported_files.append(occ_chunk_csv)
                     
                     format_str = "CSV"
                     
