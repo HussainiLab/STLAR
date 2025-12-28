@@ -1067,8 +1067,10 @@ class BinnedAnalysisWindow(QDialog):
 
                 # EOI Distribution (Per Chunk)
                 eoi_counts_per_chunk = np.zeros((2, 8, n_chunks))
+                eoi_export_matrix = None
                 
                 if self.eoi_segments and self.tracking_data:
+                    eoi_counts_per_chunk = np.zeros((2, 8, n_chunks))
                     # Calculate bounds (same as in _create_polar_eoi_heatmap)
                     all_x = np.concatenate(self.tracking_data[0])
                     all_y = np.concatenate(self.tracking_data[1])
@@ -1096,70 +1098,74 @@ class BinnedAnalysisWindow(QDialog):
                             
                             for ri, ti in zip(r_indices, th_indices):
                                 eoi_counts_per_chunk[ri, ti, chunk_idx] += 1
+                    eoi_export_matrix = prepare_matrix(eoi_counts_per_chunk)
                 
-                eoi_export_matrix = prepare_matrix(eoi_counts_per_chunk)
+                # 5. Dominant Band (per chunk)
+                dom_data = np.array(self.binned_data['bin_dominant_band']) # (n_chunks, 2, 8)
+                dom_data_T = dom_data.transpose(1, 2, 0) # (2, 8, n_chunks)
+                dom_export_matrix = prepare_matrix(dom_data_T)
                 
                 exported_files = []
                 
                 if use_excel:
-                    # Helper to save workbook
-                    def save_wb(data_dict, filename, header=None):
+                    bin_headers = ["Chunk"] + [f"Inner_S{i+1}" for i in range(8)] + [f"Outer_S{i+1}" for i in range(8)]
+
+                    # Helper to save multi-sheet workbook
+                    def save_multi_sheet(data_dict, filename):
                         wb = openpyxl.Workbook()
                         wb.remove(wb.active)
                         for sheet_name, matrix in data_dict.items():
                             ws = wb.create_sheet(title=sheet_name)
-                            if header:
-                                ws.append(header)
+                            ws.append(bin_headers)
                             for row in matrix:
                                 ws.append([float(val) for val in row])
                         wb.save(filename)
                         exported_files.append(filename)
 
-                    bin_headers = ["Chunk"] + [f"Inner_S{i+1}" for i in range(8)] + [f"Outer_S{i+1}" for i in range(8)]
+                    # Helper to save single-sheet workbook
+                    def save_single_sheet(matrix, filename, sheet_title, is_string=False):
+                        wb = openpyxl.Workbook()
+                        ws = wb.active
+                        ws.title = sheet_title
+                        ws.append(bin_headers)
+                        for row in matrix:
+                            if is_string:
+                                ws.append([row[0]] + list(row[1:]))
+                            else:
+                                ws.append([float(val) for val in row])
+                        wb.save(filename)
+                        exported_files.append(filename)
                     
-                    save_wb(power_per_chunk, f"{output_prefix}_power_per_chunk.xlsx", header=bin_headers)
-                    save_wb(percent_per_chunk, f"{output_prefix}_percent_power_per_chunk.xlsx", header=bin_headers)
-                    save_wb(dominant_counts, f"{output_prefix}_dominant_band.xlsx")
+                    # 1. Mean Power
+                    save_multi_sheet(power_per_chunk, f"{output_prefix}_mean_power.xlsx")
+                    # 2. Percent Power
+                    save_multi_sheet(percent_per_chunk, f"{output_prefix}_percent_power.xlsx")
                     
-                    # Occupancy (single sheet)
-                    occ_file = f"{output_prefix}_occupancy.xlsx"
-                    wb_occ = openpyxl.Workbook()
-                    ws_occ = wb_occ.active
-                    ws_occ.title = 'Occupancy'
-                    for row in self.binned_data['bin_occupancy']:
-                        ws_occ.append([float(val) for val in row])
-                    wb_occ.save(occ_file)
-                    exported_files.append(occ_file)
+                    # 3. EOIs
+                    if eoi_export_matrix is not None:
+                        save_single_sheet(eoi_export_matrix, f"{output_prefix}_eois.xlsx", "EOIs")
                     
-                    # Occupancy Per Chunk
+                    # 4. Percent Occupancy
                     if occupancy_per_chunk is not None:
-                        save_wb({'Occupancy Per Chunk': occupancy_per_chunk}, 
-                                f"{output_prefix}_occupancy_per_chunk.xlsx", header=bin_headers)
+                        save_single_sheet(occupancy_per_chunk, f"{output_prefix}_percent_occupancy.xlsx", "Percent Occupancy")
                     
-                    # EOI Distribution Per Chunk
-                    save_wb({'EOI Per Chunk': eoi_export_matrix}, 
-                            f"{output_prefix}_eoi_per_chunk.xlsx", header=bin_headers)
+                    # 5. Dominant Band
+                    save_single_sheet(dom_export_matrix, f"{output_prefix}_dominant_band.xlsx", "Dominant Band", is_string=True)
                     
                     format_str = "EXCEL"
                 else:
                     # CSV Fallback
-                    occ_csv = f"{output_prefix}_polar_occupancy.csv"
-                    np.savetxt(occ_csv, self.binned_data['bin_occupancy'], delimiter=',')
-                    exported_files.append(occ_csv)
-                    
                     for band in bands:
-                        out_csv = f"{output_prefix}_polar_power_{band}.csv"
-                        np.savetxt(out_csv, power_per_chunk[band], delimiter=',')
-                        exported_files.append(out_csv)
+                        np.savetxt(f"{output_prefix}_mean_power_{band}.csv", power_per_chunk[band], delimiter=',')
+                        np.savetxt(f"{output_prefix}_percent_power_{band}.csv", percent_per_chunk[band], delimiter=',')
                     
-                    eoi_csv = f"{output_prefix}_polar_eoi_per_chunk.csv"
-                    np.savetxt(eoi_csv, eoi_export_matrix, delimiter=',')
-                    exported_files.append(eoi_csv)
+                    if eoi_export_matrix is not None:
+                        np.savetxt(f"{output_prefix}_eois.csv", eoi_export_matrix, delimiter=',')
                     
                     if occupancy_per_chunk is not None:
-                        occ_chunk_csv = f"{output_prefix}_polar_occupancy_per_chunk.csv"
-                        np.savetxt(occ_chunk_csv, occupancy_per_chunk, delimiter=',')
-                        exported_files.append(occ_chunk_csv)
+                        np.savetxt(f"{output_prefix}_percent_occupancy.csv", occupancy_per_chunk, delimiter=',')
+                    
+                    np.savetxt(f"{output_prefix}_dominant_band.csv", dom_export_matrix, delimiter=',', fmt='%s')
                     
                     format_str = "CSV"
                     
@@ -1285,7 +1291,7 @@ class frequencyPlotWindow(QWidget):
         # Initialize layout and title
         self.layout = QGridLayout()
         self.setLayout(self.layout)
-        self.setWindowTitle("Power Spectrum Interactive Plot")
+        self.setWindowTitle("Spatial Map")
         
         # Data initialization
         self.plot_flag = False          # Flag to signal if we are plotting graphs or maps. True is graph, false is maps
@@ -1295,7 +1301,7 @@ class frequencyPlotWindow(QWidget):
         self.position_data = [None, None, None] # Hods pos_x, pos_y and pos_t
         self.active_folder = ''                 # Keeps track of last accessed directory
         self.ppm = 511                          # Pixel per meter value
-        self.chunk_size = 10                    # Size of each signal chunk in seconds (user defined)
+        self.chunk_size = 60                    # Size of each signal chunk in seconds (user defined)
         self.window_type = 'hann'               # Window type for welch 
         self.speed_lowerbound = None            # Lower limit for speed filter
         self.speed_upperbound = None            # Upper limit for speed filter
@@ -1376,7 +1382,7 @@ class frequencyPlotWindow(QWidget):
         windowTypeBox.addItem("boxcar")
         speedTextBox.setPlaceholderText("Ex: Type 5,10 for 5cms to 10cms range filter")
         self.ppmTextBox.setText("511")
-        chunkSizeTextBox.setText("10")
+        chunkSizeTextBox.setText("60")
         
         # Set font sizes of label headers
         self.frequencyViewer_Label.setFont(QFont("Times New Roman", 18))
