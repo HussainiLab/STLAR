@@ -1335,24 +1335,60 @@ def ImportSet(main_window, graph_options_window, score_window, tf_plots_window, 
         else:
             graph_combobox.addItem('Speed')
 
-    # Auto-select preferred source: EGF if available, else EEG
-    preferred_index = -1
-    
-    for ext in ['.egf', '.eeg']:
-        for i in range(graph_combobox.count()):
-            if ext in graph_combobox.itemText(i).lower():
-                preferred_index = i
-                break
-        if preferred_index != -1:
+    # Check for profiles (if any) and auto-add first profile
+    profile_found = False
+    for option, position in graph_options_window.graph_header_option_positions.items():
+        if 'profile' in option.lower():
+            profile_box = graph_options_window.graph_header_option_fields[position[0], position[1] + 1]
+            if isinstance(profile_box, QtWidgets.QComboBox) and profile_box.count() > 1:
+                profile_box.setCurrentIndex(1)
+                profile_found = True
+                # Auto-click "Load Profile" button
+                for btn in graph_options_window.findChildren(QtWidgets.QPushButton):
+                    if 'load' in btn.text().lower() and 'profile' in btn.text().lower():
+                        QtCore.QTimer.singleShot(1000, btn.click)
+                        break
             break
-            
-    if preferred_index != -1:
-        graph_combobox.setCurrentIndex(preferred_index)
-        # Auto-add the selected source to the graphs list
-        try:
-            graph_options_window.validateSource('add')
-        except Exception:
-            pass
+
+    if not profile_found:
+        # Fallback: Add EGF/EEG and POS manually
+        
+        # Find filter fields
+        low_pass_field = None
+        high_pass_field = None
+        for option, position in graph_options_window.graph_header_option_positions.items():
+            if 'low' in option.lower() and 'pass' in option.lower():
+                low_pass_field = graph_options_window.graph_header_option_fields[position[0], position[1]+1]
+            elif 'high' in option.lower() and 'pass' in option.lower():
+                high_pass_field = graph_options_window.graph_header_option_fields[position[0], position[1]+1]
+
+        # 1. Add Ephys (EGF preferred, else EEG)
+        ephys_added = False
+        for ext in ['.egf', '.eeg']:
+            for i in range(graph_combobox.count()):
+                if ext in graph_combobox.itemText(i).lower():
+                    graph_combobox.setCurrentIndex(i)
+                    # Set filters
+                    if low_pass_field: low_pass_field.setText('4')
+                    if high_pass_field: high_pass_field.setText('12')
+                    try:
+                        graph_options_window.validateSource('add')
+                        ephys_added = True
+                    except Exception:
+                        pass
+                    break
+            if ephys_added:
+                break
+        
+        # 2. Add Position (Speed)
+        for i in range(graph_combobox.count()):
+            if 'speed' == graph_combobox.itemText(i).lower():
+                graph_combobox.setCurrentIndex(i)
+                try:
+                    graph_options_window.validateSource('add')
+                except Exception:
+                    pass
+                break
 
     # replace the score with a new proper score file
     score_filename = os.path.join(set_directory, 'HFOScores', set_basename, '%s_HFOScores.txt' % set_basename)
