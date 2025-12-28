@@ -625,19 +625,23 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
                 if export_binned_jpgs:
                     print("  → Exporting polar JPGs...")
                     export_count = 0
-                    
-                    # Setup grid
+
+                    # Setup grid for polar pcolormesh
                     theta = np.linspace(-np.pi, np.pi, 9)
                     r = [0, 1.0/np.sqrt(2), 1]
                     T, R = np.meshgrid(theta, r)
-                    
+
+                    # Precompute total power per chunk for percent calculations
                     for chunk_idx in range(n_chunks):
-                        # Power plots
+                        # Mean power (per chunk)
                         fig, axes = plt.subplots(2, 4, figsize=(16, 8), subplot_kw={'projection': 'polar'})
-                        fig.suptitle(f'Polar Bins - Chunk {chunk_idx + 1} (Frequency Band Power)', fontsize=14, fontweight='bold')
+                        fig.suptitle(f'Polar Bins - Chunk {chunk_idx + 1:02d} (Frequency Band Power & Occupancy)', fontsize=14, fontweight='bold')
+                        ax_flat = axes.flatten()
+
                         for idx, band in enumerate(bands):
-                            if idx >= 8: break
-                            ax = axes.flatten()[idx]
+                            if idx >= len(ax_flat):
+                                break
+                            ax = ax_flat[idx]
                             data = binned_data['bin_power_timeseries'][band][:, :, chunk_idx]
                             im = ax.pcolormesh(T, R, data, cmap='turbo', shading='flat')
                             ax.set_title(band)
@@ -646,26 +650,56 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
                             ax.grid(True, alpha=0.3)
                             cbar = plt.colorbar(im, ax=ax, pad=0.05, shrink=0.8)
                             cbar.set_label('Power', fontsize=8)
+
+                        # Occupancy slot (8th)
+                        if len(bands) < 8:
+                            ax_occ = ax_flat[7]
+                            occ_data = None
+                            if 'bin_occupancy_timeseries' in binned_data:
+                                occ_data = binned_data['bin_occupancy_timeseries'][:, :, chunk_idx]
+                            else:
+                                occ = binned_data.get('bin_occupancy')
+                                if occ is not None:
+                                    total = np.sum(occ)
+                                    if total > 0:
+                                        occ_data = (occ / total) * 100.0
+
+                            if occ_data is not None:
+                                im = ax_occ.pcolormesh(T, R, occ_data, cmap='turbo', shading='flat')
+                                ax_occ.set_title('Occupancy (%)')
+                                ax_occ.set_yticklabels([])
+                                ax_occ.set_xticklabels([])
+                                ax_occ.grid(True, alpha=0.3)
+                                cbar = plt.colorbar(im, ax=ax_occ, pad=0.05, shrink=0.8)
+                                cbar.set_label('%', fontsize=8)
+                            else:
+                                ax_occ.axis('off')
+
                         for idx in range(len(bands), 8):
-                            axes.flatten()[idx].axis('off')
+                            ax_flat[idx].axis('off')
+
                         plt.tight_layout()
                         jpg_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx+1:02d}_polar_power.jpg")
                         fig.savefig(jpg_path, format='jpg', pil_kwargs={'quality':85}, bbox_inches='tight')
                         plt.close(fig)
                         export_count += 1
 
-                        # Percent power plots
+                        # Percent power (per chunk)
                         fig, axes = plt.subplots(2, 4, figsize=(16, 8), subplot_kw={'projection': 'polar'})
-                        fig.suptitle(f'Polar Bins - Chunk {chunk_idx + 1} (Frequency Band Percent Power)', fontsize=14, fontweight='bold')
-                        total = np.zeros((2,8))
+                        fig.suptitle(f'Polar Bins - Chunk {chunk_idx + 1:02d} (Frequency Band Percent Power & Occupancy)', fontsize=14, fontweight='bold')
+                        ax_flat = axes.flatten()
+
+                        total = np.zeros((2, 8))
                         for band in bands:
                             total += binned_data['bin_power_timeseries'][band][:, :, chunk_idx]
+
                         for idx, band in enumerate(bands):
-                            if idx >= 8: break
-                            ax = axes.flatten()[idx]
+                            if idx >= len(ax_flat):
+                                break
+                            ax = ax_flat[idx]
                             band_power = binned_data['bin_power_timeseries'][band][:, :, chunk_idx]
                             with np.errstate(divide='ignore', invalid='ignore'):
-                                pct = np.where(total>0, (band_power/total)*100.0, 0.0)
+                                pct = np.where(total > 0, (band_power / total) * 100.0, 0.0)
                             im = ax.pcolormesh(T, R, pct, cmap='turbo', shading='flat', vmin=0, vmax=100)
                             ax.set_title(band)
                             ax.set_yticklabels([])
@@ -673,24 +707,78 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
                             ax.grid(True, alpha=0.3)
                             cbar = plt.colorbar(im, ax=ax, pad=0.05, shrink=0.8)
                             cbar.set_label('%', fontsize=8)
+
+                        # Occupancy slot
                         for idx in range(len(bands), 8):
-                            axes.flatten()[idx].axis('off')
+                            ax_flat[idx].axis('off')
+
                         plt.tight_layout()
                         jpg_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx+1:02d}_polar_percent.jpg")
                         fig.savefig(jpg_path, format='jpg', pil_kwargs={'quality':85}, bbox_inches='tight')
                         plt.close(fig)
                         export_count += 1
 
-                    # Occupancy
-                    fig_occ, ax_occ = plt.subplots(figsize=(8,6), subplot_kw={'projection':'polar'})
-                    occ = binned_data['bin_occupancy']
-                    im_occ = ax_occ.pcolormesh(T, R, occ, cmap='turbo', shading='flat')
-                    ax_occ.set_title('Bin Occupancy')
-                    jpg_path = os.path.join(output_folder, f"{base_name}_polar_occupancy.jpg")
-                    fig_occ.savefig(jpg_path, format='jpg', pil_kwargs={'quality':85}, bbox_inches='tight')
-                    plt.close(fig_occ)
-                    export_count += 1
-                    
+                        # Dominant + EOI combined (1x2 polar)
+                        fig, axes = plt.subplots(1, 2, figsize=(12, 5), subplot_kw={'projection': 'polar'})
+                        theta = np.linspace(-np.pi, np.pi, 9)
+                        r = [0, 1.0/np.sqrt(2), 1]
+                        T, R = np.meshgrid(theta, r)
+
+                        # Dominant
+                        dominant_chunk = binned_data['bin_dominant_band'][chunk_idx]
+                        band_map = {band: idx for idx, band in enumerate(bands)}
+                        numeric_dominant = np.zeros((2, 8))
+                        for ri in range(2):
+                            for si in range(8):
+                                numeric_dominant[ri, si] = band_map.get(dominant_chunk[ri, si], 0)
+                        im1 = axes[0].pcolormesh(T, R, numeric_dominant, cmap='tab10', shading='flat', vmin=0, vmax=len(bands)-1)
+                        axes[0].set_title(f'Dominant Band - Chunk {chunk_idx+1:02d}')
+                        axes[0].set_yticklabels([])
+                        cbar1 = plt.colorbar(im1, ax=axes[0], ticks=range(len(bands)), pad=0.1)
+                        cbar1.set_ticklabels(bands, fontsize=8)
+
+                        # EOI distribution
+                        H = np.zeros((2, 8))
+                        if eoi_segments and chunk_idx in eoi_segments:
+                            for seg in eoi_segments[chunk_idx]:
+                                xs = np.array(seg[0])
+                                ys = np.array(seg[1])
+                                if xs.size == 0:
+                                    continue
+                                # map positions into polar bins using equal-area transform
+                                all_x = np.concatenate(pos_x_chunks) if pos_x_chunks else np.array([])
+                                all_y = np.concatenate(pos_y_chunks) if pos_y_chunks else np.array([])
+                                if all_x.size and all_y.size:
+                                    min_x, max_x = np.min(all_x), np.max(all_x)
+                                    min_y, max_y = np.min(all_y), np.max(all_y)
+                                else:
+                                    min_x, max_x, min_y, max_y = 0, 1, 0, 1
+                                width = max_x - min_x if max_x > min_x else 1
+                                height = max_y - min_y if max_y > min_y else 1
+                                nx = 2 * (xs - min_x) / width - 1
+                                ny = 2 * (ys - min_y) / height - 1
+                                r_pt = np.sqrt(nx**2 + ny**2)
+                                theta_pt = np.arctan2(ny, nx)
+                                equal_area_radius = 1.0 / np.sqrt(2.0)
+                                r_bins = [0, equal_area_radius, np.inf]
+                                r_indices = np.clip(np.digitize(r_pt, r_bins) - 1, 0, 1)
+                                theta_edges = np.linspace(-np.pi, np.pi, 9)
+                                th_indices = np.clip(np.digitize(theta_pt, theta_edges) - 1, 0, 7)
+                                for ri, ti in zip(r_indices, th_indices):
+                                    H[ri, ti] += 1
+
+                        im2 = axes[1].pcolormesh(T, R, H, cmap='turbo', shading='flat')
+                        axes[1].set_title(f'EOI Distribution - Chunk {chunk_idx+1:02d}')
+                        axes[1].set_yticklabels([])
+                        cbar2 = plt.colorbar(im2, ax=axes[1], pad=0.1)
+                        cbar2.set_label('EOI Count', fontsize=8)
+
+                        plt.tight_layout()
+                        jpg_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx+1:02d}_polar_dominant_eoi.jpg")
+                        fig.savefig(jpg_path, format='jpg', pil_kwargs={'quality':85}, bbox_inches='tight')
+                        plt.close(fig)
+                        export_count += 1
+
                     print(f"  ✓ Exported {export_count} polar JPG(s)")
 
                 if export_binned_csvs:
@@ -833,8 +921,7 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
                     print("  → Exporting binned JPGs...")
                     try:
                         jpg_count = export_binned_analysis_jpgs(binned_data, output_folder, base_name)
-                        visualize_binned_analysis(binned_data, save_path=os.path.join(output_folder, f"{base_name}_binned_heatmap.jpg"))
-                        print(f"  ✓ Exported {jpg_count} JPGs + Heatmap")
+                        print(f"  ✓ Exported {jpg_count} JPGs")
                     except Exception as e:
                         print(f"  ⚠ Failed to export JPGs: {e}")
     except Exception as e:

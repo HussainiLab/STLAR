@@ -23,18 +23,23 @@ See requirements.txt for the full list of packages.
 ### Features
 - **Real-time frequency band analysis** (Delta, Theta, Beta, Gamma, Ripple, Fast Ripple)
 - **Spatial heatmap visualization** with occupancy normalization
-- **Binned Analysis Studio** (NEW) - Advanced 4×4 spatial binning with:
+- **Binned Analysis Studio** (NEW) - Advanced 4×4 and polar spatial binning with:
   - Interactive time-chunk slider for temporal navigation
   - Toggle between absolute power and percent power views
-  - Occupancy heatmap and dominant frequency band visualization
-  - Export mean power, percent power, occupancy, and dominant band data to Excel
+  - Per-chunk occupancy and dominant frequency band visualization
+  - **Per-chunk data export**: Mean power, percent power, occupancy, dominant band, and EOIs (Events of Interest)
   - Export all per-chunk visualizations as JPG files
+  - Support for circular (polar: 2 rings × 8 sectors) and rectangular (4×4 grid) arena detection
+- **EOI (Events of Interest) support**:
+  - Automatic detection of EOI files from HFOScores folder or CSV format
+  - Per-chunk EOI distribution mapping to spatial bins
+  - EOI counts exported alongside other binned metrics
 - **Speed filtering** - Analyze only data within specific speed ranges
 - **Excel export** for all data outputs (automatic CSV fallback if openpyxl unavailable):
   - Time bins with distance per bin and cumulative distance (in cm)
   - Average power per frequency band
   - Percentage of total power per band
-  - Multi-sheet workbooks for binned analysis metrics
+  - Multi-sheet workbooks for binned analysis metrics (per-chunk granularity)
 - **Interactive time slider** to view frequency maps across recording duration
 - **Graph mode** for power spectral density visualization
 
@@ -54,43 +59,52 @@ See requirements.txt for the full list of packages.
 7. Click **Binned Analysis Studio** to open advanced spatial binning interface
 
 #### Binned Analysis Studio
-The Binned Analysis Studio provides detailed 4×4 spatial bin analysis:
+The Binned Analysis Studio provides detailed spatial bin analysis with automatic arena shape detection:
+
+**Arena Detection:**
+- **Circular arenas**: Polar binning (2 rings × 8 sectors = 16 bins)
+  - Inner ring: 0 to 1/√2 (equal-area split)
+  - Outer ring: 1/√2 to 1.0
+  - 8 sectors: -π to π
+- **Rectangular/Square arenas**: Cartesian binning (4×4 grid = 16 bins)
+  - Automatic detection based on trajectory bounds
 
 **Features:**
 - **Time-chunk navigation**: Slider to view data across different time windows
 - **View modes**:
-  - Frequency band power (absolute or percent)
-  - Occupancy heatmap (time spent in each bin)
-  - Dominant frequency band per bin
+  - Frequency band power (absolute or percent) - per chunk
+  - Occupancy heatmap (time spent in each bin) - per chunk
+  - Dominant frequency band per bin - per chunk
+  - EOI distribution (if EOI file available) - per chunk
 - **Toggle percent power**: Switch between absolute power values and percentage of total power
-- **Export Data**: Save binned metrics to Excel files:
-  - `_mean_power.xlsx` - Mean power per band (one sheet per band)
-  - `_percent_power.xlsx` - Percent power per band (one sheet per band)
-  - `_occupancy.xlsx` - Time spent in each spatial bin
-  - `_dominant_band.xlsx` - Frequency of dominant band per bin (one sheet per band)
+- **Export Data**: Save binned metrics to Excel files (all per-chunk except occupancy aggregate):
+  - `_mean_power_per_chunk.xlsx` - Mean power per band per chunk (one sheet per band)
+  - `_percent_power_per_chunk.xlsx` - Percent power per band per chunk (one sheet per band)
+  - `_percent_occupancy_per_chunk.xlsx` - Percent occupancy per chunk
+  - `_dominant_band_per_chunk.xlsx` - Dominant band per chunk
+  - `_eois_per_chunk.xlsx` - EOI counts per chunk (if available)
 - **Export All JPGs**: Save all visualizations:
   - Mean power heatmaps per chunk (one per time chunk)
   - Percent power heatmaps per chunk
-  - Occupancy heatmap (time-invariant, saved once)
-  - Dominant band heatmaps per chunk
+  - Dominant band & EOI distribution heatmaps per chunk
   - All files saved to `binned_analysis_output/` subfolder
 
-**Output Structure (GUI):**
+**Output Structure (GUI - Binned Analysis Studio):**
 ```
-output_folder/
-├── {filename}_SSM.xlsx                    # Main analysis data
-├── {filename}_binned_mean_power.xlsx      # Binned mean power
-├── {filename}_binned_percent_power.xlsx   # Binned percent power
-├── {filename}_binned_occupancy.xlsx       # Occupancy data
-├── {filename}_binned_dominant_band.xlsx   # Dominant band frequencies
-├── {filename}_binned_heatmap.jpg          # Combined visualization
-└── binned_analysis_output/                # (When "Export All JPGs" is used)
-    ├── {filename}_chunk0_mean_power.jpg
-    ├── {filename}_chunk0_percent_power.jpg
-    ├── {filename}_chunk0_dominant_band.jpg
-    ├── {filename}_chunk1_mean_power.jpg
-    ├── ... (one set per chunk)
-    └── {filename}_occupancy.jpg
+binned_analysis_output/
+├── {filename}_binned_mean_power_per_chunk.xlsx        # Mean power per band per chunk
+├── {filename}_binned_percent_power_per_chunk.xlsx     # Percent power per band per chunk
+├── {filename}_binned_percent_occupancy_per_chunk.xlsx # Occupancy distribution per chunk
+├── {filename}_binned_dominant_band_per_chunk.xlsx     # Dominant band per chunk
+├── {filename}_binned_eois_per_chunk.xlsx              # EOI counts per chunk (if available)
+├── {filename}_chunk0_mean_power.jpg                   # Per-chunk visualizations
+├── {filename}_chunk0_percent_power.jpg
+├── {filename}_chunk0_dominant_eoi.jpg
+├── {filename}_chunk1_mean_power.jpg
+├── {filename}_chunk1_percent_power.jpg
+├── {filename}_chunk1_dominant_eoi.jpg
+├── ... (one set per chunk)
+└── {filename}_binned_heatmap.jpg                      # Combined static visualization
 ```
 
 ### Examples
@@ -101,43 +115,56 @@ output_folder/
 
 Basic usage:
 ```bash
-python src/batch_ssm.py path/to/recording.eeg --export-binned-jpgs -o ./output/
+python src/batch_ssm.py path/to/recording.eeg --export-binned-csvs -o ./output/
 ```
 
 Key flags:
-- `--ppm 511` (default), `--chunk-size 10`, `--window hann`
-- `--speed-filter 2,30` (cm/s), `-o ./output/`
-- `--export-binned-jpgs`: also writes per‑chunk JPGs and Excel to a subfolder
+- `--ppm 595` (default: 600), `--chunk-size 60` (seconds), `--window hann`
+- `--speed-filter 2,30` (cm/s range), `-o ./output/` (output directory)
+- `--export-binned-csvs`: exports binned data (mean power, percent power, occupancy, dominant band, EOIs) to Excel/CSV
+- `--export-binned-jpgs`: also generates per-chunk JPG visualizations
+
+**EOI Support:**
+- Automatically searches for EOI files in the same directory as the recording:
+  - `{filename}_EOI.csv` (two-column CSV: start, stop in seconds or milliseconds)
+  - `HFOScores/{filename}/{filename}_*.txt` (Axona HFOScore format: ID, Start(ms), Stop(ms), ...)
+- EOI segments are mapped to spatial bins and exported per chunk if found
 
 **Output Structure (Batch Mode):**
 
-*Standard mode (without --export-binned-jpgs):*
+*With --export-binned-csvs flag:*
 ```
 output_folder/
-├── {filename}_SSM.xlsx                    # Main analysis Excel
-├── {filename}_binned_mean_power.xlsx      # Binned analysis Excel files
-├── {filename}_binned_percent_power.xlsx
-├── {filename}_binned_occupancy.xlsx
-├── {filename}_binned_dominant_band.xlsx
-└── {filename}_binned_heatmap.jpg          # Combined visualization
+├── {filename}_SSM.xlsx                              # Main analysis Excel (power, distance, per-chunk metrics)
+└── {filename}_binned_analysis/                      # Binned analysis subfolder
+    ├── {filename}_binned_mean_power_per_chunk.xlsx          # Mean power per band, per chunk
+    ├── {filename}_binned_percent_power_per_chunk.xlsx       # Percent power per band, per chunk
+    ├── {filename}_binned_percent_occupancy_per_chunk.xlsx   # Occupancy distribution per chunk
+    ├── {filename}_binned_dominant_band_per_chunk.xlsx       # Dominant band per chunk
+    ├── {filename}_binned_eois_per_chunk.xlsx                # EOI counts per chunk (if available)
+    ├── {filename}_binned_heatmap.jpg                        # Combined static visualization
+    └── (CSV equivalents if openpyxl unavailable)
 ```
 
-*With --export-binned-jpgs flag:*
+*With both --export-binned-csvs and --export-binned-jpgs flags:*
 ```
 output_folder/
-├── {filename}_SSM.xlsx                    # Main analysis Excel
-└── {filename}_binned_analysis/            # All binned outputs in subfolder
-    ├── {filename}_binned_mean_power.xlsx
-    ├── {filename}_binned_percent_power.xlsx
-    ├── {filename}_binned_occupancy.xlsx
-    ├── {filename}_binned_dominant_band.xlsx
+├── {filename}_SSM.xlsx                              # Main analysis Excel
+└── {filename}_binned_analysis/                      # Binned analysis subfolder
+    ├── {filename}_binned_mean_power_per_chunk.xlsx
+    ├── {filename}_binned_percent_power_per_chunk.xlsx
+    ├── {filename}_binned_percent_occupancy_per_chunk.xlsx
+    ├── {filename}_binned_dominant_band_per_chunk.xlsx
+    ├── {filename}_binned_eois_per_chunk.xlsx
     ├── {filename}_binned_heatmap.jpg
-    ├── {filename}_chunk0_mean_power.jpg   # Per-chunk visualizations
+    ├── {filename}_chunk0_mean_power.jpg             # Per-chunk visualizations
     ├── {filename}_chunk0_percent_power.jpg
-    ├── {filename}_chunk0_dominant_band.jpg
+    ├── {filename}_chunk0_dominant_eoi.jpg
     ├── {filename}_chunk1_mean_power.jpg
+    ├── {filename}_chunk1_percent_power.jpg
+    ├── {filename}_chunk1_dominant_eoi.jpg
     ├── ... (one set per chunk)
-    └── {filename}_occupancy.jpg
+    └── {filename}_polar_occupancy.jpg               # (polar only: occupancy once)
 ```
 
 **Example Script for Multiple Files:**
@@ -174,20 +201,36 @@ Outputs are written under examples/outputs/ by default when running the examples
 - **Avg [Band] Power**: Average power for each frequency band
 - **Percent [Band]**: Percentage of total power for each band
 
-**Binned Analysis Data:**
-- **Mean Power (_mean_power.xlsx)**: 4×4 grid of mean power per spatial bin, one sheet per frequency band
-- **Percent Power (_percent_power.xlsx)**: 4×4 grid of percent power per spatial bin, one sheet per frequency band
-- **Occupancy (_occupancy.xlsx)**: 4×4 grid showing time spent (in samples) per spatial bin
-- **Dominant Band (_dominant_band.xlsx)**: 4×4 grid showing frequency of dominance per spatial bin, one sheet per band
+**Binned Analysis Data (Per-Chunk):**
+- **Mean Power (_mean_power_per_chunk.xlsx)**: Power values per spatial bin per time chunk (rows=chunks, cols=bins), one sheet per frequency band
+- **Percent Power (_percent_power_per_chunk.xlsx)**: Percentage power per spatial bin per chunk, one sheet per frequency band
+- **Occupancy (_percent_occupancy_per_chunk.xlsx)**: Percent time spent in each bin per chunk (rows=chunks, cols=bins)
+- **Dominant Band (_dominant_band_per_chunk.xlsx)**: Frequency band name with highest power per bin per chunk (rows=chunks, cols=bins)
+- **EOIs (_eois_per_chunk.xlsx)**: Count of EOI events per spatial bin per chunk (rows=chunks, cols=bins) - only if EOI file detected
+
+**Data Format (Per-Chunk Files):**
+- **Column 1**: Chunk number (1-indexed)
+- **Columns 2-17** (4×4 bins): Values for each spatial bin (flattened row-major order)
+  - Bins ordered: [0,0], [0,1], [0,2], [0,3], [1,0], ..., [3,3]
+- **Rows**: One per time chunk
+- **Example**: 120-second recording, 60-second chunks → 2 rows + header
 
 ### Notes
 - **Excel export is now the default** for all outputs (openpyxl automatically installed if missing, CSV fallback available)
+- **Per-chunk binned data**: All exports include per-chunk granularity (mean power, percent power, occupancy, dominant band, EOIs)
 - **Binned analysis** automatically exported during processing (GUI and batch mode)
 - **Per-chunk visualizations** available via "Export All JPGs" in GUI or `--export-binned-jpgs` flag in batch mode
+- **Arena shape detection**: Automatically detects circular vs rectangular arenas based on position trajectory
+  - Circular/ellipse → Polar binning (2 rings × 8 sectors)
+  - Rectangle/square → Cartesian binning (4×4 grid)
+- **EOI support**: Automatically detects and maps EOI (HFO, seizure events, etc.) to spatial bins per chunk
+  - Searches for `{filename}_EOI.csv` or `HFOScores/{filename}/{filename}_*.txt`
+  - EOI counts exported per chunk in dedicated Excel sheet
 - Position data (`.pos` files) should be sampled at 50 Hz
 - EEG data formats supported: Axona `.eeg` (250 Hz) and `.egf` (1200 Hz)
 - **Batch processing**: Handles position data files with mismatched timestamp arrays (automatically trims or extends as needed)
 - **Directory mode**: When processing a directory, prioritizes `.egf` files over `.eeg` and skips duplicate variants (e.g., .egf2-.egf4)
+- **Consistency**: 4×4 rectangular bins now export occupancy and EOI per chunk, matching polar bin behavior
 
 ### Troubleshooting
 - **Import errors**: Ensure all dependencies are installed with `pip install -r requirements.txt`
