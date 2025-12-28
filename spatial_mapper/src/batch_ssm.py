@@ -791,16 +791,16 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
                                     ws.append([float(val) for val in row])
                             wb.save(filename)
 
-                        save_multi_sheet(power_per_chunk, f"{output_prefix}_mean_power.xlsx")
-                        save_multi_sheet(percent_per_chunk, f"{output_prefix}_percent_power.xlsx")
+                        save_multi_sheet(power_per_chunk, f"{output_prefix}_mean_power_per_chunk.xlsx")
+                        save_multi_sheet(percent_per_chunk, f"{output_prefix}_percent_power_per_chunk.xlsx")
                         
                         if eoi_export_matrix is not None:
-                            save_single_sheet(eoi_export_matrix, f"{output_prefix}_eois.xlsx", "EOIs")
+                            save_single_sheet(eoi_export_matrix, f"{output_prefix}_eois_per_chunk.xlsx", "EOIs")
                         
                         if occupancy_export_matrix is not None:
-                            save_single_sheet(occupancy_export_matrix, f"{output_prefix}_percent_occupancy.xlsx", "Percent Occupancy")
+                            save_single_sheet(occupancy_export_matrix, f"{output_prefix}_percent_occupancy_per_chunk.xlsx", "Percent Occupancy")
                             
-                        save_single_sheet(dom_export_matrix, f"{output_prefix}_dominant_band.xlsx", "Dominant Band", is_string=True)
+                        save_single_sheet(dom_export_matrix, f"{output_prefix}_dominant_band_per_chunk.xlsx", "Dominant Band", is_string=True)
 
                         print(f"  ✓ Excel files exported to: {output_folder}")
                         
@@ -823,7 +823,7 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
                 
                 if export_binned_csvs:
                     print("  → Exporting binned data (CSV/Excel)...")
-                    result = export_binned_analysis_to_csv(binned_data, output_prefix)
+                    result = export_binned_analysis_to_csv(binned_data, output_prefix, pos_x_chunks=pos_x_chunks, pos_y_chunks=pos_y_chunks, eoi_segments=eoi_segments)
                     if result.get('format') == 'csv' and result.get('reason') == 'openpyxl_not_installed':
                         print("  ⚠ Excel export unavailable (openpyxl missing). Exported CSVs.")
                     else:
