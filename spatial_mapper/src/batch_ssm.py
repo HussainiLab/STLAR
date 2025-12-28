@@ -182,13 +182,8 @@ def export_to_csv(output_path, pos_t, chunk_powers_data, chunk_size, ppm,
         for i in range(len(pos_x_chunks)):
             distance_cm_in_bin = 0.0
             
-            if i == 0:
-                x_bin = pos_x_chunks[i]
-                y_bin = pos_y_chunks[i]
-            else:
-                prev_len = len(pos_x_chunks[i-1])
-                x_bin = pos_x_chunks[i][prev_len:]
-                y_bin = pos_y_chunks[i][prev_len:]
+            x_bin = pos_x_chunks[i]
+            y_bin = pos_y_chunks[i]
             
             if len(x_bin) > 1:
                 dx = np.diff(np.array(x_bin))
@@ -598,11 +593,16 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
                 # Occupancy (2x8)
                 fig_occ, ax_occ = plt.subplots(figsize=(8,6), subplot_kw={'projection':'polar'})
                 occ = binned_data['bin_occupancy']
+                
+                total_samples = np.sum(occ)
+                if total_samples > 0:
+                    occ = (occ / total_samples) * 100.0
+                
                 im_occ = ax_occ.pcolormesh(T, R, occ, cmap='turbo', shading='flat')
-                ax_occ.set_title('Bin Occupancy')
+                ax_occ.set_title('Bin Occupancy (%)')
                 ax_occ.set_yticklabels([])
                 cbar1 = plt.colorbar(im_occ, ax=ax_occ, pad=0.05)
-                cbar1.set_label('Samples', fontsize=9)
+                cbar1.set_label('%', fontsize=9)
                 occ_path = os.path.join(output_folder, f"{base_name}_polar_occupancy.jpg")
                 fig_occ.savefig(occ_path, format='jpg', pil_kwargs={'quality':85}, bbox_inches='tight')
                 plt.close(fig_occ)
