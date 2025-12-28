@@ -366,10 +366,11 @@ class BinnedAnalysisWindow(QDialog):
         Displays frequency band power, occupancy, and dominant band heatmaps.
     '''
     
-    def __init__(self, parent=None, binned_data=None, files=None, active_folder=None, eoi_segments=None):
+    def __init__(self, parent=None, binned_data=None, files=None, active_folder=None, eoi_segments=None, tracking_data=None):
         super().__init__(parent)
         self.binned_data = binned_data
         self.eoi_segments = eoi_segments
+        self.tracking_data = tracking_data
         self.files = files or [None, None]
         self.active_folder = active_folder or os.getcwd()
         self.current_chunk = 0
@@ -480,6 +481,15 @@ class BinnedAnalysisWindow(QDialog):
         right_layout.addWidget(self.occ_scroll)
         display_layout.addLayout(right_layout, 1)
         
+        # EOI Plot (below Occupancy)
+        right_layout.addSpacing(10)
+        self.eoi_scroll = QScrollArea(self)
+        self.eoi_scroll.setWidgetResizable(True)
+        self.eoi_label = QLabel()
+        self.eoi_label.setAlignment(Qt.AlignCenter)
+        self.eoi_scroll.setWidget(self.eoi_label)
+        right_layout.addWidget(self.eoi_scroll)
+        
         main_layout.addLayout(display_layout, 1)
         
         # Status bar
@@ -567,6 +577,17 @@ class BinnedAnalysisWindow(QDialog):
                 if occ_pixmap.width() > 600:
                     occ_pixmap = occ_pixmap.scaledToWidth(600, Qt.SmoothTransformation)
                 self.occ_label.setPixmap(occ_pixmap)
+            
+            # Render EOI heatmap in memory
+            if self.binned_data.get('type') == 'polar':
+                fig_eoi, _ = self._create_polar_eoi_heatmap(self.current_chunk)
+            else:
+                fig_eoi, _ = self._create_eoi_heatmap(self.current_chunk)
+            eoi_pixmap = self._fig_to_pixmap(fig_eoi)
+            if not eoi_pixmap.isNull():
+                if eoi_pixmap.width() > 600:
+                    eoi_pixmap = eoi_pixmap.scaledToWidth(600, Qt.SmoothTransformation)
+                self.eoi_label.setPixmap(eoi_pixmap)
             
             self.status_label.setText(f"Chunk {self.current_chunk + 1} rendered")
         except Exception as e:
@@ -681,7 +702,7 @@ class BinnedAnalysisWindow(QDialog):
         
         # Setup grid
         theta = np.linspace(-np.pi, np.pi, 9)
-        r = [0, 0.5, 1]
+        r = [0, 1.0/np.sqrt(2), 1]
         T, R = np.meshgrid(theta, r)
         
         # Flatten axes
@@ -774,7 +795,7 @@ class BinnedAnalysisWindow(QDialog):
         
         # Setup grid
         theta = np.linspace(-np.pi, np.pi, 9)
-        r = [0, 0.5, 1]
+        r = [0, 1.0/np.sqrt(2), 1]
         T, R = np.meshgrid(theta, r)
         
         # Left: Occupancy
@@ -807,10 +828,124 @@ class BinnedAnalysisWindow(QDialog):
         plt.tight_layout()
         return fig, axes
 
-    def updateBinnedData(self, binned_data, files=None, active_folder=None, eoi_segments=None):
+    def _create_eoi_heatmap(self, chunk_idx):
+        '''Create EOI distribution heatmap'''
+        n_chunks = self.binned_data['time_chunks']
+        if chunk_idx < 0 or chunk_idx >= n_chunks:
+            chunk_idx = max(0, min(chunk_idx, n_chunks - 1))
+            
+        fig, ax = plt.subplots(figsize=(6, 5))
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+        ax = axes[0]
+        
+        # Calculate bounds from tracking_data
+        if self.tracking_data:
+            all_x = np.concatenate(self.tracking_data[0])
+            all_y = np.concatenate(self.tracking_data[1])
+            min_x, max_x = np.min(all_x), np.max(all_x)
+            min_y, max_y = np.min(all_y), np.max(all_y)
+        else:
+            min_x, max_x, min_y, max_y = 0, 1, 0, 1
+            
+        # Get EOIs for this chunk
+        eoi_x = []
+        eoi_y = []
+        if self.eoi_segments and chunk_idx in self.eoi_segments:
+            for seg in self.eoi_segments[chunk_idx]:
+                eoi_x.extend(seg[0])
+                eoi_y.extend(seg[1])
+        
+        # Binning 4x4
+        x_edges = np.linspace(min_x, max_x, 5)
+        y_edges = np.linspace(min_y, max_y, 5)
+        
+        if eoi_x:
+            H, _, _ = np.histogram2d(eoi_x, eoi_y, bins=[x_edges, y_edges])
+            # Flip for imshow (origin upper)
+            H = np.flipud(H.T)
+        else:
+            H = np.zeros((4, 4))
+            
+        im = ax.imshow(H, cmap='turbo', aspect='equal', interpolation='nearest')
+        ax.set_title(f'EOI Distribution - Chunk {chunk_idx + 1}')
+        ax.set_xticks([0, 1, 2, 3])
+        ax.set_yticks([0, 1, 2, 3])
+        ax.grid(True, alpha=0.3)
+        cbar = plt.colorbar(im, ax=ax)
+        cbar.set_label('EOI Count', fontsize=9)
+        
+        # Hide the second subplot (space reserved for future plot)
+        axes[1].axis('off')
+        
+        plt.tight_layout()
+        return fig, ax
+        return fig, axes
+
+    def _create_polar_eoi_heatmap(self, chunk_idx):
+        '''Create polar EOI distribution heatmap'''
+        n_chunks = self.binned_data['time_chunks']
+        if chunk_idx < 0 or chunk_idx >= n_chunks:
+            chunk_idx = max(0, min(chunk_idx, n_chunks - 1))
+            
+        fig, ax = plt.subplots(figsize=(6, 5), subplot_kw={'projection': 'polar'})
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5), subplot_kw={'projection': 'polar'})
+        ax = axes[0]
+        
+        # Calculate bounds and normalize
+        if self.tracking_data:
+            all_x = np.concatenate(self.tracking_data[0])
+            all_y = np.concatenate(self.tracking_data[1])
+            min_x, max_x = np.min(all_x), np.max(all_x)
+            min_y, max_y = np.min(all_y), np.max(all_y)
+            width = max_x - min_x
+            height = max_y - min_y
+            if width == 0: width = 1
+            if height == 0: height = 1
+        else:
+            min_x, max_x, width, height = 0, 1, 1, 1
+            min_y, max_y = 0, 1
+            
+        H = np.zeros((2, 8))
+        
+        if self.eoi_segments and chunk_idx in self.eoi_segments:
+            for seg in self.eoi_segments[chunk_idx]:
+                nx = 2 * (np.array(seg[0]) - min_x) / width - 1
+                ny = 2 * (np.array(seg[1]) - min_y) / height - 1
+                r = np.sqrt(nx**2 + ny**2)
+                theta = np.arctan2(ny, nx)
+                
+                equal_area_radius = 1.0 / np.sqrt(2.0)
+                r_bins = [0, equal_area_radius, np.inf]
+                r_indices = np.clip(np.digitize(r, r_bins) - 1, 0, 1)
+                
+                theta_edges = np.linspace(-np.pi, np.pi, 9)
+                th_indices = np.clip(np.digitize(theta, theta_edges) - 1, 0, 7)
+                
+                for ri, ti in zip(r_indices, th_indices):
+                    H[ri, ti] += 1
+        
+        theta = np.linspace(-np.pi, np.pi, 9)
+        r = [0, 1.0/np.sqrt(2), 1]
+        T, R = np.meshgrid(theta, r)
+        
+        im = ax.pcolormesh(T, R, H, cmap='turbo', shading='flat')
+        ax.set_title(f'EOI Distribution - Chunk {chunk_idx + 1}')
+        ax.set_yticklabels([])
+        cbar = plt.colorbar(im, ax=ax, pad=0.1)
+        cbar.set_label('EOI Count', fontsize=9)
+        
+        # Hide the second subplot (space reserved for future plot)
+        axes[1].axis('off')
+        
+        plt.tight_layout()
+        return fig, ax
+        return fig, axes
+
+    def updateBinnedData(self, binned_data, files=None, active_folder=None, eoi_segments=None, tracking_data=None):
         '''Update binned data when new session is loaded'''
         self.binned_data = binned_data
         self.eoi_segments = eoi_segments
+        self.tracking_data = tracking_data
         if files:
             self.files = files
         if active_folder:
@@ -884,7 +1019,7 @@ class BinnedAnalysisWindow(QDialog):
             
             if is_polar:
                 theta = np.linspace(-np.pi, np.pi, 9)
-                r = [0, 0.5, 1]
+                r = [0, 1.0/np.sqrt(2), 1]
                 T, R = np.meshgrid(theta, r)
                 im = ax.pcolormesh(T, R, occ, cmap='turbo', shading='flat')
             else:
@@ -910,6 +1045,17 @@ class BinnedAnalysisWindow(QDialog):
                 plt.close(fig)
                 export_count += 1
             
+            # Export EOI distribution per chunk (JPG, quality 85)
+            for chunk_idx in range(n_chunks):
+                if self.binned_data.get('type') == 'polar':
+                    fig, _ = self._create_polar_eoi_heatmap(chunk_idx)
+                else:
+                    fig, _ = self._create_eoi_heatmap(chunk_idx)
+                jpg_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx+1:02d}_eoi_distribution.jpg")
+                fig.savefig(jpg_path, format='jpg', pil_kwargs={'quality': 85}, bbox_inches='tight')
+                plt.close(fig)
+                export_count += 1
+            
             self.status_label.setText(f"✓ Exported {export_count} JPGs")
             QMessageBox.information(
                 self,
@@ -918,7 +1064,8 @@ class BinnedAnalysisWindow(QDialog):
                 f'  • {n_chunks} mean power heatmaps\n'
                 f'  • {n_chunks} percent power heatmaps\n'
                 f'  • 1 occupancy heatmap (time-invariant)\n'
-                f'  • {n_chunks} dominant band heatmaps\n\n'
+                f'  • {n_chunks} dominant band heatmaps\n'
+                f'  • {n_chunks} EOI distribution heatmaps\n\n'
                 f'(JPG format for faster export & smaller file size)'
             )
         except Exception as e:
@@ -939,8 +1086,111 @@ class BinnedAnalysisWindow(QDialog):
             base_name = os.path.splitext(os.path.basename(self.files[1] or 'output'))[0]
             
             if self.binned_data.get('type') == 'polar':
-                # Fallback for polar data since core export might not support it
-                QMessageBox.information(self, 'Export', 'Excel export for polar data is not yet fully supported. Exporting JPGs instead.')
+                # Polar data export
+                output_prefix = os.path.join(output_folder, f"{base_name}_binned")
+                
+                try:
+                    import openpyxl
+                    use_excel = True
+                except ImportError:
+                    use_excel = False
+                
+                # Prepare data
+                bands = self.binned_data['bands']
+                percent_mean = {}
+                mean_power = {}
+                
+                # Mean power
+                for band in bands:
+                    data = self.binned_data['bin_power_timeseries'][band]
+                    mean_power[band] = np.mean(data, axis=2)
+                
+                # Percent power
+                all_bands_power = np.stack([self.binned_data['bin_power_timeseries'][b] for b in bands])
+                total_power = np.sum(all_bands_power, axis=0)
+                
+                for band in bands:
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        band_data = self.binned_data['bin_power_timeseries'][band]
+                        per_chunk = np.where(total_power > 0, (band_data / total_power) * 100.0, 0.0)
+                        percent_mean[band] = np.mean(per_chunk, axis=2)
+                
+                # Dominant band counts
+                dominant_counts = {band: np.zeros((2, 8)) for band in bands}
+                for chunk_data in self.binned_data['bin_dominant_band']:
+                    for r_idx in range(chunk_data.shape[0]):
+                        for s_idx in range(chunk_data.shape[1]):
+                            band = chunk_data[r_idx, s_idx]
+                            if band in dominant_counts:
+                                dominant_counts[band][r_idx, s_idx] += 1
+                
+                exported_files = []
+                
+                if use_excel:
+                    # Helper to save workbook
+                    def save_wb(data_dict, filename):
+                        wb = openpyxl.Workbook()
+                        wb.remove(wb.active)
+                        for sheet_name, matrix in data_dict.items():
+                            ws = wb.create_sheet(title=sheet_name)
+                            for row in matrix:
+                                ws.append([float(val) for val in row])
+                        wb.save(filename)
+                        exported_files.append(filename)
+
+                    save_wb(mean_power, f"{output_prefix}_mean_power.xlsx")
+                    save_wb(percent_mean, f"{output_prefix}_percent_power.xlsx")
+                    save_wb(dominant_counts, f"{output_prefix}_dominant_band.xlsx")
+                    
+                    # Occupancy (single sheet)
+                    occ_file = f"{output_prefix}_occupancy.xlsx"
+                    wb_occ = openpyxl.Workbook()
+                    ws_occ = wb_occ.active
+                    ws_occ.title = 'Occupancy'
+                    for row in self.binned_data['bin_occupancy']:
+                        ws_occ.append([float(val) for val in row])
+                    wb_occ.save(occ_file)
+                    exported_files.append(occ_file)
+                    
+                    format_str = "EXCEL"
+                else:
+                    # CSV Fallback
+                    occ_csv = f"{output_prefix}_polar_occupancy.csv"
+                    np.savetxt(occ_csv, self.binned_data['bin_occupancy'], delimiter=',')
+                    exported_files.append(occ_csv)
+                    
+                    for band in bands:
+                        out_csv = f"{output_prefix}_polar_mean_{band}.csv"
+                        np.savetxt(out_csv, mean_power[band], delimiter=',')
+                        exported_files.append(out_csv)
+                    
+                    format_str = "CSV"
+                    
+                    # Warn about openpyxl
+                    warn = QMessageBox(self)
+                    warn.setWindowTitle('Excel Export Unavailable')
+                    warn.setText('openpyxl not installed — exported CSV instead.\n\nInstall openpyxl to enable Excel export with multiple sheets.')
+                    install_btn = warn.addButton('Install openpyxl', QMessageBox.AcceptRole)
+                    warn.addButton('Skip', QMessageBox.RejectRole)
+                    warn.exec_()
+                    if warn.clickedButton() == install_btn:
+                        try:
+                            self.status_label.setText('Installing openpyxl...')
+                            QApplication.processEvents()
+                            proc = subprocess.run([sys.executable, '-m', 'pip', 'install', 'openpyxl'], capture_output=True, text=True)
+                            if proc.returncode == 0:
+                                QMessageBox.information(self, 'Installation Complete', 'openpyxl installed successfully. Please try exporting again.')
+                                return
+                            else:
+                                QMessageBox.warning(self, 'Installation Failed', f'Could not install openpyxl.\n\n{proc.stderr[:500]}')
+                        except Exception as ie:
+                            QMessageBox.warning(self, 'Installation Error', f'Error installing openpyxl: {str(ie)}')
+
+                self.status_label.setText(f"✓ Data exported ({format_str})")
+                file_list = "\n".join([f"  • {os.path.basename(p)}" for p in exported_files])
+                QMessageBox.information(self, 'Export Complete',
+                    f'Binned analysis data exported to:\n{output_folder}\n\n'
+                    f'Format: {format_str}\n\nFiles:\n{file_list}')
                 return
             else:
                 result = export_binned_analysis_to_csv(self.binned_data, os.path.join(output_folder, f"{base_name}_binned"))
@@ -2267,7 +2517,7 @@ class frequencyPlotWindow(QWidget):
         
         # Update the binned analysis window if it's open
         if self.binned_analysis_window is not None and self.binned_analysis_window.isVisible():
-            self.binned_analysis_window.updateBinnedData(self.binned_data, self.files, self.active_folder, self.eoi_segments)
+            self.binned_analysis_window.updateBinnedData(self.binned_data, self.files, self.active_folder, self.eoi_segments, self.tracking_data)
         
         # Slider limits
         self.slider.setMinimum(0)
@@ -2299,7 +2549,8 @@ class frequencyPlotWindow(QWidget):
                 binned_data=self.binned_data,
                 files=self.files,
                 active_folder=self.active_folder,
-                eoi_segments=self.eoi_segments
+                eoi_segments=self.eoi_segments,
+                tracking_data=self.tracking_data
             )
         
         self.binned_analysis_window.show()

@@ -539,7 +539,7 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
                 # Export per-chunk polar power and percent-power (2x8 grids per band)
                 from matplotlib.ticker import FuncFormatter
                 theta = np.linspace(-np.pi, np.pi, 9)
-                r = [0, 0.5, 1]
+                r = [0, 1.0/np.sqrt(2), 1]
                 T, R = np.meshgrid(theta, r)
 
                 export_count = 0
