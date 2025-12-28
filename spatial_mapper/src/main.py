@@ -343,7 +343,9 @@ class BatchWorkerThread(QThread):
         try:
             if binned_data is not None:
                 output_prefix = os.path.join(self.output_dir, f"{base_name}_binned")
-                export_result = export_binned_analysis_to_csv(binned_data, output_prefix)
+                pos_x_chunks = tracking_data[0] if tracking_data else None
+                pos_y_chunks = tracking_data[1] if tracking_data else None
+                export_result = export_binned_analysis_to_csv(binned_data, output_prefix, pos_x_chunks=pos_x_chunks, pos_y_chunks=pos_y_chunks, eoi_segments=self.eoi_segments)
                 if export_result and export_result.get('format') == 'csv' and export_result.get('reason') == 'openpyxl_not_installed' and hasattr(self, 'progress_update'):
                     self.progress_update.emit("  ⚠ Excel export unavailable (openpyxl missing). CSV fallback used.")
                 # Export binned heatmap as JPG instead of PNG
@@ -1137,20 +1139,20 @@ class BinnedAnalysisWindow(QDialog):
                         exported_files.append(filename)
                     
                     # 1. Mean Power
-                    save_multi_sheet(power_per_chunk, f"{output_prefix}_mean_power.xlsx")
+                    save_multi_sheet(power_per_chunk, f"{output_prefix}_mean_power_per_chunk.xlsx")
                     # 2. Percent Power
-                    save_multi_sheet(percent_per_chunk, f"{output_prefix}_percent_power.xlsx")
+                    save_multi_sheet(percent_per_chunk, f"{output_prefix}_percent_power_per_chunk.xlsx")
                     
                     # 3. EOIs
                     if eoi_export_matrix is not None:
-                        save_single_sheet(eoi_export_matrix, f"{output_prefix}_eois.xlsx", "EOIs")
+                        save_single_sheet(eoi_export_matrix, f"{output_prefix}_eois_per_chunk.xlsx", "EOIs")
                     
                     # 4. Percent Occupancy
                     if occupancy_per_chunk is not None:
-                        save_single_sheet(occupancy_per_chunk, f"{output_prefix}_percent_occupancy.xlsx", "Percent Occupancy")
+                        save_single_sheet(occupancy_per_chunk, f"{output_prefix}_percent_occupancy_per_chunk.xlsx", "Percent Occupancy")
                     
                     # 5. Dominant Band
-                    save_single_sheet(dom_export_matrix, f"{output_prefix}_dominant_band.xlsx", "Dominant Band", is_string=True)
+                    save_single_sheet(dom_export_matrix, f"{output_prefix}_dominant_band_per_chunk.xlsx", "Dominant Band", is_string=True)
                     
                     format_str = "EXCEL"
                 else:
@@ -1196,7 +1198,9 @@ class BinnedAnalysisWindow(QDialog):
                     f'Format: {format_str}\n\nFiles:\n{file_list}')
                 return
             else:
-                result = export_binned_analysis_to_csv(self.binned_data, os.path.join(output_folder, f"{base_name}_binned"))
+                pos_x_chunks = self.tracking_data[0] if self.tracking_data else None
+                pos_y_chunks = self.tracking_data[1] if self.tracking_data else None
+                result = export_binned_analysis_to_csv(self.binned_data, os.path.join(output_folder, f"{base_name}_binned"), pos_x_chunks=pos_x_chunks, pos_y_chunks=pos_y_chunks, eoi_segments=self.eoi_segments)
             self.status_label.setText(f"✓ Data exported ({result['format']})")
             file_list = "\n".join([f"  • {os.path.basename(p)}" for p in result['files']])
             if result.get('format') == 'csv' and result.get('reason') == 'openpyxl_not_installed':
@@ -1214,7 +1218,9 @@ class BinnedAnalysisWindow(QDialog):
                         if proc.returncode == 0:
                             QMessageBox.information(self, 'Installation Complete', 'openpyxl installed successfully. Re-exporting to Excel...')
                             # Re-run export to produce Excel files
-                            result = export_binned_analysis_to_csv(self.binned_data, os.path.join(output_folder, f"{base_name}_binned"))
+                            pos_x_chunks = self.tracking_data[0] if self.tracking_data else None
+                            pos_y_chunks = self.tracking_data[1] if self.tracking_data else None
+                            result = export_binned_analysis_to_csv(self.binned_data, os.path.join(output_folder, f"{base_name}_binned"), pos_x_chunks=pos_x_chunks, pos_y_chunks=pos_y_chunks, eoi_segments=self.eoi_segments)
                             self.status_label.setText(f"✓ Data exported ({result['format']})")
                             file_list = "\n".join([f"  • {os.path.basename(p)}" for p in result['files']])
                         else:
@@ -2684,8 +2690,10 @@ class frequencyPlotWindow(QWidget):
             out_dir = self.active_folder or os.getcwd()
             base_name = os.path.splitext(os.path.basename(self.files[1] or 'output'))[0]
             output_prefix = os.path.join(out_dir, f"{base_name}_binned")
-            export_binned_analysis_to_csv(self.binned_data, output_prefix)
-            QMessageBox.information(self, 'Export Binned CSVs', f'Exported binned CSVs to:\n{output_prefix}_*.csv')
+            pos_x_chunks = self.tracking_data[0] if self.tracking_data else None
+            pos_y_chunks = self.tracking_data[1] if self.tracking_data else None
+            export_binned_analysis_to_csv(self.binned_data, output_prefix, pos_x_chunks=pos_x_chunks, pos_y_chunks=pos_y_chunks, eoi_segments=self.eoi_segments)
+            QMessageBox.information(self, 'Export Binned CSVs', f'Exported binned data to:\n{output_prefix}_*.xlsx / *.csv')
         except Exception as e:
             QMessageBox.warning(self, 'Export Binned CSVs', f'Failed to export binned CSVs: {str(e)}')
         
