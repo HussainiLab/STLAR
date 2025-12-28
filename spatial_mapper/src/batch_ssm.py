@@ -233,11 +233,8 @@ def export_to_csv(output_path, pos_t, chunk_powers_data, chunk_size, ppm,
         for i in range(len(pos_x_chunks)):
             distance_cm_in_bin = 0.0
             
-            i   y_bin = pos_y_chunks[i]
-            else:
-                prev_len = len(pos_x_chunks[i-1])
-                x_bin = pos_x_chunks[i][prev_len:]
-                y_bin = pos_y_chunks[i][prev_len:]
+            x_bin = pos_x_chunks[i]
+            y_bin = pos_y_chunks[i]
             
             if len(x_bin) > 1:
                 dx = np.diff(np.array(x_bin))
@@ -367,8 +364,8 @@ Examples:
     parser.add_argument(
         "--chunk-size",
         type=int,
-        default=10,
-        help="Chunk size in seconds for analysis (default: 10)"
+        default=60,
+        help="Chunk size in seconds for analysis (default: 60)"
     )
     
     parser.add_argument(
@@ -391,6 +388,11 @@ Examples:
         help="Export per-chunk JPG visualizations for binned analysis (mean power, percent power, dominant band per chunk; occupancy once)"
     )
     
+    parser.add_argument(
+        "--export-binned-csvs",
+        action="store_true",
+        help="Export CSV/Excel summaries for binned analysis"
+    )
     
     args = parser.parse_args()
     
@@ -479,7 +481,8 @@ Examples:
                 low_speed,
                 high_speed,
                 args.window,
-                export_binned_jpgs=args.export_binned_jpgs
+                    export_binned_jpgs=args.export_binned_jpgs,
+                    export_binned_csvs=args.export_binned_csvs
             )
         except Exception as e:
             print(f"\n✗ Error during processing: {e}")
@@ -495,7 +498,7 @@ def timeout_handler(signum, frame):
     raise TimeoutError("Processing timeout exceeded")
 
 def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size, 
-                        low_speed, high_speed, window_type, export_binned_jpgs=False, timeout_seconds=300):
+                        low_speed, high_speed, window_type, export_binned_jpgs=False, export_binned_csvs=False, timeout_seconds=300):
     """Process a single EEG/EGF file with timeout protection"""
     
     # Monitor memory at start
@@ -600,14 +603,15 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
     try:
         if binned_data is None:
             pass
-        elif not export_binned_jpgs:
-            print("  → Binned data available but --export-binned-jpgs not set; skipping binned export.")
+        elif not (export_binned_jpgs or export_binned_csvs):
+            print("  → Binned data available but neither --export-binned-jpgs nor --export-binned-csvs set; skipping binned export.")
         else:
+            output_folder = os.path.join(output_dir, f"{base_name}_binned_analysis")
+            os.makedirs(output_folder, exist_ok=True)
+            
             if binned_data.get('type') == 'polar':
                 # Export polar binned analysis in batch: produce JPG visualizations and CSV summaries
-                print("  → Polar binned analysis detected. Exporting polar JPGs and CSV summaries...")
-                output_folder = os.path.join(output_dir, f"{base_name}_binned")
-                os.makedirs(output_folder, exist_ok=True)
+                print("  → Polar binned analysis detected.")
 
                 bands = binned_data['bands']
                 n_chunks = binned_data['time_chunks']
@@ -618,340 +622,221 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
                 r = [0, 1.0/np.sqrt(2), 1]
                 T, R = np.meshgrid(theta, r)
 
-                export_count = 0
-                for chunk_idx in range(n_chunks):
-                    # Power plots (2x8 polar grid, one panel per band)
-                    fig, axes = plt.subplots(2, 4, figsize=(16, 8), subplot_kw={'projection': 'polar'})
-                    fig.suptitle(f'Polar Bins - Chunk {chunk_idx + 1} (Frequency Band Power)', fontsize=14, fontweight='bold')
-                    for idx, band in enumerate(bands):
-                        if idx >= 8: break
-                        ax = axes.flatten()[idx]
-                        data = binned_data['bin_power_timeseries'][band][:, :, chunk_idx]
-                        im = ax.pcolormesh(T, R, data, cmap='turbo', shading='flat')
-                        ax.set_title(band)
-                        ax.set_yticklabels([])
-                        ax.set_xticklabels([])
-                        ax.grid(True, alpha=0.3)
-                        cbar = plt.colorbar(im, ax=ax, pad=0.05, shrink=0.8)
-                        cbar.set_label('Power', fontsize=8)
-                    for idx in range(len(bands), 8):
-                        axes.flatten()[idx].axis('off')
-                    plt.tight_layout()
-                    jpg_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx+1:02d}_polar_power.jpg")
-                    fig.savefig(jpg_path, format='jpg', pil_kwargs={'quality':85}, bbox_inches='tight')
-                    plt.close(fig)
-                    export_count += 1
-
-                    # Percent power plots
-                    fig, axes = plt.subplots(2, 4, figsize=(16, 8), subplot_kw={'projection': 'polar'})
-                    fig.suptitle(f'Polar Bins - Chunk {chunk_idx + 1} (Frequency Band Percent Power)', fontsize=14, fontweight='bold')
-                    # compute total power per bin for this chunk
-                    total = np.zeros((2,8))
-                    for band in bands:
-                        total += binned_data['bin_power_timeseries'][band][:, :, chunk_idx]
-                    for idx, band in enumerate(bands):
-                        if idx >= 8: break
-                        ax = axes.flatten()[idx]
-                        band_power = binned_data['bin_power_timeseries'][band][:, :, chunk_idx]
-                        with np.errstate(divide='ignore', invalid='ignore'):
-                            pct = np.where(total>0, (band_power/total)*100.0, 0.0)
-                        im = ax.pcolormesh(T, R, pct, cmap='turbo', shading='flat', vmin=0, vmax=100)
-                        ax.set_title(band)
-                        ax.set_yticklabels([])
-                        ax.set_xticklabels([])
-                        ax.grid(True, alpha=0.3)
-                        cbar = plt.colorbar(im, ax=ax, pad=0.05, shrink=0.8)
-                        cbar.set_label('%', fontsize=8)
-                    for idx in range(len(bands), 8):
-                        axes.flatten()[idx].axis('off')
-                    plt.tight_layout()
-                    jpg_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx+1:02d}_polar_percent.jpg")
-                    fig.savefig(jpg_path, format='jpg', pil_kwargs={'quality':85}, bbox_inches='tight')
-                    plt.close(fig)
-                    export_count += 1
-
-                # Occupancy and dominant-band exports
-                # Occupancy (2x8)
-                fig_occ, ax_occ = plt.subplots(figsize=(8,6), subplot_kw={'projection':'polar'})
-                occ = binned_data['bin_occupancy']
-                im_occ = ax_occ.pcolormesh(T, R, occ, cmap='turbo', shading='flat')
-                ax_occ.set_title('Bin Occupancy')f"{base_name}_polar_occupancy.jpg")
-                plt.close(fig_occ)
-                export_count += 1
-tution (JPGs + Per Chunk Data)
-                eoi_counts_per_chunk = np.zeros((2, 8, n_chunks)
-                    # Calculate bounds for normalization
-                    all_x = np.concatenate(pos_x_chunks)
-                    all_y = np.concatenate(pos_y_chunks)
-                    min_x, max_x = np.min(all_x), np.max(all_x)
-                    min_y, max_y = np.min(all_y), np.max(all_y)
-                    width = max_x - min_x
-                    height = max_y - min_y
-                    if width == 0: width = 1
-                    if height == 0: height = 1
-
-                    for chunk_idx in range(n_chunks):
-                        # Calculate EOI heatmap for this chunk
-                        H_chunk = np.zeros((2, 8))
-                        if chunk_idx in eoi_segments:
-                            for seg in eoi_segments[chunk_idx]:
-                                nx = 2 * (np.array(seg[0]) - min_x) / width - 1
-                                ny = 2 * (np.array(seg[1]) - min_y) / height - 1
-                                r = np.sqrt(nx**2 + ny**2)
-                                theta = np.arctan2(ny, nx)
-                                
-                                equal_area_radius = 1.0 / np.sqrt(2.0)
-                                r_bins = [0, equal_area_radius, np.inf]
-                                r_indices = np.clip(np.digitize(r, r_bins) - 1, 0, 1)
-                                
-                                theta_edges = np.linspace(-np.pi, np.pi, 9)
-                                th_indices = np.clip(np.digitize(theta, theta_edges) - 1, 0, 7)
-                                
-                                for ri, ti in zip(r_indices, th_indices):
-                                    H_chunk[ri, ti] += 1
-                                    eoi_counts_per_chunk[ri, ti, chunk_idx] += 1
-                        
-                        # Export JPG for this chunk
-                        fig_eoi, ax_eoi = plt.subplots(figsize=(6,5), subplot_kw={'projection':'polar'})
-                        im_eoi = ax_eoi.pcolormesh(T, R, H_chunk, cmap='turbo', shading='flat')
-                        ax_eoi.set_title(f'EOI Distribution - Chunk {chunk_idx+1}')
-                        ax_eoi.set_yticklabels([])
-                        cbar_eoi = plt.colorbar(im_eoi, ax=ax_eoi, pad=0.05)
-                        cbar_eoi.set_label('Count', fontsize=9)
-                        eoi_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx+1:02d}_polar_eoi.jpg")
-                        fig_eoi.savefig(eoi_path, format='jpg', pil_kwargs={'quality':85}, bbox_inches='tight')
-                        plt.close(fig_eoi)
-                        export_count += 1
-                else:
-                    # If no EOIs, we can't plot, but we initialized eoi_counts_per_chunk to zeros
-                    pass
-
-                # Dominant band per chunk (as numeric map and per-chunk polar plots)
-                band_map = {band: idx for idx, band in enumerate(bands)}
-                for chunk_idx in range(n_chunks):
-                    dom = binned_data['bin_dominant_band'][chunk_idx]
-                    numeric_dom = np.zeros((2,8))
-                    for r_idx in range(2):
-                        for s_idx in range(8):
-                            numeric_dom[r_idx, s_idx] = band_map.get(dom[r_idx, s_idx], 0)
-                    fig_dom = plt.figure(figsize=(6,5))
-                    ax_dom = fig_dom.add_subplot(111, projection='polar')
-                    im_dom = ax_dom.pcolormesh(T, R, numeric_dom, cmap='tab10', shading='flat', vmin=0, vmax=len(bands)-1)
-                    ax_dom.set_title(f'Dominant Band - Chunk {chunk_idx+1}')
-                    ax_dom.set_yticklabels([])
-                    cbar2 = plt.colorbar(im_dom, ax=ax_dom, ticks=range(len(bands)), pad=0.05)
-                    cbar2.set_ticklabels(bands, fontsize=8)
-                    dom_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx+1:02d}_polar_dominant.jpg")
-                    fig_dom.savefig(dom_path, format='jpg', pil_kwargs={'quality':85}, bbox_inches='tight')
-                    plt.close(fig_dom)
-                    export_count += 1
-
-                print(f"  ✓ Exported {export_count} polar JPG(s) to: {output_folder}")
-                # Also provide Excel summaries (mean power per band, percent power per band, occupancy, dominant counts)
-                output_prefix = os.path.join(output_folder, f"{base_name}_binned")
-                try:
-                    import openpyxl
-                    use_excel = True
-                except ImportError:
-                    use_excel = False
-
-                # Helper to reshape (2, 8, n_chunks) -> (n_chunks, 16) and add Chunk column
-                def prepare_matrix(data_3d):
-                    # reshape to (16, n_chunks) -> transpose to (n_chunks, 16)
-                    flat = data_3d.reshape(16, -1).T
-                    # Add chunk column (1-based)
-                    chunks_col = np.arange(1, n_chunks + 1).reshape(-1, 1)
-                    return np.hstack([chunks_col, flat])
-
-                # Prepare data
-                percent_mean = {}
-                mean_power = {}
-                for band in bands:
-                    data = binned_data['bin_power_timeseries'][band]  # shape (2,8,n_chunks)
-                    mean_power[band] = np.mean(data, axis=2)
-                # percent power per chunk then mean
-                n_chunks = binned_data['time_chunks']
-                for t in range(n_chunks):
-                    total_power_chunk = np.zeros_like(binned_data['bin_power_timeseries'][bands[0]][:, :, 0])
-                    for band in bands:
-                        total_power_chunk += binned_data['bin_power_timeseries'][band][:, :, t]
-                # compute mean percent across time
-                for band in bands:
-                    with np.errstate(divide='ignore', invalid='ignore'):
-                        pct = np.zeros_like(mean_power[band])
-                        total = np.sum([binned_data['bin_power_timeseries'][b] for b in bands], axis=0)
-                        # total shape (2,8,n_chunks)
-                        # compute percent per chunk then mean across chunks
-                        per_chunk = np.where(total>0, (binned_data['bin_power_timeseries'][band] / total) * 100.0, 0.0)
-                        percent_mean[band] = np.mean(per_chunk, axis=2)
-                
-                # Prepare per-chunk occupancy (percent)
-                occupancy_per_chunk = None
-                if 'bin_occupancy_timeseries' in binned_data:
-                    occ_ts = binned_data['bin_occupancy_timeseries']
-                    occ_sums = np.sum(occ_ts, axis=(0, 1))
-                    with np.errstate(divide='ignore', invalid='ignore'):
-                        occ_pct = np.where(occ_sums > 0, (occ_ts / occ_sums[None, None, :]) * 100.0, 0.0)
-                    occupancy_per_chunk = prepare_matrix(occ_pct)
-
-                # Dominant band counts per band
-                dominant_counts = {band: np.zeros_like(mean_power[bands[0]]) for band in bands}
-                for chunk_data in binned_data['bin_dominant_band']:
-                    for r_idx in range(chunk_data.shape[0]):
-                        for s_idx in range(chunk_data.shape[1]):
-                            band = chunk_data[r_idx, s_idx]
-                            if band in dominant_counts:
-                                dominant_counts[band][r_idx, s_idx] += 1
-
-                if use_excel:
-                    bin_headers = ["Chunk"] + [f"Inner_S{i+1}" for i in range(8)] + [f"Outer_S{i+1}" for i in range(8)]
+                if export_binned_jpgs:
+                    print("  → Exporting polar JPGs...")
+                    export_count = 0
                     
+                    # Setup grid
+                    theta = np.linspace(-np.pi, np.pi, 9)
+                    r = [0, 1.0/np.sqrt(2), 1]
+                    T, R = np.meshgrid(theta, r)
+                    
+                    for chunk_idx in range(n_chunks):
+                        # Power plots
+                        fig, axes = plt.subplots(2, 4, figsize=(16, 8), subplot_kw={'projection': 'polar'})
+                        fig.suptitle(f'Polar Bins - Chunk {chunk_idx + 1} (Frequency Band Power)', fontsize=14, fontweight='bold')
+                        for idx, band in enumerate(bands):
+                            if idx >= 8: break
+                            ax = axes.flatten()[idx]
+                            data = binned_data['bin_power_timeseries'][band][:, :, chunk_idx]
+                            im = ax.pcolormesh(T, R, data, cmap='turbo', shading='flat')
+                            ax.set_title(band)
+                            ax.set_yticklabels([])
+                            ax.set_xticklabels([])
+                            ax.grid(True, alpha=0.3)
+                            cbar = plt.colorbar(im, ax=ax, pad=0.05, shrink=0.8)
+                            cbar.set_label('Power', fontsize=8)
+                        for idx in range(len(bands), 8):
+                            axes.flatten()[idx].axis('off')
+                        plt.tight_layout()
+                        jpg_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx+1:02d}_polar_power.jpg")
+                        fig.savefig(jpg_path, format='jpg', pil_kwargs={'quality':85}, bbox_inches='tight')
+                        plt.close(fig)
+                        export_count += 1
+
+                        # Percent power plots
+                        fig, axes = plt.subplots(2, 4, figsize=(16, 8), subplot_kw={'projection': 'polar'})
+                        fig.suptitle(f'Polar Bins - Chunk {chunk_idx + 1} (Frequency Band Percent Power)', fontsize=14, fontweight='bold')
+                        total = np.zeros((2,8))
+                        for band in bands:
+                            total += binned_data['bin_power_timeseries'][band][:, :, chunk_idx]
+                        for idx, band in enumerate(bands):
+                            if idx >= 8: break
+                            ax = axes.flatten()[idx]
+                            band_power = binned_data['bin_power_timeseries'][band][:, :, chunk_idx]
+                            with np.errstate(divide='ignore', invalid='ignore'):
+                                pct = np.where(total>0, (band_power/total)*100.0, 0.0)
+                            im = ax.pcolormesh(T, R, pct, cmap='turbo', shading='flat', vmin=0, vmax=100)
+                            ax.set_title(band)
+                            ax.set_yticklabels([])
+                            ax.set_xticklabels([])
+                            ax.grid(True, alpha=0.3)
+                            cbar = plt.colorbar(im, ax=ax, pad=0.05, shrink=0.8)
+                            cbar.set_label('%', fontsize=8)
+                        for idx in range(len(bands), 8):
+                            axes.flatten()[idx].axis('off')
+                        plt.tight_layout()
+                        jpg_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx+1:02d}_polar_percent.jpg")
+                        fig.savefig(jpg_path, format='jpg', pil_kwargs={'quality':85}, bbox_inches='tight')
+                        plt.close(fig)
+                        export_count += 1
+
+                    # Occupancy
+                    fig_occ, ax_occ = plt.subplots(figsize=(8,6), subplot_kw={'projection':'polar'})
+                    occ = binned_data['bin_occupancy']
+                    im_occ = ax_occ.pcolormesh(T, R, occ, cmap='turbo', shading='flat')
+                    ax_occ.set_title('Bin Occupancy')
+                    jpg_path = os.path.join(output_folder, f"{base_name}_polar_occupancy.jpg")
+                    fig_occ.savefig(jpg_path, format='jpg', pil_kwargs={'quality':85}, bbox_inches='tight')
+                    plt.close(fig_occ)
+                    export_count += 1
+                    
+                    print(f"  ✓ Exported {export_count} polar JPG(s)")
+
+                if export_binned_csvs:
+                    print("  → Exporting polar data (CSV/Excel)...")
+                    output_prefix = os.path.join(output_folder, f"{base_name}_binned")
+                    
+                    # Helper to reshape (2, 8, n_chunks) -> (n_chunks, 16) and add Chunk column
+                    def prepare_matrix(data_3d):
+                        flat = data_3d.reshape(16, -1).T
+                        chunks_col = np.arange(1, n_chunks + 1).reshape(-1, 1)
+                        return np.hstack([chunks_col, flat])
+
+                    # 1. Mean Power (per chunk)
+                    power_per_chunk = {}
+                    for band in bands:
+                        power_per_chunk[band] = prepare_matrix(binned_data['bin_power_timeseries'][band])
+
+                    # 2. Percent Power (per chunk)
+                    percent_per_chunk = {}
+                    all_bands_power = np.stack([binned_data['bin_power_timeseries'][b] for b in bands])
+                    total_power = np.sum(all_bands_power, axis=0) # (2, 8, n_chunks)
+                    for band in bands:
+                        with np.errstate(divide='ignore', invalid='ignore'):
+                            pct_data = np.where(total_power > 0, (binned_data['bin_power_timeseries'][band] / total_power) * 100.0, 0.0)
+                        percent_per_chunk[band] = prepare_matrix(pct_data)
+
+                    # 3. EOIs (per chunk)
+                    eoi_export_matrix = None
+                    if eoi_segments:
+                        eoi_counts_per_chunk = np.zeros((2, 8, n_chunks))
+                        all_x = np.concatenate(pos_x_chunks)
+                        all_y = np.concatenate(pos_y_chunks)
+                        min_x, max_x = np.min(all_x), np.max(all_x)
+                        min_y, max_y = np.min(all_y), np.max(all_y)
+                        width = max_x - min_x
+                        height = max_y - min_y
+                        if width == 0: width = 1
+                        if height == 0: height = 1
+
+                        for chunk_idx in range(n_chunks):
+                            if chunk_idx in eoi_segments:
+                                for seg in eoi_segments[chunk_idx]:
+                                    nx = 2 * (np.array(seg[0]) - min_x) / width - 1
+                                    ny = 2 * (np.array(seg[1]) - min_y) / height - 1
+                                    r = np.sqrt(nx**2 + ny**2)
+                                    theta = np.arctan2(ny, nx)
+                                    
+                                    equal_area_radius = 1.0 / np.sqrt(2.0)
+                                    r_bins = [0, equal_area_radius, np.inf]
+                                    r_indices = np.clip(np.digitize(r, r_bins) - 1, 0, 1)
+                                    
+                                    theta_edges = np.linspace(-np.pi, np.pi, 9)
+                                    th_indices = np.clip(np.digitize(theta, theta_edges) - 1, 0, 7)
+                                    
+                                    for ri, ti in zip(r_indices, th_indices):
+                                        eoi_counts_per_chunk[ri, ti, chunk_idx] += 1
+                        eoi_export_matrix = prepare_matrix(eoi_counts_per_chunk)
+
+                    # 4. Percent Occupancy (per chunk)
+                    occupancy_export_matrix = None
+                    if 'bin_occupancy_timeseries' in binned_data:
+                        occ_ts = binned_data['bin_occupancy_timeseries']
+                        occ_sums = np.sum(occ_ts, axis=(0, 1))
+                        with np.errstate(divide='ignore', invalid='ignore'):
+                            occ_pct = np.where(occ_sums[None, None, :] > 0, (occ_ts / occ_sums[None, None, :]) * 100.0, 0.0)
+                        occupancy_export_matrix = prepare_matrix(occ_pct)
+
+                    # 5. Dominant Band (per chunk)
+                    dom_data = np.array(binned_data['bin_dominant_band']) # (n_chunks, 2, 8)
+                    dom_data_T = dom_data.transpose(1, 2, 0) # (2, 8, n_chunks)
+                    dom_export_matrix = prepare_matrix(dom_data_T)
+
                     try:
-                        # Mean power workbook
-                        mean_file = f"{output_prefix}_mean_power.xlsx"
-                        wb_mean = openpyxl.Workbook()
-                        wb_mean.remove(wb_mean.active)
-                        for band in bands:
-                            ws = wb_mean.create_sheet(title=band)
-                            for row in mean_power[band]:
-                                ws.append([float(val) for val in row])
-                        wb_mean.save(mean_file)
-
-                        # Percent power workbook
-                        percent_file = f"{output_prefix}_percent_power.xlsx"
-                        wb_pct = openpyxl.Workbook()
-                        wb_pct.remove(wb_pct.active)
-                        for band in bands:
-                            ws = wb_pct.create_sheet(title=band)
-                            for row in percent_mean[band]:
-                                ws.append([float(val) for val in row])
-                        wb_pct.save(percent_file)
-
-                        # Occupancy workbook
-                        occ_file = f"{output_prefix}_occupancy.xlsx"
-                        wb_occ = openpyxl.Workbook()
-                        ws_occ = wb_occ.active
-                        ws_occ.title = 'Occupancy'
-                        for row in occ:
-                            ws_occ.append([float(val) for val in row])
-                        wb_occ.save(occ_file)
-
-                        # Dominant band counts workbook
-                        dominant_file = f"{output_prefix}_dominant_band.xlsx"
-                        wb_dom = openpyxl.Workbook()
-                        wb_dom.remove(wb_dom.active)
-                        for band in bands:
-                            ws = wb_dom.create_sheet(title=band)
-                            counts = dominant_counts[band]
-                            for row in counts:
-                                ws.append([float(val) for val in row])
-                        wb_dom.save(dominant_file)
+                        import openpyxl
+                        bin_headers = ["Chunk"] + [f"Inner_S{i+1}" for i in range(8)] + [f"Outer_S{i+1}" for i in range(8)]
                         
-                        # EOI Per Chunk workbook
-                        eoi_file = f"{output_prefix}_eoi_per_chunk.xlsx"
-                        wb_eoi = openpyxl.Workbook()
-                        ws_eoi = wb_eoi.active
-                        ws_eoi.title = 'EOI Per Chunk'
-                        ws_eoi.append(bin_headers)
-                        eoi_export = prepare_matrix(eoi_counts_per_chunk)
-                        for row in eoi_export:
-                            ws_eoi.append([float(val) for val in row])
-                        wb_eoi.save(eoi_file)
-                        
-                        # Occupancy Per Chunk workbook
-                        if occupancy_per_chunk is not None:
-                            occ_chunk_file = f"{output_prefix}_occupancy_per_chunk.xlsx"
-                            wb_occ_chunk = openpyxl.Workbook()
-                            ws_occ_chunk = wb_occ_chunk.active
-                            ws_occ_chunk.title = 'Occupancy Per Chunk'
-                            ws_occ_chunk.append(bin_headers)
-                            for row in occupancy_per_chunk:
-                                ws_occ_chunk.append([float(val) for val in row])
-                            wb_occ_chunk.save(occ_chunk_file)
+                        # Helper to save multi-sheet workbook
+                        def save_multi_sheet(data_dict, filename):
+                            wb = openpyxl.Workbook()
+                            wb.remove(wb.active)
+                            for sheet_name, matrix in data_dict.items():
+                                ws = wb.create_sheet(title=sheet_name)
+                                ws.append(bin_headers)
+                                for row in matrix:
+                                    ws.append([float(val) for val in row])
+                            wb.save(filename)
 
-                        print(f"  ✓ Excel exported to: {output_folder} (Mean, Percent, Occ, Dom, EOI)")
-                    except Exception as e:
-                        print(f"  ⚠ Failed to write Excel files: {e}")
-                        # fallback to CSV
-                        use_excel = False
+                        # Helper to save single-sheet workbook
+                        def save_single_sheet(matrix, filename, sheet_title, is_string=False):
+                            wb = openpyxl.Workbook()
+                            ws = wb.active
+                            ws.title = sheet_title
+                            ws.append(bin_headers)
+                            for row in matrix:
+                                if is_string:
+                                    ws.append([row[0]] + list(row[1:]))
+                                else:
+                                    ws.append([float(val) for val in row])
+                            wb.save(filename)
 
-                if not use_excel:
-                    # Save CSV fallbacks
-
-                        np.savetxt(occ_csv, occ, delimiter=',')
-                        for band in bands:
-                            out_csv = os.path.join(output_folder, f"{base_name}_polar_mean_{band}.csv")
-                            np.savetxt(out_csv, mean_power[band], delimiter=',')
+                        save_multi_sheet(power_per_chunk, f"{output_prefix}_mean_power.xlsx")
+                        save_multi_sheet(percent_per_chunk, f"{output_prefix}_percent_power.xlsx")
                         
-                        eoi_csv = os.path.join(output_folder, f"{base_name}_polar_eoi_per_chunk.csv")
-                        np.savetxt(eoi_csv, prepare_matrix(eoi_counts_per_chunk), delimiter=',')
+                        if eoi_export_matrix is not None:
+                            save_single_sheet(eoi_export_matrix, f"{output_prefix}_eois.xlsx", "EOIs")
                         
-                        if occupancy_per_chunk is not None:
-                            occ_chunk_csv = os.path.join(output_folder, f"{base_name}_polar_occupancy_per_chunk.csv")
-                            np.savetxt(occ_chunk_csv, occupancy_per_chunk, delimiter=',')
+                        if occupancy_export_matrix is not None:
+                            save_single_sheet(occupancy_export_matrix, f"{output_prefix}_percent_occupancy.xlsx", "Percent Occupancy")
                             
-                        print(f"  ✓ CSV summaries saved to: {output_folder} (openpyxl not installed)")
-                    except Exception as e:
-                        print(f"  ⚠ Failed to save CSV summaries: {e}")
-                return
+                        save_single_sheet(dom_export_matrix, f"{output_prefix}_dominant_band.xlsx", "Dominant Band", is_string=True)
 
-            # Determine output location based on whether per-chunk export is requested
-            if args.export_binned_jpgs:
-                # Export everything (Excel + JPGs) to subfolder
-                output_folder = os.path.join(output_dir, f"{base_name}_binned_analysis")
-                if not os.path.exists(output_folder):
-                    os.makedirs(output_folder, exist_ok=True)
+                        print(f"  ✓ Excel files exported to: {output_folder}")
+                        
+                    except ImportError:
+                        # CSV Fallback
+                        for band in bands:
+                            np.savetxt(f"{output_prefix}_mean_power_{band}.csv", power_per_chunk[band], delimiter=',')
+                            np.savetxt(f"{output_prefix}_percent_power_{band}.csv", percent_per_chunk[band], delimiter=',')
+                        if eoi_export_matrix is not None:
+                            np.savetxt(f"{output_prefix}_eois.csv", eoi_export_matrix, delimiter=',')
+                        if occupancy_export_matrix is not None:
+                            np.savetxt(f"{output_prefix}_percent_occupancy.csv", occupancy_export_matrix, delimiter=',')
+                        # Dominant band CSV might be tricky with strings if using np.savetxt with default fmt
+                        np.savetxt(f"{output_prefix}_dominant_band.csv", dom_export_matrix, delimiter=',', fmt='%s')
+                        print(f"  ✓ CSVs exported to: {output_folder}")
+
+            else:
+                # Rectangular (4x4)
                 output_prefix = os.path.join(output_folder, base_name + "_binned")
                 
-                print("[+] Exporting 4x4 binned analysis with per-chunk JPGs and Excel...")
+                if export_binned_csvs:
+                    print("  → Exporting binned data (CSV/Excel)...")
+                    result = export_binned_analysis_to_csv(binned_data, output_prefix)
+                    if result.get('format') == 'csv' and result.get('reason') == 'openpyxl_not_installed':
+                        print("  ⚠ Excel export unavailable (openpyxl missing). Exported CSVs.")
+                    else:
+                        print(f"  ✓ Exported {result.get('format').upper()} files")
                 
-                # Export Excel files
-                result = export_binned_analysis_to_csv(binned_data, output_prefix)
-                if result.get('format') == 'csv' and result.get('reason') == 'openpyxl_not_installed':
-                    print("  ⚠ Excel export unavailable (openpyxl missing). Attempting install...")
+                if export_binned_jpgs:
+                    print("  → Exporting binned JPGs...")
                     try:
-                        proc = subprocess.run([sys.executable, '-m', 'pip', 'install', 'openpyxl'], capture_output=True, text=True)
-                        if proc.returncode == 0:
-                            print("  ✓ openpyxl installed. Re-exporting to Excel...")
-                            result = export_binned_analysis_to_csv(binned_data, output_prefix)
-                        else:
-                            print("  ✗ Failed to install openpyxl. Keeping CSV export.")
-                    except Exception as ie:
-                        print(f"  ✗ Error installing openpyxl: {ie}")
-                
-                print(f"[+] Exported binned analysis Excel files ({result.get('format','csv').upper()})")
-                for filepath in result.get('files', []):
-                    print(f"    • {os.path.basename(filepath)}")
-                
-                # Export JPGs
-                try:
-                    print("[+] Exporting per-chunk JPG visualizations...")
-                    jpg_count = export_binned_analysis_jpgs(binned_data, output_folder, base_name)
-                    print(f"[+] Exported {jpg_count} JPG visualizations")
-                except Exception as e:
-                    print(f"  ⚠ Failed to export JPGs: {e}")
-                
-                # Export combined heatmap
-                visualize_binned_analysis(binned_data, save_path=os.path.join(output_folder, f"{base_name}_binned_heatmap.jpg"))
-                print(f"[+] All binned analysis files exported to: {output_folder}")
-            else:
-                # Standard export: Excel + single heatmap to main output dir
-                output_prefix = os.path.splitext(output_csv)[0] + "_binned"
-                print("[+] Exporting 4x4 binned analysis data and visualization...")
-                result = export_binned_analysis_to_csv(binned_data, output_prefix)
-                if result.get('format') == 'csv' and result.get('reason') == 'openpyxl_not_installed':
-                    print("  ⚠ Excel export unavailable (openpyxl missing). Attempting install...")
-                    try:
-                        proc = subprocess.run([sys.executable, '-m', 'pip', 'install', 'openpyxl'], capture_output=True, text=True)
-                        if proc.returncode == 0:
-                            print("  ✓ openpyxl installed. Re-exporting to Excel...")
-                            result = export_binned_analysis_to_csv(binned_data, output_prefix)
-                        else:
-                            print("  ✗ Failed to install openpyxl. Keeping CSV export.")
-                    except Exception as ie:
-                        print(f"  ✗ Error installing openpyxl: {ie}")
-                visualize_binned_analysis(binned_data, save_path=output_prefix + "_heatmap.jpg")
-                print(f"[+] Binned analysis export complete ({result.get('format','csv').upper()})")
+                        jpg_count = export_binned_analysis_jpgs(binned_data, output_folder, base_name)
+                        visualize_binned_analysis(binned_data, save_path=os.path.join(output_folder, f"{base_name}_binned_heatmap.jpg"))
+                        print(f"  ✓ Exported {jpg_count} JPGs + Heatmap")
+                    except Exception as e:
+                        print(f"  ⚠ Failed to export JPGs: {e}")
     except Exception as e:
         print(f"⚠ Binned analysis export failed: {e}")
     
