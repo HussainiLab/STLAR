@@ -481,10 +481,12 @@ def run_dl_batch(args: argparse.Namespace):
 __all__ = ['build_parser', 'run_hilbert_batch', 'run_ste_batch', 'run_mni_batch', 'run_consensus_batch', 'run_dl_batch']
 
 
-def main():
-    parser = build_parser()
-    args = parser.parse_args()
-
+def main(args=None):
+    """Main CLI entry point. Can accept pre-parsed args or parse from sys.argv."""
+    if args is None:
+        parser = build_parser()
+        args = parser.parse_args()
+    
     if args.command == 'hilbert-batch':
         run_hilbert_batch(args)
     elif args.command == 'ste-batch':
@@ -496,6 +498,7 @@ def main():
     elif args.command == 'dl-batch':
         run_dl_batch(args)
     else:
+        parser = build_parser()
         parser.print_help()
 
 
