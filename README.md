@@ -1,5 +1,7 @@
 # STLAR: Spatio-Temporal LFP Analyzer
 
+![STLAR Overview Banner](docs/images/banner.png)
+
 STLAR (pronounced Stellar) is a Spatio-Temporal LFP analysis tool combining hfoGUI and Spatial Spectral Mapper.
 
 ## Features
@@ -126,6 +128,29 @@ pip install -e .
 
 **Done!** You can now run STLAR.
 
+#### Deep Learning (Optional Dependencies)
+
+Install these only if you plan to use deep learning detection (`dl-batch`) or the GUI's DL features.
+
+CPU-only (works everywhere):
+
+```bash
+pip install torch onnxruntime
+```
+
+GPU-accelerated (CUDA 11.8, NVIDIA GPUs):
+
+```bash
+# Activate your environment first (e.g., conda activate stlar)
+pip install --index-url https://download.pytorch.org/whl/cu118 torch torchvision torchaudio
+pip install onnxruntime-gpu  # optional; fallback is onnxruntime (CPU)
+```
+
+Notes:
+- If `torch` is not installed, running `python -m stlar dl-batch ...` will print guidance and exit gracefully.
+- ONNX is optional; STLAR supports TorchScript models out of the box.
+- Verify GPU availability with: `python -c "import torch; print(torch.cuda.is_available())"`.
+
 ### Troubleshooting Installation
 
 **"Command not found: python"**
@@ -160,10 +185,14 @@ python -m stlar gui
 ```
 Then open a data file and adjust detection parameters with sliders.
 
+![HFO GUI Screenshot](docs/images/hfo_gui_annotated.png)
+
 **Launch the Spatial Mapper GUI:**
 ```bash
 python -m stlar spatial-gui
 ```
+
+![Spatial Mapper Screenshot](docs/images/spatial_mapper_annotated.png)
 
 #### 2️⃣ Command Line (Batch Processing)
 
@@ -183,7 +212,11 @@ python -m stlar consensus-batch -f mydata/ --voting-strategy strict
 python -m stlar batch-ssm mydata/ --ppm 595
 ```
 
+![CLI Batch Processing](docs/images/cli_batch_processing.png)
+
 Results save to `HFOScores/` by default. See [CLI Reference](#cli-reference) for all commands and options.
+
+![Output Example](docs/images/output_example.png)
 
 #### 3️⃣ Python API (Advanced)
 
@@ -200,6 +233,16 @@ print(f"Found {len(ripples)} ripples")
 - **.eeg** - Tint format (most common)
 - **.egf** - Intan format with embedded tracking
 - **.edf** - Standard EDF format
+
+### Image Capture Checklist (for README visuals)
+
+- Banner: `docs/images/banner.png` – Composite of HFO GUI and Spatial Mapper.
+- HFO GUI: `docs/images/hfo_gui_annotated.png` – Signal view, detected events, parameters, event list.
+- Spatial Mapper: `docs/images/spatial_mapper_annotated.png` – Heatmap, tracking overlay, power scale, controls.
+- CLI Batch: `docs/images/cli_batch_processing.png` – Terminal running `python -m stlar hilbert-batch -f data/ -v` with progress.
+- Output Example: `docs/images/output_example.png` – Signal trace with detected HFO spans and IDs.
+- Methods Comparison (optional): `docs/images/methods_comparison.png` – Same segment with 5 methods.
+- Heatmaps (optional): `docs/images/grid_heatmap.png`, `docs/images/polar_heatmap.png` – Grid vs. polar binning.
 
 ### Project Structure
 ```
