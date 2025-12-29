@@ -66,7 +66,51 @@ cd STLAR
 
 **No git installed?** Download ZIP from GitHub → Extract → Open command prompt in the folder
 
-#### 3. Install Dependencies
+#### 3. Create Virtual Environment (Recommended)
+
+Using a virtual environment keeps STLAR's dependencies isolated from your system Python.
+
+**Option A: Using Conda (Recommended for Data Science)**
+
+```bash
+# Create new environment named "stlar"
+conda create -n stlar python=3.10
+
+# Activate the environment
+conda activate stlar
+
+# You should see (stlar) at the start of your command prompt
+```
+
+To activate later: `conda activate stlar`  
+To deactivate: `conda deactivate`
+
+**Option B: Using venv (Built into Python)**
+
+```bash
+# Windows
+python -m venv stlar
+stlar\Scripts\activate
+
+# macOS/Linux
+python3 -m venv stlar
+source stlar/bin/activate
+
+# You should see (stlar) at the start of your command prompt
+```
+
+To activate later: 
+- Windows: `stlar\Scripts\activate`
+- macOS/Linux: `source stlar/bin/activate`
+
+To deactivate: `deactivate`
+
+**Why use an environment?**
+- ✅ Prevents dependency conflicts with other Python projects
+- ✅ Easy to reset if something breaks (`conda env remove -n stlar`)
+- ✅ Reproducible setup across machines
+
+#### 4. Install Dependencies
 ```bash
 # Windows/macOS/Linux - same command
 pip install -r requirements.txt
@@ -74,7 +118,7 @@ pip install -r requirements.txt
 
 **Takes 2-5 minutes depending on internet speed.** You should see packages downloading.
 
-#### 4. (Optional) Install as Editable Package
+#### 5. (Optional) Install as Editable Package
 ```bash
 # Allows updating STLAR without reinstalling
 pip install -e .
@@ -93,7 +137,12 @@ pip install -e .
 pip install --user -r requirements.txt
 ```
 
+**Conda environment not activating**
+- Make sure conda is initialized: `conda init` → restart terminal
+- Check environment exists: `conda env list`
+
 **ImportError when running STLAR**
+- Ensure environment is activated: `conda activate stlar` or `source stlar/bin/activate`
 - Ensure all dependencies installed: `pip install -r requirements.txt --upgrade`
 - Check you're in the STLAR directory: `pwd` (macOS/Linux) or `cd` (Windows)
 
