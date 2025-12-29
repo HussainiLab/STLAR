@@ -37,114 +37,187 @@ STLAR (pronounced Stellar) is a Spatio-Temporal LFP analysis tool combining hfoG
 - Progress tracking and summary statistics
 
 ## Installation
+
+### Requirements
+- **Python 3.8+** (check with `python --version`)
+- **pip** (Python package manager, usually included with Python)
+- ~2-3 GB disk space for dependencies
+
+### Step-by-Step Installation (For Beginners)
+
+#### 1. Install Python (if needed)
+If you don't have Python installed:
+- **Windows:** Download from [python.org](https://www.python.org/downloads/) → Run installer → ✅ Check "Add Python to PATH"
+- **macOS:** Use [homebrew](https://brew.sh/) → `brew install python3`
+- **Linux:** `sudo apt-get install python3 python3-pip`
+
+Verify installation:
 ```bash
-# Clone repository
+python --version
+pip --version
+```
+
+#### 2. Clone the Repository
+```bash
+# Download STLAR source code
 git clone https://github.com/HussainiLab/STLAR.git
 cd STLAR
+```
 
-# Install dependencies
+**No git installed?** Download ZIP from GitHub → Extract → Open command prompt in the folder
+
+#### 3. Install Dependencies
+```bash
+# Windows/macOS/Linux - same command
 pip install -r requirements.txt
+```
 
-# (Optional) install package locally
+**Takes 2-5 minutes depending on internet speed.** You should see packages downloading.
+
+#### 4. (Optional) Install as Editable Package
+```bash
+# Allows updating STLAR without reinstalling
 pip install -e .
 ```
 
-## Project Structure
-```
-STLAR/
-├── hfoGUI/           # Temporal analysis (HFO detection)
-├── stlar/            # Main package wrapper
-├── spatial_mapper/   # Spatial spectral mapping
-├── docs/             # Documentation
-├── tests/            # Test files
-├── settings/         # User configuration files (gitignored)
-├── HFOScores/        # User output data (gitignored)
-└── main.py           # Entry point
+**Done!** You can now run STLAR.
+
+### Troubleshooting Installation
+
+**"Command not found: python"**
+- Try `python3` instead of `python`
+- Windows: Add Python to PATH (search "environment variables" → add Python installation folder)
+
+**"Permission denied" (macOS/Linux)**
+```bash
+pip install --user -r requirements.txt
 ```
 
-**Note:** `settings/` and `HFOScores/` directories contain user-generated configuration and output data. These are created automatically on first run and should not be committed to version control.
+**ImportError when running STLAR**
+- Ensure all dependencies installed: `pip install -r requirements.txt --upgrade`
+- Check you're in the STLAR directory: `pwd` (macOS/Linux) or `cd` (Windows)
+
+---
 
 ## Quick Start
 
-### GUI Applications
+### 3 Ways to Use STLAR
 
-**HFO Analysis (Temporal)**
+#### 1️⃣ GUI (Easiest - Point & Click)
+
+**Launch the HFO Analysis GUI:**
 ```bash
 python -m stlar gui
 ```
+Then open a data file and adjust detection parameters with sliders.
 
-**Spatial Spectral Mapper**
+**Launch the Spatial Mapper GUI:**
 ```bash
 python -m stlar spatial-gui
 ```
 
-### Command-Line Interface (CLI)
+#### 2️⃣ Command Line (Batch Processing)
 
-All STLAR tools are unified under a single CLI entry point:
+Process multiple files automatically:
 
 ```bash
-python -m stlar <command> [options]
+# Detect HFOs using Hilbert method
+python -m stlar hilbert-batch -f mydata/recording.eeg
+
+# Process entire directory of files
+python -m stlar hilbert-batch -f mydata/
+
+# Use consensus voting (more reliable)
+python -m stlar consensus-batch -f mydata/ --voting-strategy strict
+
+# Spatial spectral mapping
+python -m stlar batch-ssm mydata/ --ppm 595
 ```
 
-**HFO Detection Commands:**
-- `hilbert-batch` - Hilbert envelope detection
-- `ste-batch` - Short-term energy (RMS) detection
-- `mni-batch` - Montreal Neurological Institute detection
-- `consensus-batch` - Multi-algorithm consensus voting
-- `dl-batch` - Deep learning classification
+Results save to `HFOScores/` by default. See [CLI Reference](#cli-reference) for all commands and options.
 
-**Spatial Mapping Commands:**
-- `batch-ssm` - Batch spatial spectral mapper
+#### 3️⃣ Python API (Advanced)
 
-See [CLI Reference](#cli-reference) section below for detailed syntax.
-
-### Python API
 ```python
-from stlar.core.analysis import TemporalAnalyzer, SpatialAnalyzer
+from hfoGUI.core.Detector import Detector
 
-# Temporal analysis
-temporal = TemporalAnalyzer()
-ripples = temporal.detect_ripples(lfp_data)
+detector = Detector('mydata.eeg')
+ripples = detector.detect_ripples(method='hilbert')
+print(f"Found {len(ripples)} ripples")
+```
 
-# Spatial analysis
-spatial = SpatialAnalyzer()
-heatmaps = spatial.create_frequency_maps(lfp_data, position_data)
+### File Format Support
+
+- **.eeg** - Tint format (most common)
+- **.egf** - Intan format with embedded tracking
+- **.edf** - Standard EDF format
+
+### Project Structure
+```
+STLAR/
+├── hfoGUI/           # HFO detection (temporal analysis)
+├── spatial_mapper/   # Spatial spectral mapping
+├── stlar/            # Main command-line dispatcher
+├── docs/             # Documentation & guides
+│   ├── TECHNICAL_REFERENCE.md     # Algorithms & formulas (for scientists)
+│   ├── CONSENSUS_DETECTION.md     # Consensus voting details
+│   ├── CONSENSUS_QUICKSTART.md    # Quick guide
+│   └── CONSENSUS_SUMMARY.md       # Summary table
+├── tests/            # Unit tests
+├── settings/         # User config (auto-created)
+├── HFOScores/        # Output directory (auto-created)
+└── requirements.txt  # Dependencies
 ```
 
 ## CLI Reference
 
-STLAR provides a unified command-line interface for batch processing HFO detection and spatial mapping on multiple files.
+### Overview
 
-### Invocation
+The command-line interface (CLI) allows batch processing of multiple files with consistent parameters. All commands use the format:
 
-All batch commands are invoked through:
 ```bash
 python -m stlar <command> [options]
 ```
 
-### File Input Modes
+**Supported commands:**
+- **HFO Detection:** `hilbert-batch`, `ste-batch`, `mni-batch`, `consensus-batch`, `dl-batch`
+- **Spatial Mapping:** `batch-ssm`
 
-All commands support both **single file** and **directory (batch)** modes:
+**Key features:**
+- ✅ Single-file or directory (recursive) processing
+- ✅ Auto-detects .eeg and .egf files
+- ✅ Progress tracking with `-v` (verbose) flag
+- ✅ Customizable output directory with `-o`
+- ✅ Reproducible with saved settings JSON files
 
-- **Single file:** Process one .eeg or .egf file
-- **Directory (recursive):** Automatically discovers all .eeg and .egf files in a directory tree
-- **Smart file pairing:** If both .eeg and .egf exist with the same basename, only .egf is processed (since .eeg files typically don't contain HFOs)
+### Output Format
 
-### Output Structure
-
-Detected events are saved as tab-separated values with the following structure:
+Each detection creates files in the output directory:
 
 ```
-ID#:          Start Time(ms):   Stop Time(ms):  Settings File:
-HIL1          1234.56           1245.67         /path/to/session_HIL_settings.json
-HIL2          2345.67           2356.78         /path/to/session_HIL_settings.json
+HFOScores/
+├── recording_name/
+│   ├── recording_name_HIL.txt          # Detected HFOs (tab-separated)
+│   ├── recording_name_HIL_settings.json  # Settings used (for reproducibility)
+│   ├── recording_name_HFO_scores.eoi   # EOI format (for Tint)
+│   └── ...
 ```
 
-**Locations:**
-- Custom output: `--output` directory if specified
-- Default: `HFOScores/<session_name>/<session_name>_<METHOD>.txt`
+**Output file format:**
+```
+ID#     Start(ms)    Stop(ms)     Peak(µV)   Duration(ms)
+HIL1    1234.56      1245.67      125.3      11.11
+HIL2    2345.67      2356.78      118.9      11.11
+...
+```
 
-Each detection run saves corresponding settings in a JSON file for reproducibility.
+**Common options across all commands:**
+- `-f, --file` - Input file or directory (required)
+- `-o, --output` - Where to save results (default: `HFOScores/`)
+- `-v, --verbose` - Show progress details
+- `-s, --set-file` - Location of .set files for scaling calibration
+
+---
 
 ### Detection Methods
 
@@ -599,6 +672,43 @@ This project unifies:
 
 ### Spatial Spectral Mapper
 - [Spatial Mapper Guide](spatial_mapper/README.md)
+
+## Getting Help
+
+### Common Issues
+
+**Installation problems?**
+- Re-run: `pip install -r requirements.txt --upgrade`
+- Check Python version: `python --version` (should be 3.8+)
+- See Installation > Troubleshooting above
+
+**Detection not finding HFOs?**
+- Check you're using correct frequency band for your data
+- Lower the threshold (e.g., `--threshold-sd 2.5`)
+- Try different detection methods (consensus is most reliable)
+- See CLI Reference for parameter tuning guides
+
+**File format errors?**
+- Ensure files are .eeg or .egf format
+- Check file isn't corrupted: try opening in Tint first
+- Verify file path has no spaces or special characters
+
+**Need more details?**
+- 📖 **For scientists & engineers:** Read [docs/TECHNICAL_REFERENCE.md](docs/TECHNICAL_REFERENCE.md) for all algorithms, formulas, and implementation details
+- 📚 **For consensus voting:** Check [docs/CONSENSUS_DETECTION.md](docs/CONSENSUS_DETECTION.md) for theory
+- 📖 **Quick reference:** [docs/CONSENSUS_SUMMARY.md](docs/CONSENSUS_SUMMARY.md) has a quick comparison table
+- 🔧 Run with `-v` flag for verbose output
+
+### Report Issues
+
+Found a bug? Have a feature request?
+→ Open an issue: [github.com/HussainiLab/STLAR/issues](https://github.com/HussainiLab/STLAR/issues)
+
+Include:
+- What command you ran
+- Error message (full traceback)
+- Python version: `python --version`
+- Operating system
 
 ## License
 
