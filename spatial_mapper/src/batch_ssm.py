@@ -659,6 +659,9 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
                             occ_data = None
                             if 'bin_occupancy_timeseries' in binned_data:
                                 occ_data = binned_data['bin_occupancy_timeseries'][:, :, chunk_idx]
+                                total = np.sum(occ_data)
+                                if total > 0:
+                                    occ_data = (occ_data / total) * 100.0
                             else:
                                 occ = binned_data.get('bin_occupancy')
                                 if occ is not None:
@@ -667,7 +670,7 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
                                         occ_data = (occ / total) * 100.0
 
                             if occ_data is not None:
-                                im = ax_occ.pcolormesh(T, R, occ_data, cmap='turbo', shading='flat')
+                                im = ax_occ.pcolormesh(T, R, occ_data, cmap='turbo', shading='flat', vmin=0, vmax=100)
                                 ax_occ.set_title('Occupancy (%)')
                                 ax_occ.set_yticklabels([])
                                 ax_occ.set_xticklabels([])
@@ -710,8 +713,34 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
                             cbar = plt.colorbar(im, ax=ax, pad=0.05, shrink=0.8)
                             cbar.set_label('%', fontsize=8)
 
-                        # Occupancy slot
-                        for idx in range(len(bands), 8):
+                        # Occupancy slot (8th)
+                        if len(bands) < 8:
+                            ax_occ = ax_flat[7]
+                            occ_data = None
+                            if 'bin_occupancy_timeseries' in binned_data:
+                                occ_data = binned_data['bin_occupancy_timeseries'][:, :, chunk_idx]
+                                total = np.sum(occ_data)
+                                if total > 0:
+                                    occ_data = (occ_data / total) * 100.0
+                            else:
+                                occ = binned_data.get('bin_occupancy')
+                                if occ is not None:
+                                    total = np.sum(occ)
+                                    if total > 0:
+                                        occ_data = (occ / total) * 100.0
+
+                            if occ_data is not None:
+                                im = ax_occ.pcolormesh(T, R, occ_data, cmap='turbo', shading='flat', vmin=0, vmax=100)
+                                ax_occ.set_title('Occupancy (%)')
+                                ax_occ.set_yticklabels([])
+                                ax_occ.set_xticklabels([])
+                                ax_occ.grid(True, alpha=0.3)
+                                cbar = plt.colorbar(im, ax=ax_occ, pad=0.05, shrink=0.8)
+                                cbar.set_label('%', fontsize=8)
+                            else:
+                                ax_occ.axis('off')
+
+                        for idx in range(len(bands), 7):
                             ax_flat[idx].axis('off')
 
                         plt.tight_layout()
@@ -740,8 +769,9 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
                         cbar1.set_ticklabels(bands, fontsize=8)
 
                         # EOI distribution
-                        H = np.zeros((2, 8))
+                        H = None
                         if eoi_segments and chunk_idx in eoi_segments:
+                            H = np.zeros((2, 8))
                             for seg in eoi_segments[chunk_idx]:
                                 xs = np.array(seg[0])
                                 ys = np.array(seg[1])
@@ -769,11 +799,14 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
                                 for ri, ti in zip(r_indices, th_indices):
                                     H[ri, ti] += 1
 
-                        im2 = axes[1].pcolormesh(T, R, H, cmap='turbo', shading='flat')
-                        axes[1].set_title(f'EOI Distribution - Chunk {chunk_idx+1:02d}')
-                        axes[1].set_yticklabels([])
-                        cbar2 = plt.colorbar(im2, ax=axes[1], pad=0.1)
-                        cbar2.set_label('EOI Count', fontsize=8)
+                        if H is None:
+                            axes[1].axis('off')
+                        else:
+                            im2 = axes[1].pcolormesh(T, R, H, cmap='turbo', shading='flat')
+                            axes[1].set_title(f'EOI Distribution - Chunk {chunk_idx+1:02d}')
+                            axes[1].set_yticklabels([])
+                            cbar2 = plt.colorbar(im2, ax=axes[1], pad=0.1)
+                            cbar2.set_label('EOI Count', fontsize=8)
 
                         plt.tight_layout()
                         jpg_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx+1:02d}_polar_dominant_eoi.jpg")
