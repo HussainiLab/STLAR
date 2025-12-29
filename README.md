@@ -66,19 +66,37 @@ STLAR/
 
 ## Quick Start
 
-### HFO Analysis GUI (Temporal)
+### GUI Applications
+
+**HFO Analysis (Temporal)**
 ```bash
-python -m stlar
+python -m stlar gui
 ```
 
-### Spatial Spectral Mapper GUI
+**Spatial Spectral Mapper**
 ```bash
-python spatial_mapper/src/main.py
+python -m stlar spatial-gui
 ```
 
-### Batch Processing (Command Line)
+### Command-Line Interface (CLI)
 
-See [Batch Processing](#batch-processing-cli) section below for detailed syntax.
+All STLAR tools are unified under a single CLI entry point:
+
+```bash
+python -m stlar <command> [options]
+```
+
+**HFO Detection Commands:**
+- `hilbert-batch` - Hilbert envelope detection
+- `ste-batch` - Short-term energy (RMS) detection
+- `mni-batch` - Montreal Neurological Institute detection
+- `consensus-batch` - Multi-algorithm consensus voting
+- `dl-batch` - Deep learning classification
+
+**Spatial Mapping Commands:**
+- `batch-ssm` - Batch spatial spectral mapper
+
+See [CLI Reference](#cli-reference) section below for detailed syntax.
 
 ### Python API
 ```python
@@ -93,15 +111,15 @@ spatial = SpatialAnalyzer()
 heatmaps = spatial.create_frequency_maps(lfp_data, position_data)
 ```
 
-## Batch Processing (CLI)
+## CLI Reference
 
-STLAR provides a powerful command-line interface for batch processing HFO detection on multiple files. The CLI supports 5 different detection algorithms that can be run individually or combined via consensus voting.
+STLAR provides a unified command-line interface for batch processing HFO detection and spatial mapping on multiple files.
 
 ### Invocation
 
 All batch commands are invoked through:
 ```bash
-python -m hfoGUI <command> [options]
+python -m stlar <command> [options]
 ```
 
 ### File Input Modes
@@ -135,14 +153,14 @@ Envelope-based detection using analytic signal (Hilbert transform).
 
 **Command:**
 ```bash
-python -m hfoGUI hilbert-batch -f <data_file_or_directory> [options]
+python -m stlar hilbert-batch -f <data_file_or_directory> [options]
 ```
 
 **Examples:**
 
 Single file:
 ```bash
-python -m hfoGUI hilbert-batch \
+python -m stlar hilbert-batch \
     -f data/recording.eeg \
     --threshold-sd 3.0 \
     --min-freq 80 \
@@ -153,7 +171,7 @@ python -m hfoGUI hilbert-batch \
 
 Directory batch with custom output:
 ```bash
-python -m hfoGUI hilbert-batch \
+python -m stlar hilbert-batch \
     -f /data/recording_session/ \
     -s /data/recording_session/ \
     -o results/hilbert_detections/ \
@@ -188,13 +206,13 @@ Fast detection based on RMS energy in sliding windows.
 
 **Command:**
 ```bash
-python -m hfoGUI ste-batch -f <data_file_or_directory> [options]
+python -m stlar ste-batch -f <data_file_or_directory> [options]
 ```
 
 **Examples:**
 
 ```bash
-python -m hfoGUI ste-batch \
+python -m stlar ste-batch \
     -f data/recording.eeg \
     --threshold 3.0 \
     --window-size 0.01 \
@@ -205,7 +223,7 @@ python -m hfoGUI ste-batch \
 
 Directory batch:
 ```bash
-python -m hfoGUI ste-batch \
+python -m stlar ste-batch \
     -f /data/recordings/ \
     -o results/ste_detections/ \
     --threshold 2.5 \
@@ -236,13 +254,13 @@ Percentile-based detection using baseline power statistics.
 
 **Command:**
 ```bash
-python -m hfoGUI mni-batch -f <data_file_or_directory> [options]
+python -m stlar mni-batch -f <data_file_or_directory> [options]
 ```
 
 **Examples:**
 
 ```bash
-python -m hfoGUI mni-batch \
+python -m stlar mni-batch \
     -f data/recording.eeg \
     --baseline-window 10.0 \
     --threshold-percentile 99.0 \
@@ -251,7 +269,7 @@ python -m hfoGUI mni-batch \
 
 Directory batch:
 ```bash
-python -m hfoGUI mni-batch \
+python -m stlar mni-batch \
     -f /data/recordings/ \
     -o results/mni_detections/ \
     --baseline-window 15.0 \
@@ -279,14 +297,14 @@ Combines Hilbert, STE, and MNI detections using configurable voting strategy.
 
 **Command:**
 ```bash
-python -m hfoGUI consensus-batch -f <data_file_or_directory> [options]
+python -m stlar consensus-batch -f <data_file_or_directory> [options]
 ```
 
 **Examples:**
 
 Basic consensus (majority voting):
 ```bash
-python -m hfoGUI consensus-batch \
+python -m stlar consensus-batch \
     -f data/recording.eeg \
     --voting-strategy majority \
     --overlap-threshold-ms 10.0
@@ -294,7 +312,7 @@ python -m hfoGUI consensus-batch \
 
 Strict consensus (all 3 methods must agree):
 ```bash
-python -m hfoGUI consensus-batch \
+python -m stlar consensus-batch \
     -f /data/recordings/ \
     -o results/consensus_detections/ \
     --voting-strategy strict \
@@ -307,7 +325,7 @@ python -m hfoGUI consensus-batch \
 
 Lenient consensus (any method detection):
 ```bash
-python -m hfoGUI consensus-batch \
+python -m stlar consensus-batch \
     -f data/recording.eeg \
     --voting-strategy any \
     --overlap-threshold-ms 15.0
@@ -341,13 +359,13 @@ Uses a pre-trained or custom neural network model for detection.
 
 **Command:**
 ```bash
-python -m hfoGUI dl-batch -f <data_file_or_directory> --model-path <model> [options]
+python -m stlar dl-batch -f <data_file_or_directory> --model-path <model> [options]
 ```
 
 **Examples:**
 
 ```bash
-python -m hfoGUI dl-batch \
+python -m stlar dl-batch \
     -f data/recording.eeg \
     --model-path models/hfo_detector.pt \
     --threshold 0.5 \
@@ -356,7 +374,7 @@ python -m hfoGUI dl-batch \
 
 Directory batch with custom threshold:
 ```bash
-python -m hfoGUI dl-batch \
+python -m stlar dl-batch \
     -f /data/recordings/ \
     -o results/dl_detections/ \
     --model-path models/hfo_detector.pt \
@@ -385,7 +403,7 @@ python -m hfoGUI dl-batch \
 **Example 1: Quick single-file screening**
 ```bash
 # Fast STE detection with verbose output
-python -m hfoGUI ste-batch \
+python -m stlar ste-batch \
     -f data/session_1.eeg \
     --threshold 2.5 \
     -v
@@ -394,7 +412,7 @@ python -m hfoGUI ste-batch \
 **Example 2: Batch directory with Hilbert (default settings)**
 ```bash
 # Process entire directory, save to HFOScores/
-python -m hfoGUI hilbert-batch \
+python -m stlar hilbert-batch \
     -f /data/rat_session/ \
     -s /data/rat_session/ \
     -v
@@ -403,7 +421,7 @@ python -m hfoGUI hilbert-batch \
 **Example 3: High-confidence consensus detection**
 ```bash
 # Strict consensus voting across directory
-python -m hfoGUI consensus-batch \
+python -m stlar consensus-batch \
     -f /data/recordings/ \
     -o /results/strict_consensus/ \
     --voting-strategy strict \
@@ -417,7 +435,7 @@ python -m hfoGUI consensus-batch \
 **Example 4: Deep learning on pre-processed files**
 ```bash
 # Use trained model on directory of files
-python -m hfoGUI dl-batch \
+python -m stlar dl-batch \
     -f /data/preprocessed/ \
     -o /results/dl_predictions/ \
     --model-path /models/my_trained_detector.pt \
@@ -462,6 +480,98 @@ Average per file:       249.4
 - **Too many false negatives:** Decrease threshold (e.g., `--threshold-sd 2.0` for Hilbert)
 - Try **consensus** voting with different methods to find balanced detections
 
+---
+
+## Spatial Mapping (batch-ssm)
+
+The `batch-ssm` command performs batch spatial spectral analysis on .egf files with animal tracking data. It computes power spectral density (PSD) across spatial positions and optionally exports binned analyses.
+
+### Basic Usage
+
+```bash
+# Single file
+python -m stlar batch-ssm data/session001.egf --ppm 595
+
+# Directory batch processing
+python -m stlar batch-ssm data/ --ppm 595 --chunk-size 60
+
+# With binned exports (4×4 grid)
+python -m stlar batch-ssm data/ --ppm 595 --export-binned-jpgs --export-binned-csvs
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `input_path` | str | *required* | Path to .egf file or directory containing .egf files |
+| `--ppm` | int | *required* | Pixels per meter for position calibration |
+| `--chunk-size` | int | 30 | Duration of each analysis chunk in seconds |
+| `--speed-filter` | float | 0 | Minimum speed threshold (cm/s) for filtering stationary periods |
+| `--window` | float | 1.0 | Spectral window duration in seconds |
+| `--export-binned-jpgs` | flag | False | Export spatial bin visualizations as JPEG images |
+| `--export-binned-csvs` | flag | False | Export binned spectral data as CSV files |
+
+### Examples
+
+**Process single session with default parameters:**
+```bash
+python -m stlar batch-ssm recordings/rat01_day1.egf --ppm 595
+```
+
+**Batch process directory with 60-second chunks:**
+```bash
+python -m stlar batch-ssm recordings/ --ppm 595 --chunk-size 60
+```
+
+**Apply speed filtering (exclude stationary periods):**
+```bash
+python -m stlar batch-ssm recordings/ --ppm 595 --speed-filter 5.0
+```
+
+**Export binned analyses for spatial correlation studies:**
+```bash
+python -m stlar batch-ssm recordings/ --ppm 595 \
+  --export-binned-jpgs \
+  --export-binned-csvs \
+  --chunk-size 60
+```
+
+### Output Structure
+
+batch-ssm creates a timestamped output directory for each session:
+
+```
+<session_name>_SSMoutput_<YYYYMMDD_HHMMSS>/
+├── <session>_sessionAverage.csv          # Session-wide PSD averages
+├── <session>_chunk_000_psd.csv           # Per-chunk PSD data
+├── <session>_chunk_001_psd.csv
+├── ...
+├── binned_analysis/                      # (if --export-binned-* used)
+│   ├── <session>_bin_0_0.csv            # Spatial bin PSDs
+│   ├── <session>_bin_0_1.csv
+│   ├── ...
+│   └── <session>_bin_visualization.jpg  # (if --export-binned-jpgs)
+```
+
+**CSV format:**
+- Columns: Frequency bins (e.g., 0.5 Hz, 1.0 Hz, ..., 250 Hz)
+- Rows: PSD values in (µV²/Hz) for each chunk or spatial bin
+
+### Troubleshooting
+
+**"No .egf files found"**
+- Verify directory contains .egf files (Tint format)
+- Check file permissions and path correctness
+
+**"Position data not found in .egf"**
+- Ensure tracking data is embedded in .egf file
+- Verify correct .pxyabw file was integrated during Intan conversion
+
+**Binned analysis produces empty bins**
+- Check if tracking covers full environment (bins may be outside tracked area)
+- Adjust `--speed-filter` threshold if filtering out too much data
+- Verify ppm calibration is correct (incorrect scaling affects spatial binning)
+
 ## Module Structure
 
 ### Temporal Analysis (HFO Detection)
@@ -471,7 +581,7 @@ Average per file:       249.4
 
 ### Spatial Analysis (Spectral Mapper)
 - Location: `spatial_mapper/`
-- Entry: `python spatial_mapper/src/main.py` (GUI) or `python spatial_mapper/src/batch_ssm.py` (CLI)
+- Entry: `python -m stlar spatial-gui` (GUI) or `python -m stlar batch-ssm` (CLI)
 - See: [spatial_mapper/README.md](spatial_mapper/README.md)
 
 ## Original Tools
@@ -501,3 +611,4 @@ GPL-3.0 License - see [LICENSE](LICENSE) file for details.
 ---
 
 **STLAR** - Advancing spatio-temporal understanding of neural oscillations 🧠
+
