@@ -643,6 +643,24 @@ def export_binned_analysis_to_csv(binned_data: dict, output_path: str, pos_x_chu
         import csv
     
     bands = binned_data['bands']
+
+    # Detect whether meaningful EOI data was provided; skip EOI exports otherwise
+    def _has_eoi_data(segments_dict):
+        if not segments_dict:
+            return False
+        try:
+            for seg_list in segments_dict.values():
+                if not seg_list:
+                    continue
+                # If any segment has at least one coordinate, treat as valid
+                for seg in seg_list:
+                    if seg and len(seg) >= 2 and (len(seg[0]) > 0 or len(seg[1]) > 0):
+                        return True
+        except Exception:
+            return False
+        return False
+
+    has_eoi_segments = _has_eoi_data(eoi_segments)
     
     # Precompute percent power across bands: (band power / total power per bin per chunk) * 100
     percent_power = {band: np.zeros_like(binned_data['bin_power_timeseries'][band]) for band in bands}
@@ -772,7 +790,7 @@ def export_binned_analysis_to_csv(binned_data: dict, output_path: str, pos_x_chu
 
         # EOIs per chunk if provided: compute and save
         eoi_file = None
-        if eoi_segments is not None:
+        if has_eoi_segments:
             n_chunks = binned_data['time_chunks']
             eoi_counts_per_chunk = np.zeros((4, 4, n_chunks))
             x_edges = binned_data.get('x_bin_edges')
@@ -832,7 +850,7 @@ def export_binned_analysis_to_csv(binned_data: dict, output_path: str, pos_x_chu
         csv_files.append(dom_out)
 
         # EOIs per chunk CSV if provided
-        if eoi_segments is not None:
+        if has_eoi_segments:
             n_chunks = binned_data['time_chunks']
             eoi_counts_per_chunk = np.zeros((4, 4, n_chunks))
             x_edges = binned_data.get('x_bin_edges')
@@ -1290,6 +1308,23 @@ def export_binned_analysis_jpgs(binned_data: dict, output_folder: str, base_name
         plt.close(fig)
         export_count += 1
 
+    # Helper: detect whether EOI segments have any coordinates
+    def _has_eoi_data(segments_dict):
+        if not isinstance(segments_dict, dict) or not segments_dict:
+            return False
+        try:
+            for seg_list in segments_dict.values():
+                if not seg_list:
+                    continue
+                for seg in seg_list:
+                    if seg and len(seg) >= 2 and (len(seg[0]) > 0 or len(seg[1]) > 0):
+                        return True
+        except Exception:
+            return False
+        return False
+
+    has_eoi_segments = _has_eoi_data(binned_data.get('eoi_segments'))
+
     # Export dominant band + EOI per chunk (combined)
     for chunk_idx in range(n_chunks):
         fig, axes = plt.subplots(1, 2, figsize=(12, 5))
@@ -1314,40 +1349,36 @@ def export_binned_analysis_jpgs(binned_data: dict, output_folder: str, base_name
 
         # EOI distribution (right)
         occ_hist = None
-        if isinstance(binned_data.get('eoi_segments'), dict):
-            # If caller provided eoi_segments inside binned_data
-            eoi_segments = binned_data.get('eoi_segments')
-        else:
-            eoi_segments = None
-
-        if eoi_segments and chunk_idx in eoi_segments:
-            segs = eoi_segments[chunk_idx]
-            # Try to compute bounds from binned_data if available
-            min_x = binned_data.get('min_x') if binned_data.get('min_x') is not None else 0
-            max_x = binned_data.get('max_x') if binned_data.get('max_x') is not None else 1
-            min_y = binned_data.get('min_y') if binned_data.get('min_y') is not None else 0
-            max_y = binned_data.get('max_y') if binned_data.get('max_y') is not None else 1
-            x_edges = np.linspace(min_x, max_x, 5)
-            y_edges = np.linspace(min_y, max_y, 5)
-            eoi_x_all = []
-            eoi_y_all = []
-            for seg in segs:
-                eoi_x_all.extend(seg[0])
-                eoi_y_all.extend(seg[1])
-            if eoi_x_all:
-                H, _, _ = np.histogram2d(eoi_x_all, eoi_y_all, bins=[x_edges, y_edges])
-                occ_hist = np.flipud(H.T)
+        if has_eoi_segments:
+            eoi_segments = binned_data.get('eoi_segments') if isinstance(binned_data.get('eoi_segments'), dict) else None
+            if eoi_segments and chunk_idx in eoi_segments:
+                segs = eoi_segments[chunk_idx]
+                # Try to compute bounds from binned_data if available
+                min_x = binned_data.get('min_x') if binned_data.get('min_x') is not None else 0
+                max_x = binned_data.get('max_x') if binned_data.get('max_x') is not None else 1
+                min_y = binned_data.get('min_y') if binned_data.get('min_y') is not None else 0
+                max_y = binned_data.get('max_y') if binned_data.get('max_y') is not None else 1
+                x_edges = np.linspace(min_x, max_x, 5)
+                y_edges = np.linspace(min_y, max_y, 5)
+                eoi_x_all = []
+                eoi_y_all = []
+                for seg in segs:
+                    eoi_x_all.extend(seg[0])
+                    eoi_y_all.extend(seg[1])
+                if eoi_x_all:
+                    H, _, _ = np.histogram2d(eoi_x_all, eoi_y_all, bins=[x_edges, y_edges])
+                    occ_hist = np.flipud(H.T)
 
         if occ_hist is None:
-            occ_hist = np.zeros((4, 4))
-
-        im2 = axes[1].imshow(occ_hist, cmap='turbo', aspect='equal', interpolation='nearest')
-        axes[1].set_title(f'EOI Distribution - Chunk {chunk_idx + 1:02d}')
-        axes[1].set_xticks([0, 1, 2, 3])
-        axes[1].set_yticks([0, 1, 2, 3])
-        axes[1].grid(True, alpha=0.3)
-        cbar2 = plt.colorbar(im2, ax=axes[1])
-        cbar2.set_label('EOI Count', fontsize=9)
+            axes[1].axis('off')
+        else:
+            im2 = axes[1].imshow(occ_hist, cmap='turbo', aspect='equal', interpolation='nearest')
+            axes[1].set_title(f'EOI Distribution - Chunk {chunk_idx + 1:02d}')
+            axes[1].set_xticks([0, 1, 2, 3])
+            axes[1].set_yticks([0, 1, 2, 3])
+            axes[1].grid(True, alpha=0.3)
+            cbar2 = plt.colorbar(im2, ax=axes[1])
+            cbar2.set_label('EOI Count', fontsize=9)
 
         plt.tight_layout()
         jpg_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx+1:02d}_dominant_eoi.jpg")
