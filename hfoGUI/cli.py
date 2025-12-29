@@ -475,6 +475,15 @@ def run_consensus_batch(args: argparse.Namespace):
 
 
 def run_dl_batch(args: argparse.Namespace):
+    # Optional dependency check: Torch required for DL detection
+    try:
+        import torch  # noqa: F401
+    except Exception:
+        print("\nDeep Learning detection requires PyTorch.\n")
+        print("Install with: pip install torch")
+        print("Optional (for ONNX models): pip install onnxruntime")
+        print("\nTip: Activate your environment first (e.g., 'conda activate stlar').")
+        return
     _run_batch_job(args, _process_dl_file)
 
 
