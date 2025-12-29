@@ -2253,6 +2253,10 @@ class frequencyPlotWindow(QWidget):
                 # Draw bins
                 self._draw_tracking_bins(self.tracking_canvas.axes)
             
+            # Precompute EOI info first so we can decide whether to show occupancy labels
+            eoi_info = self._compute_tracking_eoi_counts(is_full, value)
+            occ_info = self._compute_tracking_occupancy(is_full, value)
+            
             if is_full:
                 # Plot all chunks
                 x_all = [item for sublist in self.tracking_data[0] for item in sublist]
@@ -2272,6 +2276,24 @@ class frequencyPlotWindow(QWidget):
                 if value in self.eoi_segments:
                     for seg_x, seg_y in self.eoi_segments[value]:
                         self.tracking_canvas.axes.plot(seg_x, seg_y, color='red', linewidth=1.5, alpha=0.8)
+            
+            # Only show occupancy labels when no EOIs are present to avoid overlap
+            show_occ = False
+            if occ_info:
+                if not eoi_info:
+                    show_occ = True
+                else:
+                    vals = eoi_info.get('values')
+                    try:
+                        show_occ = (vals is None) or (np.sum(vals) <= 0)
+                    except Exception:
+                        show_occ = False
+            if show_occ:
+                self._add_tracking_occupancy_labels(self.tracking_canvas.axes, occ_info)
+
+            # Overlay EOI counts per bin (red), for chunk/full view
+            if eoi_info:
+                self._add_tracking_eoi_labels(self.tracking_canvas.axes, eoi_info)
             
             self.tracking_canvas.draw()
         # Reflect chunk and its nominal time range (consistent with binned slider)
@@ -2344,6 +2366,254 @@ class frequencyPlotWindow(QWidget):
                 ax.axvline(x, color='gray', linestyle='--', alpha=0.5, linewidth=0.8)
             for y in y_edges:
                 ax.axhline(y, color='gray', linestyle='--', alpha=0.5, linewidth=0.8)
+
+    def _compute_tracking_occupancy(self, is_full, chunk_idx):
+        '''Compute per-bin occupancy percentages for tracking plot.'''
+        if self.tracking_data is None or not hasattr(self, 'data_bounds'):
+            return None
+        min_x, max_x, min_y, max_y = self.data_bounds
+        is_polar = False
+        if hasattr(self, 'binned_data') and self.binned_data:
+            is_polar = (self.binned_data.get('type') == 'polar')
+        elif hasattr(self, 'arena_shape'):
+            is_polar = ("Circle" in self.arena_shape or "Ellipse" in self.arena_shape)
+        if is_full:
+            xs = np.concatenate(self.tracking_data[0]) if self.tracking_data[0] else np.array([])
+            ys = np.concatenate(self.tracking_data[1]) if self.tracking_data[1] else np.array([])
+        else:
+            if chunk_idx >= len(self.tracking_data[0]):
+                return None
+            xs = np.array(self.tracking_data[0][chunk_idx])
+            ys = np.array(self.tracking_data[1][chunk_idx])
+        if xs.size == 0 or ys.size == 0:
+            return None
+        if is_polar:
+            width = max_x - min_x
+            height = max_y - min_y
+            if width <= 0 or height <= 0:
+                return None
+            center_x = min_x + width/2
+            center_y = min_y + height/2
+            if self.binned_data and 'bin_occupancy_timeseries' in self.binned_data:
+                occ_data = None
+                if is_full:
+                    occ_data = np.sum(self.binned_data['bin_occupancy_timeseries'], axis=2)
+                else:
+                    occ_ts = self.binned_data['bin_occupancy_timeseries']
+                    if chunk_idx < occ_ts.shape[2]:
+                        occ_data = occ_ts[:, :, chunk_idx]
+                if occ_data is None:
+                    return None
+            else:
+                dx = xs - center_x
+                dy = ys - center_y
+                rx = width / 2.0 if width > 0 else 1.0
+                ry = height / 2.0 if height > 0 else 1.0
+                r_norm = np.sqrt((dx / rx) ** 2 + (dy / ry) ** 2)
+                theta = np.arctan2(dy, dx)
+                r_edges = np.array([0.0, 1.0 / np.sqrt(2), 1e9])
+                theta_edges = np.linspace(-np.pi, np.pi, 9)
+                occ_data, _, _ = np.histogram2d(r_norm, theta, bins=[r_edges, theta_edges])
+            total = np.sum(occ_data)
+            if total <= 0:
+                return None
+            occ_pct = (occ_data / total) * 100.0
+            return {
+                'is_polar': True,
+                'values': occ_pct,
+                'radius_edges': np.array([0.0, 1.0 / np.sqrt(2), 1.0]),
+                'angle_edges': np.linspace(-np.pi, np.pi, 9),
+                'center': (center_x, center_y),
+                'width': width,
+                'height': height
+            }
+        x_edges = np.linspace(min_x, max_x, 5)
+        y_edges = np.linspace(min_y, max_y, 5)
+        occ_counts, _, _ = np.histogram2d(xs, ys, bins=[x_edges, y_edges])
+        total = np.sum(occ_counts)
+        if total <= 0:
+            return None
+        occ_pct = (occ_counts / total) * 100.0
+        x_centers = 0.5 * (x_edges[:-1] + x_edges[1:])
+        y_centers = 0.5 * (y_edges[:-1] + y_edges[1:])
+        return {
+            'is_polar': False,
+            'values': occ_pct,
+            'x_centers': x_centers,
+            'y_centers': y_centers
+        }
+
+    def _add_tracking_occupancy_labels(self, ax, occ_info):
+        '''Overlay occupancy percent labels on the tracking plot.'''
+        if not occ_info or 'values' not in occ_info:
+            return
+        values = occ_info['values']
+        if np.sum(values) <= 0:
+            return
+        if occ_info.get('is_polar'):
+            center_x, center_y = occ_info['center']
+            width = occ_info['width']
+            height = occ_info['height']
+            r_edges = occ_info['radius_edges']
+            theta_edges = occ_info['angle_edges']
+            r_centers = 0.5 * (r_edges[:-1] + r_edges[1:])
+            theta_centers = 0.5 * (theta_edges[:-1] + theta_edges[1:])
+            for i, r in enumerate(r_centers):
+                for j, theta in enumerate(theta_centers):
+                    pct = values[i, j]
+                    if pct <= 0:
+                        continue
+                    r_clamped = min(r, 1.0)
+                    x = center_x + (width / 2.0) * r_clamped * np.cos(theta)
+                    y = center_y + (height / 2.0) * r_clamped * np.sin(theta)
+                    ax.text(x, y, f"{pct:.0f}%", fontsize=7, ha='center', va='center', color='#222',
+                            bbox=dict(boxstyle='round,pad=0.15', facecolor='white', alpha=0.65, linewidth=0))
+        else:
+            x_centers = occ_info['x_centers']
+            y_centers = occ_info['y_centers']
+            for i, xc in enumerate(x_centers):
+                for j, yc in enumerate(y_centers):
+                    pct = values[i, j]
+                    if pct <= 0:
+                        continue
+                    ax.text(xc, yc, f"{pct:.0f}%", fontsize=7, ha='center', va='center', color='#222',
+                            bbox=dict(boxstyle='round,pad=0.15', facecolor='white', alpha=0.65, linewidth=0))
+
+    def _compute_tracking_eoi_counts(self, is_full, chunk_idx):
+        '''Compute per-bin event counts (not position samples) for tracking plot.'''
+        if not hasattr(self, 'data_bounds') or not hasattr(self, 'eoi_segments') or not self.eoi_segments:
+            return None
+        min_x, max_x, min_y, max_y = self.data_bounds
+        is_polar = False
+        if hasattr(self, 'binned_data') and self.binned_data:
+            is_polar = (self.binned_data.get('type') == 'polar')
+        elif hasattr(self, 'arena_shape'):
+            is_polar = ("Circle" in self.arena_shape or "Ellipse" in self.arena_shape)
+
+        # Gather EOI segments (each segment = one event)
+        event_segments = []
+        if is_full:
+            for _, segments in self.eoi_segments.items():
+                event_segments.extend(segments)
+        else:
+            if chunk_idx in self.eoi_segments:
+                event_segments = self.eoi_segments[chunk_idx]
+
+        if not event_segments:
+            return None
+
+        if is_polar:
+            width = max_x - min_x
+            height = max_y - min_y
+            if width <= 0 or height <= 0:
+                return None
+            center_x = min_x + width/2
+            center_y = min_y + height/2
+            
+            # Count events per bin (each event counted once in bins it touches)
+            event_counts = np.zeros((2, 8))
+            r_edges = np.array([0.0, 1.0 / np.sqrt(2), 1e9])
+            theta_edges = np.linspace(-np.pi, np.pi, 9)
+            
+            for seg_x, seg_y in event_segments:
+                if len(seg_x) == 0 or len(seg_y) == 0:
+                    continue
+                xs = np.asarray(seg_x)
+                ys = np.asarray(seg_y)
+                dx = xs - center_x
+                dy = ys - center_y
+                rx = width / 2.0 if width > 0 else 1.0
+                ry = height / 2.0 if height > 0 else 1.0
+                r_norm = np.sqrt((dx / rx) ** 2 + (dy / ry) ** 2)
+                theta = np.arctan2(dy, dx)
+                
+                # Determine which bins this event touches
+                r_indices = np.digitize(r_norm, r_edges) - 1
+                r_indices = np.clip(r_indices, 0, 1)
+                theta_indices = np.digitize(theta, theta_edges) - 1
+                theta_indices = np.clip(theta_indices, 0, 7)
+                
+                # Count this event once per unique bin it touches
+                unique_bins = set(zip(r_indices, theta_indices))
+                for ri, ti in unique_bins:
+                    event_counts[ri, ti] += 1
+            
+            return {
+                'is_polar': True,
+                'values': event_counts,
+                'radius_edges': np.array([0.0, 1.0 / np.sqrt(2), 1.0]),
+                'angle_edges': theta_edges,
+                'center': (center_x, center_y),
+                'width': width,
+                'height': height
+            }
+
+        # Cartesian (4x4) - count events per bin
+        x_edges = np.linspace(min_x, max_x, 5)
+        y_edges = np.linspace(min_y, max_y, 5)
+        event_counts = np.zeros((4, 4))
+        
+        for seg_x, seg_y in event_segments:
+            if len(seg_x) == 0 or len(seg_y) == 0:
+                continue
+            xs = np.asarray(seg_x)
+            ys = np.asarray(seg_y)
+            
+            # Determine which bins this event touches
+            x_indices = np.digitize(xs, x_edges) - 1
+            x_indices = np.clip(x_indices, 0, 3)
+            y_indices = np.digitize(ys, y_edges) - 1
+            y_indices = np.clip(y_indices, 0, 3)
+            
+            # Count this event once per unique bin it touches
+            unique_bins = set(zip(x_indices, y_indices))
+            for xi, yi in unique_bins:
+                event_counts[xi, yi] += 1
+        
+        x_centers = 0.5 * (x_edges[:-1] + x_edges[1:])
+        y_centers = 0.5 * (y_edges[:-1] + y_edges[1:])
+        return {
+            'is_polar': False,
+            'values': event_counts,
+            'x_centers': x_centers,
+            'y_centers': y_centers
+        }
+
+    def _add_tracking_eoi_labels(self, ax, eoi_info):
+        '''Overlay EOI count labels (red) on the tracking plot.'''
+        if not eoi_info or 'values' not in eoi_info:
+            return
+        values = eoi_info['values']
+        if np.sum(values) <= 0:
+            return
+        if eoi_info.get('is_polar'):
+            center_x, center_y = eoi_info['center']
+            width = eoi_info['width']
+            height = eoi_info['height']
+            r_edges = eoi_info['radius_edges']
+            theta_edges = eoi_info['angle_edges']
+            r_centers = 0.5 * (r_edges[:-1] + r_edges[1:])
+            theta_centers = 0.5 * (theta_edges[:-1] + theta_edges[1:])
+            for i, r in enumerate(r_centers):
+                for j, theta in enumerate(theta_centers):
+                    cnt = values[i, j]
+                    if cnt <= 0:
+                        continue
+                    r_clamped = min(r, 1.0)
+                    x = center_x + (width / 2.0) * r_clamped * np.cos(theta)
+                    y = center_y + (height / 2.0) * r_clamped * np.sin(theta)
+                    ax.text(x, y, f"{int(cnt)}", fontsize=7, ha='center', va='center', color='red',
+                            bbox=dict(boxstyle='round,pad=0.15', facecolor='white', alpha=0.6, linewidth=0))
+        else:
+            x_centers = eoi_info['x_centers']
+            y_centers = eoi_info['y_centers']
+            for i, xc in enumerate(x_centers):
+                for j, yc in enumerate(y_centers):
+                    cnt = values[i, j]
+                    if cnt <= 0:
+                        continue
+                    ax.text(xc, yc, f"{int(cnt)}", fontsize=7, ha='center', va='center', color='red',
+                            bbox=dict(boxstyle='round,pad=0.15', facecolor='white', alpha=0.6, linewidth=0))
 
     def _calculate_average_pixmap(self, pixmaps):
         '''Average a list of QPixmaps'''
@@ -2505,31 +2775,54 @@ class frequencyPlotWindow(QWidget):
             return
 
         try:
-            eois = []
-            with open(self.eoi_file_arg, 'r') as f:
-                reader = csv.reader(f)
-                for row in reader:
-                    if not row: continue
-                    
-                    # Handle tab separation if csv reader didn't split it
-                    if len(row) == 1 and '\t' in row[0]:
-                        parts = row[0].split('\t')
-                    else:
-                        parts = row
-                        
-                    try:
-                        # Try parsing as (Start, Stop) - e.g. temp file (seconds)
-                        start = float(parts[0])
-                        stop = float(parts[1])
-                        eois.append((start, stop))
-                    except (ValueError, IndexError):
-                        # Try parsing as (ID, Start, Stop) - e.g. HFO score file (ms)
-                        try:
-                            start = float(parts[1]) / 1000.0
-                            stop = float(parts[2]) / 1000.0
-                            eois.append((start, stop))
-                        except (ValueError, IndexError):
+            import re
+            def extract_numbers(tokens):
+                nums = []
+                for tok in tokens:
+                    # Split by common delimiters inside token as well
+                    for sub in re.split(r"[\s,;]+", tok.strip()):
+                        if not sub:
                             continue
+                        try:
+                            nums.append(float(sub))
+                        except ValueError:
+                            # Drop non-numeric (headers like 'Start(ms)')
+                            pass
+                return nums
+
+            eois = []
+            with open(self.eoi_file_arg, 'r', encoding='utf-8', errors='ignore') as f:
+                for raw_line in f:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    # Skip header/comment lines
+                    if line.startswith('#') or re.match(r"^[A-Za-z]", line):
+                        continue
+                    # Tokenize by broad delimiters
+                    tokens = re.split(r"[\t,;]+|\s{2,}", line)
+                    nums = extract_numbers(tokens)
+                    if len(nums) < 2:
+                        continue
+                    # Choose start/stop: if 3+, assume first is ID then next two are times
+                    if len(nums) >= 3:
+                        start_val, stop_val = nums[1], nums[2]
+                    else:
+                        start_val, stop_val = nums[0], nums[1]
+                    # Detect units: if values look like ms compared to session duration, convert
+                    session_sec = None
+                    try:
+                        if self.pos_t is not None and len(self.pos_t):
+                            session_sec = float(self.pos_t[-1])
+                        elif hasattr(self, 'binned_data') and self.binned_data and 'duration' in self.binned_data:
+                            session_sec = float(self.binned_data['duration'])
+                    except Exception:
+                        session_sec = None
+                    if session_sec and (start_val > session_sec * 5 or stop_val > session_sec * 5):
+                        # Heuristic: values far larger than session seconds → treat as ms
+                        start_val /= 1000.0
+                        stop_val /= 1000.0
+                    eois.append((start_val, stop_val))
             
             if not eois or self.tracking_data is None:
                 return
