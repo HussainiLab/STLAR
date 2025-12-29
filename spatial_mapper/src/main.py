@@ -688,7 +688,7 @@ class BinnedAnalysisWindow(QDialog):
         if occ_data is not None:
              total = np.sum(occ_data)
              if total > 0: occ_data = (occ_data / total) * 100.0
-             im = ax_occ.imshow(occ_data, cmap='turbo', aspect='equal', interpolation='nearest')
+             im = ax_occ.imshow(occ_data, cmap='turbo', aspect='equal', interpolation='nearest', vmin=0, vmax=100)
              ax_occ.set_title('Occupancy (%)')
              ax_occ.set_xticks([0, 1, 2, 3])
              ax_occ.set_yticks([0, 1, 2, 3])
@@ -738,7 +738,10 @@ class BinnedAnalysisWindow(QDialog):
             
             # pcolormesh expects data to match grid cells
             # T, R shape is (3, 9). Data shape is (2, 8). Perfect.
-            im = ax.pcolormesh(T, R, data, cmap='turbo', shading='flat')
+            if show_percent:
+                im = ax.pcolormesh(T, R, data, cmap='turbo', shading='flat', vmin=0, vmax=100)
+            else:
+                im = ax.pcolormesh(T, R, data, cmap='turbo', shading='flat')
             
             ax.set_title(f'{band}')
             ax.set_yticklabels([])
@@ -746,9 +749,7 @@ class BinnedAnalysisWindow(QDialog):
             ax.grid(True, alpha=0.3)
             
             # Add colorbar
-            cbar = plt.colorbar(im, ax=ax, pad=0.1, shrink=0.8)
-            if not show_percent:
-                cbar.ax.yaxis.set_major_formatter(FuncFormatter(lambda x, pos: f'{x*1e-3:g}K' if x >= 1000 else f'{x:g}'))
+            cbar = plt.colorbar(im, ax=ax, pad=0.05, shrink=0.8)
             cbar.set_label('%' if show_percent else 'Power', fontsize=8)
 
         # 8th slot: Occupancy
@@ -761,12 +762,12 @@ class BinnedAnalysisWindow(QDialog):
             if occ_data is not None:
                  total = np.sum(occ_data)
                  if total > 0: occ_data = (occ_data / total) * 100.0
-                 im = ax_occ.pcolormesh(T, R, occ_data, cmap='turbo', shading='flat')
+                 im = ax_occ.pcolormesh(T, R, occ_data, cmap='turbo', shading='flat', vmin=0, vmax=100)
                  ax_occ.set_title('Occupancy (%)')
                  ax_occ.set_yticklabels([])
                  ax_occ.set_xticklabels([])
                  ax_occ.grid(True, alpha=0.3)
-                 cbar = plt.colorbar(im, ax=ax_occ, pad=0.1, shrink=0.8)
+                 cbar = plt.colorbar(im, ax=ax_occ, pad=0.05, shrink=0.8)
                  cbar.set_label('%', fontsize=8)
             else:
                  ax_occ.axis('off')
@@ -952,9 +953,10 @@ class BinnedAnalysisWindow(QDialog):
             for chunk_idx in range(n_chunks):
                 if self.binned_data.get('type') == 'polar':
                     fig, _ = self._create_polar_power_heatmap(chunk_idx, show_percent=False)
+                    jpg_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx+1:02d}_polar_power.jpg")
                 else:
                     fig, _ = self._create_power_heatmap(chunk_idx, show_percent=False)
-                jpg_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx+1:02d}_mean_power.jpg")
+                    jpg_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx+1:02d}_mean_power.jpg")
                 fig.savefig(jpg_path, format='jpg', pil_kwargs={'quality': 85}, bbox_inches='tight')
                 plt.close(fig)
                 export_count += 1
@@ -963,9 +965,10 @@ class BinnedAnalysisWindow(QDialog):
             for chunk_idx in range(n_chunks):
                 if self.binned_data.get('type') == 'polar':
                     fig, _ = self._create_polar_power_heatmap(chunk_idx, show_percent=True)
+                    jpg_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx+1:02d}_polar_percent.jpg")
                 else:
                     fig, _ = self._create_power_heatmap(chunk_idx, show_percent=True)
-                jpg_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx+1:02d}_percent_power.jpg")
+                    jpg_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx+1:02d}_percent_power.jpg")
                 fig.savefig(jpg_path, format='jpg', pil_kwargs={'quality': 85}, bbox_inches='tight')
                 plt.close(fig)
                 export_count += 1
@@ -974,9 +977,10 @@ class BinnedAnalysisWindow(QDialog):
             for chunk_idx in range(n_chunks):
                 if self.binned_data.get('type') == 'polar':
                     fig, _ = self._create_polar_dominant_eoi_heatmap(chunk_idx)
+                    jpg_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx+1:02d}_polar_dominant_eoi.jpg")
                 else:
                     fig, _ = self._create_dominant_eoi_heatmap(chunk_idx)
-                jpg_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx+1:02d}_dominant_eoi.jpg")
+                    jpg_path = os.path.join(output_folder, f"{base_name}_chunk{chunk_idx+1:02d}_dominant_eoi.jpg")
                 fig.savefig(jpg_path, format='jpg', pil_kwargs={'quality': 85}, bbox_inches='tight')
                 plt.close(fig)
                 export_count += 1
