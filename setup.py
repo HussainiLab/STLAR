@@ -31,7 +31,7 @@ setuptools.setup(
         'PyQt5',
         'pillow',
         'numpy',
-        'PyQtGraph',
+        'pyqtgraph',
         'scipy',
         'matplotlib',
         'pandas',
@@ -39,8 +39,12 @@ setuptools.setup(
     ],
     package_data={'stlar': ['img/*.png'], 'hfoGUI': ['img/*.png']},
     classifiers=[
-        "Programming Language :: Python :: 3.7 ",
-        "License :: OSI Approved :: GNU General Public License v3 (GPLv3) ",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
         "Operating System :: OS Independent",
     ],
 )
