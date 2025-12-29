@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import sys
 import traceback
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))  # point to repo root
 
 import hfoGUI.cli as cli
 
