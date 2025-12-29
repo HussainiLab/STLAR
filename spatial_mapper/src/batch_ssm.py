@@ -432,14 +432,16 @@ Examples:
             
             try:
                 process_single_file(
-                    electrophys_file, 
-                    pos_file, 
+                    electrophys_file,
+                    pos_file,
                     args.output or os.path.dirname(electrophys_file),
                     args.ppm,
                     args.chunk_size,
                     low_speed,
                     high_speed,
-                    args.window
+                    args.window,
+                    export_binned_jpgs=args.export_binned_jpgs,
+                    export_binned_csvs=args.export_binned_csvs
                 )
                 success_count += 1
             except Exception as e:
