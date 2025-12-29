@@ -40,6 +40,12 @@ from PyQt5.QtWidgets import *
 from core.worker_thread.Worker import Worker
 
 matplotlib.use('Qt5Agg')
+
+# GUI colormap defaults (GUI path only; batch uses spectral_functions constants)
+GUI_CMAP_POWER = 'turbo'
+GUI_CMAP_PERCENT = 'turbo'
+GUI_CMAP_OCCUPANCY = 'turbo'
+GUI_CMAP_DOMINANT = 'tab10'
     
 # =========================================================================== #
 
@@ -635,7 +641,7 @@ class BinnedAnalysisWindow(QDialog):
                 chunk_power = np.divide(chunk_power, total_power, where=total_power>0, 
                                        out=np.zeros_like(chunk_power)) * 100
             
-            im = axes[0, idx].imshow(chunk_power, cmap='turbo', aspect='equal', interpolation='nearest',
+            im = axes[0, idx].imshow(chunk_power, cmap=GUI_CMAP_POWER, aspect='equal', interpolation='nearest',
                                      vmin=vmin_all[band], vmax=vmax_all[band])
             axes[0, idx].set_title(f'{band}')
             axes[0, idx].set_xticks([0, 1, 2, 3])
@@ -656,7 +662,7 @@ class BinnedAnalysisWindow(QDialog):
                                 for b in bands)
                 chunk_power = np.divide(chunk_power, total_power, where=total_power>0, 
                                        out=np.zeros_like(chunk_power)) * 100
-            im = axes[1, idx].imshow(chunk_power, cmap='turbo', aspect='equal', interpolation='nearest',
+            im = axes[1, idx].imshow(chunk_power, cmap=GUI_CMAP_POWER, aspect='equal', interpolation='nearest',
                                      vmin=vmin_all[band], vmax=vmax_all[band])
             axes[1, idx].set_title(f'{band}')
             axes[1, idx].set_xticks([0, 1, 2, 3])
@@ -688,7 +694,7 @@ class BinnedAnalysisWindow(QDialog):
         if occ_data is not None:
              total = np.sum(occ_data)
              if total > 0: occ_data = (occ_data / total) * 100.0
-             im = ax_occ.imshow(occ_data, cmap='turbo', aspect='equal', interpolation='nearest', vmin=0, vmax=100)
+             im = ax_occ.imshow(occ_data, cmap=GUI_CMAP_OCCUPANCY, aspect='equal', interpolation='nearest', vmin=0, vmax=100)
              ax_occ.set_title('Occupancy (%)')
              ax_occ.set_xticks([0, 1, 2, 3])
              ax_occ.set_yticks([0, 1, 2, 3])
@@ -739,9 +745,9 @@ class BinnedAnalysisWindow(QDialog):
             # pcolormesh expects data to match grid cells
             # T, R shape is (3, 9). Data shape is (2, 8). Perfect.
             if show_percent:
-                im = ax.pcolormesh(T, R, data, cmap='turbo', shading='flat', vmin=0, vmax=100)
+                im = ax.pcolormesh(T, R, data, cmap=GUI_CMAP_PERCENT, shading='flat', vmin=0, vmax=100)
             else:
-                im = ax.pcolormesh(T, R, data, cmap='turbo', shading='flat')
+                im = ax.pcolormesh(T, R, data, cmap=GUI_CMAP_POWER, shading='flat')
             
             ax.set_title(f'{band}')
             ax.set_yticklabels([])
@@ -762,7 +768,7 @@ class BinnedAnalysisWindow(QDialog):
             if occ_data is not None:
                  total = np.sum(occ_data)
                  if total > 0: occ_data = (occ_data / total) * 100.0
-                 im = ax_occ.pcolormesh(T, R, occ_data, cmap='turbo', shading='flat', vmin=0, vmax=100)
+                 im = ax_occ.pcolormesh(T, R, occ_data, cmap=GUI_CMAP_OCCUPANCY, shading='flat', vmin=0, vmax=100)
                  ax_occ.set_title('Occupancy (%)')
                  ax_occ.set_yticklabels([])
                  ax_occ.set_xticklabels([])
@@ -793,7 +799,7 @@ class BinnedAnalysisWindow(QDialog):
                 band = dominant_chunk[x, y]
                 numeric_dominant[x, y] = band_map.get(band, 0)
         
-        im1 = axes[0].imshow(numeric_dominant, cmap='tab10', aspect='equal', interpolation='nearest', vmin=0, vmax=len(bands)-1)
+        im1 = axes[0].imshow(numeric_dominant, cmap=GUI_CMAP_DOMINANT, aspect='equal', interpolation='nearest', vmin=0, vmax=len(bands)-1)
         axes[0].set_title(f'Dominant Band - Chunk {chunk_idx + 1}')
         axes[0].set_xticks([0, 1, 2, 3])
         axes[0].set_yticks([0, 1, 2, 3])
@@ -821,7 +827,7 @@ class BinnedAnalysisWindow(QDialog):
             else:
                 H = np.zeros((4, 4))
             
-            im2 = axes[1].imshow(H, cmap='turbo', aspect='equal', interpolation='nearest')
+            im2 = axes[1].imshow(H, cmap=GUI_CMAP_OCCUPANCY, aspect='equal', interpolation='nearest')
             axes[1].set_title(f'EOI Distribution - Chunk {chunk_idx + 1}')
             axes[1].set_xticks([0, 1, 2, 3])
             axes[1].set_yticks([0, 1, 2, 3])
@@ -858,7 +864,7 @@ class BinnedAnalysisWindow(QDialog):
                 band = dominant_chunk[r_idx, s_idx]
                 numeric_dominant[r_idx, s_idx] = band_map.get(band, 0)
         
-        im1 = axes[0].pcolormesh(T, R, numeric_dominant, cmap='tab10', shading='flat',
+        im1 = axes[0].pcolormesh(T, R, numeric_dominant, cmap=GUI_CMAP_DOMINANT, shading='flat',
                                  vmin=0, vmax=len(bands)-1)
         axes[0].set_title(f'Dominant Band - Chunk {chunk_idx + 1}')
         axes[0].set_yticklabels([])
@@ -890,7 +896,7 @@ class BinnedAnalysisWindow(QDialog):
                     for ri, ti in zip(r_indices, th_indices):
                         H[ri, ti] += 1
             
-            im2 = axes[1].pcolormesh(T, R, H, cmap='turbo', shading='flat')
+            im2 = axes[1].pcolormesh(T, R, H, cmap=GUI_CMAP_OCCUPANCY, shading='flat')
             axes[1].set_title(f'EOI Distribution - Chunk {chunk_idx + 1}')
             axes[1].set_yticklabels([])
             cbar2 = plt.colorbar(im2, ax=axes[1], pad=0.1)
