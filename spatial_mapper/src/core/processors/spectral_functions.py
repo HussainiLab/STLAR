@@ -15,6 +15,12 @@ from scipy.signal import welch
 from .Tint_Matlab import bits2uV
 from ..data_loaders import get_output_filename
 
+# Batch colormap defaults (batch/CLI paths). GUI keeps its own set.
+BATCH_CMAP_POWER = 'turbo'
+BATCH_CMAP_PERCENT = 'turbo'
+BATCH_CMAP_OCCUPANCY = 'turbo'
+BATCH_CMAP_DOMINANT = 'tab10'
+
 # =========================================================================== # 
 
 def tot_power_in_fband(fft_xaxis: np.ndarray, fft_yaxis: np.ndarray, 
@@ -1084,7 +1090,7 @@ def visualize_binned_occupancy_and_dominant(binned_data: dict, chunk_idx: int = 
                 band = dominant_chunk[x, y]
                 numeric_dominant[x, y] = band_map.get(band, 0)
         
-        im2 = axes[1].imshow(numeric_dominant, cmap='tab10', aspect='auto', vmin=0, vmax=len(bands)-1)
+        im2 = axes[1].imshow(numeric_dominant, cmap=BATCH_CMAP_DOMINANT, aspect='auto', vmin=0, vmax=len(bands)-1)
         axes[1].set_title(title)
     else:
         # Show dominant band frequency across all chunks
@@ -1106,7 +1112,7 @@ def visualize_binned_occupancy_and_dominant(binned_data: dict, chunk_idx: int = 
                              key=lambda b: dominant_counts[b][x, y])
                 max_dominant[x, y] = band_map[max_band]
         
-        im2 = axes[1].imshow(max_dominant, cmap='tab10', aspect='auto', vmin=0, vmax=len(bands)-1)
+        im2 = axes[1].imshow(max_dominant, cmap=BATCH_CMAP_DOMINANT, aspect='auto', vmin=0, vmax=len(bands)-1)
         axes[1].set_title('Most Frequent Dominant Band (Across All Chunks)')
     
     axes[1].set_xticks([0, 1, 2, 3])
@@ -1173,7 +1179,7 @@ def export_binned_analysis_jpgs(binned_data: dict, output_folder: str, base_name
         # First row: First 4 bands
         for idx, band in enumerate(bands[:4]):
             chunk_power = binned_data['bin_power_timeseries'][band][:, :, chunk_idx]
-            im = axes[0, idx].imshow(chunk_power, cmap='turbo', aspect='equal', interpolation='nearest',
+            im = axes[0, idx].imshow(chunk_power, cmap=BATCH_CMAP_POWER, aspect='equal', interpolation='nearest',
                                      vmin=vmin_all[band], vmax=vmax_all[band])
             axes[0, idx].set_title(f'{band}')
             axes[0, idx].set_xticks([0, 1, 2, 3])
@@ -1187,7 +1193,7 @@ def export_binned_analysis_jpgs(binned_data: dict, output_folder: str, base_name
         remaining_bands = bands[4:]
         for idx, band in enumerate(remaining_bands):
             chunk_power = binned_data['bin_power_timeseries'][band][:, :, chunk_idx]
-            im = axes[1, idx].imshow(chunk_power, cmap='turbo', aspect='equal', interpolation='nearest',
+            im = axes[1, idx].imshow(chunk_power, cmap=BATCH_CMAP_POWER, aspect='equal', interpolation='nearest',
                                      vmin=vmin_all[band], vmax=vmax_all[band])
             axes[1, idx].set_title(f'{band}')
             axes[1, idx].set_xticks([0, 1, 2, 3])
@@ -1197,26 +1203,23 @@ def export_binned_analysis_jpgs(binned_data: dict, output_folder: str, base_name
             cbar.ax.yaxis.set_major_formatter(FuncFormatter(lambda x, pos: f'{x*1e-3:g}K' if x >= 1000 else f'{x:g}'))
             cbar.set_label('Power', fontsize=9)
 
-        # 8th slot: Occupancy (try timeseries first, else total occupancy)
+        # 8th slot: Occupancy (percent per chunk)
         ax_occ = axes[1, 3]
         occ_data = None
         if 'bin_occupancy_timeseries' in binned_data:
             occ_data = binned_data['bin_occupancy_timeseries'][:, :, chunk_idx]
+            occ_sum = np.sum(occ_data)
+            if occ_sum > 0:
+                occ_data = (occ_data / occ_sum) * 100.0
         else:
             occ = binned_data.get('bin_occupancy')
             if occ is not None:
-                # normalize to percent
                 total = np.sum(occ)
                 if total > 0:
                     occ_data = (occ / total) * 100.0
 
         if occ_data is not None:
-            total = np.sum(occ_data)
-            if total > 0:
-                occ_plot = occ_data if occ_data.max() <= 100 else (occ_data / total) * 100.0
-            else:
-                occ_plot = occ_data
-            im = ax_occ.imshow(occ_plot, cmap='turbo', aspect='equal', interpolation='nearest')
+            im = ax_occ.imshow(occ_data, cmap=BATCH_CMAP_OCCUPANCY, aspect='equal', interpolation='nearest', vmin=0, vmax=100)
             ax_occ.set_title('Occupancy (%)')
             ax_occ.set_xticks([0, 1, 2, 3])
             ax_occ.set_yticks([0, 1, 2, 3])
@@ -1257,7 +1260,7 @@ def export_binned_analysis_jpgs(binned_data: dict, output_folder: str, base_name
 
         # Display bands
         for idx, band in enumerate(bands[:4]):
-            im = axes[0, idx].imshow(percent_power_chunk[band], cmap='turbo', aspect='equal', interpolation='nearest', vmin=0, vmax=100)
+            im = axes[0, idx].imshow(percent_power_chunk[band], cmap=BATCH_CMAP_PERCENT, aspect='equal', interpolation='nearest', vmin=0, vmax=100)
             axes[0, idx].set_title(f'{band}')
             axes[0, idx].set_xticks([0, 1, 2, 3])
             axes[0, idx].set_yticks([0, 1, 2, 3])
@@ -1267,7 +1270,7 @@ def export_binned_analysis_jpgs(binned_data: dict, output_folder: str, base_name
 
         remaining_bands = bands[4:]
         for idx, band in enumerate(remaining_bands):
-            im = axes[1, idx].imshow(percent_power_chunk[band], cmap='turbo', aspect='equal', interpolation='nearest', vmin=0, vmax=100)
+            im = axes[1, idx].imshow(percent_power_chunk[band], cmap=BATCH_CMAP_PERCENT, aspect='equal', interpolation='nearest', vmin=0, vmax=100)
             axes[1, idx].set_title(f'{band}')
             axes[1, idx].set_xticks([0, 1, 2, 3])
             axes[1, idx].set_yticks([0, 1, 2, 3])
@@ -1288,7 +1291,7 @@ def export_binned_analysis_jpgs(binned_data: dict, output_folder: str, base_name
                     occ_data = (occ / total) * 100.0
 
         if occ_data is not None:
-            im = ax_occ.imshow(occ_data, cmap='turbo', aspect='equal', interpolation='nearest', vmin=0, vmax=100)
+            im = ax_occ.imshow(occ_data, cmap=BATCH_CMAP_OCCUPANCY, aspect='equal', interpolation='nearest', vmin=0, vmax=100)
             ax_occ.set_title('Occupancy (%)')
             ax_occ.set_xticks([0, 1, 2, 3])
             ax_occ.set_yticks([0, 1, 2, 3])
@@ -1338,7 +1341,7 @@ def export_binned_analysis_jpgs(binned_data: dict, output_folder: str, base_name
                 band = dominant_chunk[x, y]
                 numeric_dominant[x, y] = band_map.get(band, 0)
 
-        im1 = axes[0].imshow(numeric_dominant, cmap='tab10', aspect='equal', interpolation='nearest', vmin=0, vmax=len(bands)-1)
+        im1 = axes[0].imshow(numeric_dominant, cmap=BATCH_CMAP_DOMINANT, aspect='equal', interpolation='nearest', vmin=0, vmax=len(bands)-1)
         axes[0].set_title(f'Dominant Band - Chunk {chunk_idx + 1:02d}')
         axes[0].set_xticks([0, 1, 2, 3])
         axes[0].set_yticks([0, 1, 2, 3])
@@ -1372,7 +1375,7 @@ def export_binned_analysis_jpgs(binned_data: dict, output_folder: str, base_name
         if occ_hist is None:
             axes[1].axis('off')
         else:
-            im2 = axes[1].imshow(occ_hist, cmap='turbo', aspect='equal', interpolation='nearest')
+            im2 = axes[1].imshow(occ_hist, cmap=BATCH_CMAP_OCCUPANCY, aspect='equal', interpolation='nearest')
             axes[1].set_title(f'EOI Distribution - Chunk {chunk_idx + 1:02d}')
             axes[1].set_xticks([0, 1, 2, 3])
             axes[1].set_yticks([0, 1, 2, 3])

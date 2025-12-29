@@ -17,7 +17,15 @@ import subprocess
 
 # Set matplotlib to non-interactive backend BEFORE importing anything else
 import matplotlib
-from core.processors.spectral_functions import export_binned_analysis_to_csv, visualize_binned_analysis, export_binned_analysis_jpgs
+from core.processors.spectral_functions import (
+    export_binned_analysis_to_csv,
+    visualize_binned_analysis,
+    export_binned_analysis_jpgs,
+    BATCH_CMAP_POWER,
+    BATCH_CMAP_PERCENT,
+    BATCH_CMAP_OCCUPANCY,
+    BATCH_CMAP_DOMINANT,
+)
 matplotlib.use('Agg')  # Use Agg backend - no display needed
 from matplotlib import pyplot as plt
 import os
@@ -645,7 +653,7 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
                                 break
                             ax = ax_flat[idx]
                             data = binned_data['bin_power_timeseries'][band][:, :, chunk_idx]
-                            im = ax.pcolormesh(T, R, data, cmap='turbo', shading='flat')
+                            im = ax.pcolormesh(T, R, data, cmap=BATCH_CMAP_POWER, shading='flat')
                             ax.set_title(band)
                             ax.set_yticklabels([])
                             ax.set_xticklabels([])
@@ -670,7 +678,7 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
                                         occ_data = (occ / total) * 100.0
 
                             if occ_data is not None:
-                                im = ax_occ.pcolormesh(T, R, occ_data, cmap='turbo', shading='flat', vmin=0, vmax=100)
+                                im = ax_occ.pcolormesh(T, R, occ_data, cmap=BATCH_CMAP_OCCUPANCY, shading='flat', vmin=0, vmax=100)
                                 ax_occ.set_title('Occupancy (%)')
                                 ax_occ.set_yticklabels([])
                                 ax_occ.set_xticklabels([])
@@ -705,7 +713,7 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
                             band_power = binned_data['bin_power_timeseries'][band][:, :, chunk_idx]
                             with np.errstate(divide='ignore', invalid='ignore'):
                                 pct = np.where(total > 0, (band_power / total) * 100.0, 0.0)
-                            im = ax.pcolormesh(T, R, pct, cmap='turbo', shading='flat', vmin=0, vmax=100)
+                            im = ax.pcolormesh(T, R, pct, cmap=BATCH_CMAP_PERCENT, shading='flat', vmin=0, vmax=100)
                             ax.set_title(band)
                             ax.set_yticklabels([])
                             ax.set_xticklabels([])
@@ -730,7 +738,7 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
                                         occ_data = (occ / total) * 100.0
 
                             if occ_data is not None:
-                                im = ax_occ.pcolormesh(T, R, occ_data, cmap='turbo', shading='flat', vmin=0, vmax=100)
+                                im = ax_occ.pcolormesh(T, R, occ_data, cmap=BATCH_CMAP_OCCUPANCY, shading='flat', vmin=0, vmax=100)
                                 ax_occ.set_title('Occupancy (%)')
                                 ax_occ.set_yticklabels([])
                                 ax_occ.set_xticklabels([])
@@ -762,7 +770,7 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
                         for ri in range(2):
                             for si in range(8):
                                 numeric_dominant[ri, si] = band_map.get(dominant_chunk[ri, si], 0)
-                        im1 = axes[0].pcolormesh(T, R, numeric_dominant, cmap='tab10', shading='flat', vmin=0, vmax=len(bands)-1)
+                        im1 = axes[0].pcolormesh(T, R, numeric_dominant, cmap=BATCH_CMAP_DOMINANT, shading='flat', vmin=0, vmax=len(bands)-1)
                         axes[0].set_title(f'Dominant Band - Chunk {chunk_idx+1:02d}')
                         axes[0].set_yticklabels([])
                         cbar1 = plt.colorbar(im1, ax=axes[0], ticks=range(len(bands)), pad=0.1)
@@ -802,7 +810,7 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
                         if H is None:
                             axes[1].axis('off')
                         else:
-                            im2 = axes[1].pcolormesh(T, R, H, cmap='turbo', shading='flat')
+                            im2 = axes[1].pcolormesh(T, R, H, cmap=BATCH_CMAP_OCCUPANCY, shading='flat')
                             axes[1].set_title(f'EOI Distribution - Chunk {chunk_idx+1:02d}')
                             axes[1].set_yticklabels([])
                             cbar2 = plt.colorbar(im2, ax=axes[1], pad=0.1)
