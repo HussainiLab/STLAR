@@ -9,6 +9,41 @@ from pathlib import Path
 import argparse
 from typing import List, Tuple
 import json
+import time
+import sys
+
+
+def _safe_write_csv(df, path, max_retries=3, delay=0.5):
+    """
+    Write DataFrame to CSV with retry logic for locked files.
+    
+    Args:
+        df: DataFrame to write
+        path: Output path
+        max_retries: Maximum number of retry attempts
+        delay: Delay in seconds between retries
+    
+    Raises:
+        PermissionError: If file remains locked after all retries
+    """
+    path = Path(path)
+    
+    for attempt in range(max_retries):
+        try:
+            df.to_csv(path, index=False)
+            return  # Success
+        except PermissionError as e:
+            if attempt < max_retries - 1:
+                print(f"Warning: {path.name} is locked (possibly open in Excel). Retrying in {delay}s... ({attempt + 1}/{max_retries})", file=sys.stderr)
+                time.sleep(delay)
+            else:
+                raise PermissionError(
+                    f"Cannot write to {path.name} - file is locked.\n"
+                    f"Please close the file in Excel or other applications and try again."
+                ) from e
+        except Exception as e:
+            # For other errors, fail immediately
+            raise
 
 
 def load_manifests(manifest_paths: List[str], subject_ids: List[str] = None) -> pd.DataFrame:
@@ -223,8 +258,8 @@ def save_splits(train_df: pd.DataFrame,
     train_file = output_path / "train.csv"
     val_file = output_path / "val.csv"
     
-    train_df[['segment_path', 'label']].to_csv(train_file, index=False)
-    val_df[['segment_path', 'label']].to_csv(val_file, index=False)
+    _safe_write_csv(train_df[['segment_path', 'label']], train_file)
+    _safe_write_csv(val_df[['segment_path', 'label']], val_file)
     
     print(f"\n{'='*60}")
     print(f"SAVED SPLITS")
@@ -257,8 +292,8 @@ def save_splits(train_df: pd.DataFrame,
     # Save full dataframes with subject info (for reference)
     train_full = output_path / "train_full.csv"
     val_full = output_path / "val_full.csv"
-    train_df.to_csv(train_full, index=False)
-    val_df.to_csv(val_full, index=False)
+    _safe_write_csv(train_df, train_full)
+    _safe_write_csv(val_df, val_full)
     print(f"✓ Full train (with metadata): {train_full}")
     print(f"✓ Full val (with metadata): {val_full}")
     

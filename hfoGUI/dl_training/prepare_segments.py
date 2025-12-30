@@ -3,6 +3,41 @@ import os
 from pathlib import Path
 import numpy as np
 import pandas as pd
+import time
+import sys
+
+
+def _safe_write_csv(df, path, max_retries=3, delay=0.5):
+    """
+    Write DataFrame to CSV with retry logic for locked files.
+    
+    Args:
+        df: DataFrame to write
+        path: Output path
+        max_retries: Maximum number of retry attempts
+        delay: Delay in seconds between retries
+    
+    Raises:
+        PermissionError: If file remains locked after all retries
+    """
+    path = Path(path)
+    
+    for attempt in range(max_retries):
+        try:
+            df.to_csv(path, index=False)
+            return  # Success
+        except PermissionError as e:
+            if attempt < max_retries - 1:
+                print(f"Warning: {path.name} is locked (possibly open in Excel). Retrying in {delay}s... ({attempt + 1}/{max_retries})", file=sys.stderr)
+                time.sleep(delay)
+            else:
+                raise PermissionError(
+                    f"Cannot write to {path.name} - file is locked.\n"
+                    f"Please close the file in Excel or other applications and try again."
+                ) from e
+        except Exception as e:
+            # For other errors, fail immediately
+            raise
 
 
 def extract_segments(signal, fs, eois_ms, out_dir: Path, prefix: str = "seg"):
@@ -48,7 +83,7 @@ def main():
             r['label'] = int(lbl)
 
     manifest_path = out_dir / 'manifest.csv'
-    pd.DataFrame(rows).to_csv(manifest_path, index=False)
+    _safe_write_csv(pd.DataFrame(rows), manifest_path)
     print(f"Wrote {len(rows)} segments to {out_dir} and manifest to {manifest_path}")
 
 
