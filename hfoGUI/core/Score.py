@@ -53,6 +53,222 @@ class ProgressSignal(QObject):
     progress = pyqtSignal(str)  # Emits status message like "Hilbert: 45%"
 
 
+class RegionPresetDialog(QtWidgets.QDialog):
+    """Dialog for reviewing and fine-tuning region preset parameters before applying."""
+    
+    def __init__(self, parent, region_name, preset_data):
+        super().__init__(parent)
+        self.setWindowTitle(f"Region Preset - {region_name}")
+        self.preset_data = preset_data.copy()
+        self.modified_preset = None
+        
+        self.setMinimumWidth(500)
+        layout = QtWidgets.QVBoxLayout()
+        
+        # Info label
+        info_label = QtWidgets.QLabel(
+            f"<b>Configure parameters for {region_name}</b><br>"
+            "Adjust the values below and click Apply to update detector settings."
+        )
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+        
+        # Scroll area for all parameters
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll_widget = QtWidgets.QWidget()
+        form_layout = QtWidgets.QFormLayout()
+        
+        self.field_widgets = {}
+        
+        # Frequency Bands section
+        bands_label = QtWidgets.QLabel("<b>Frequency Bands (Hz)</b>")
+        form_layout.addRow(bands_label)
+        
+        bands = preset_data.get('bands', {})
+        for band_name, (min_freq, max_freq) in bands.items():
+            row_widget = QtWidgets.QWidget()
+            row_layout = QtWidgets.QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            
+            min_spin = QtWidgets.QSpinBox()
+            min_spin.setRange(1, 1000)
+            min_spin.setValue(min_freq)
+            min_spin.setSuffix(" Hz")
+            
+            max_spin = QtWidgets.QSpinBox()
+            max_spin.setRange(1, 1000)
+            max_spin.setValue(max_freq)
+            max_spin.setSuffix(" Hz")
+            
+            row_layout.addWidget(QtWidgets.QLabel("Min:"))
+            row_layout.addWidget(min_spin)
+            row_layout.addWidget(QtWidgets.QLabel("Max:"))
+            row_layout.addWidget(max_spin)
+            row_layout.addStretch()
+            
+            self.field_widgets[f'bands_{band_name}_min'] = min_spin
+            self.field_widgets[f'bands_{band_name}_max'] = max_spin
+            
+            form_layout.addRow(f"  {band_name.replace('_', ' ').title()}:", row_widget)
+        
+        # Duration constraints section
+        form_layout.addRow(QtWidgets.QLabel(""))  # Spacer
+        durations_label = QtWidgets.QLabel("<b>Duration Constraints (ms)</b>")
+        form_layout.addRow(durations_label)
+        
+        durations = preset_data.get('durations', {})
+        for dur_name, dur_value in durations.items():
+            spin = QtWidgets.QSpinBox()
+            spin.setRange(1, 500)
+            spin.setValue(dur_value)
+            spin.setSuffix(" ms")
+            self.field_widgets[f'durations_{dur_name}'] = spin
+            display_name = dur_name.replace('_', ' ').replace('ms', '').title()
+            form_layout.addRow(f"  {display_name}:", spin)
+        
+        # Detection parameters section
+        form_layout.addRow(QtWidgets.QLabel(""))  # Spacer
+        detection_label = QtWidgets.QLabel("<b>Detection Parameters</b>")
+        form_layout.addRow(detection_label)
+        
+        # Threshold SD
+        threshold_spin = QtWidgets.QDoubleSpinBox()
+        threshold_spin.setRange(1.0, 10.0)
+        threshold_spin.setSingleStep(0.1)
+        threshold_spin.setValue(preset_data.get('threshold_sd', 3.5))
+        threshold_spin.setSuffix(" SD")
+        self.field_widgets['threshold_sd'] = threshold_spin
+        form_layout.addRow("  Threshold:", threshold_spin)
+        
+        # Epoch size
+        epoch_spin = QtWidgets.QSpinBox()
+        epoch_spin.setRange(10, 3600)
+        epoch_spin.setValue(preset_data.get('epoch_s', 300))
+        epoch_spin.setSuffix(" s")
+        self.field_widgets['epoch_s'] = epoch_spin
+        form_layout.addRow("  Epoch Size:", epoch_spin)
+        
+        # Behavioral gating section
+        form_layout.addRow(QtWidgets.QLabel(""))  # Spacer
+        behavior_label = QtWidgets.QLabel("<b>Behavioral Gating</b>")
+        form_layout.addRow(behavior_label)
+        
+        # Behavior gating checkbox
+        gating_check = QtWidgets.QCheckBox("Enable behavior gating")
+        gating_check.setChecked(preset_data.get('behavior_gating', True))
+        self.field_widgets['behavior_gating'] = gating_check
+        form_layout.addRow("  ", gating_check)
+        
+        # Speed threshold
+        speed_layout = QtWidgets.QHBoxLayout()
+        speed_widget = QtWidgets.QWidget()
+        speed_widget.setLayout(speed_layout)
+        
+        speed_min_spin = QtWidgets.QDoubleSpinBox()
+        speed_min_spin.setRange(0.0, 100.0)
+        speed_min_spin.setSingleStep(0.5)
+        speed_min_spin.setValue(preset_data.get('speed_threshold_min_cm_s', 0.0))
+        speed_min_spin.setSuffix(" cm/s")
+        self.field_widgets['speed_threshold_min_cm_s'] = speed_min_spin
+        
+        speed_max_spin = QtWidgets.QDoubleSpinBox()
+        speed_max_spin.setRange(0.0, 100.0)
+        speed_max_spin.setSingleStep(0.5)
+        speed_max_spin.setValue(preset_data.get('speed_threshold_max_cm_s', 5.0))
+        speed_max_spin.setSuffix(" cm/s")
+        self.field_widgets['speed_threshold_max_cm_s'] = speed_max_spin
+        
+        speed_layout.addWidget(QtWidgets.QLabel("Min:"))
+        speed_layout.addWidget(speed_min_spin)
+        speed_layout.addWidget(QtWidgets.QLabel("Max:"))
+        speed_layout.addWidget(speed_max_spin)
+        speed_layout.addStretch()
+        
+        form_layout.addRow("  Speed Range:", speed_widget)
+        
+        # DL Export options section
+        form_layout.addRow(QtWidgets.QLabel(""))  # Spacer
+        dl_label = QtWidgets.QLabel("<b>Deep Learning Export Options</b>")
+        form_layout.addRow(dl_label)
+        
+        dl_export = preset_data.get('dl_export', {})
+        
+        filter_dur_check = QtWidgets.QCheckBox("Filter by duration")
+        filter_dur_check.setChecked(dl_export.get('filter_by_duration', True))
+        self.field_widgets['dl_filter_by_duration'] = filter_dur_check
+        form_layout.addRow("  ", filter_dur_check)
+        
+        annotate_check = QtWidgets.QCheckBox("Annotate band")
+        annotate_check.setChecked(dl_export.get('annotate_band', True))
+        self.field_widgets['dl_annotate_band'] = annotate_check
+        form_layout.addRow("  ", annotate_check)
+        
+        dl_gating_check = QtWidgets.QCheckBox("Apply behavior gating")
+        dl_gating_check.setChecked(dl_export.get('behavior_gating', True))
+        self.field_widgets['dl_behavior_gating'] = dl_gating_check
+        form_layout.addRow("  ", dl_gating_check)
+        
+        scroll_widget.setLayout(form_layout)
+        scroll.setWidget(scroll_widget)
+        layout.addWidget(scroll)
+        
+        # Buttons
+        button_layout = QtWidgets.QHBoxLayout()
+        
+        apply_btn = QtWidgets.QPushButton("Apply")
+        apply_btn.clicked.connect(self.accept)
+        apply_btn.setDefault(True)
+        
+        cancel_btn = QtWidgets.QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        
+        button_layout.addStretch()
+        button_layout.addWidget(cancel_btn)
+        button_layout.addWidget(apply_btn)
+        
+        layout.addLayout(button_layout)
+        self.setLayout(layout)
+    
+    def get_modified_preset(self):
+        """Extract values from all widgets and return the modified preset."""
+        preset = self.preset_data.copy()
+        
+        # Update bands
+        bands = {}
+        band_names = list(self.preset_data.get('bands', {}).keys())
+        for band_name in band_names:
+            min_val = self.field_widgets[f'bands_{band_name}_min'].value()
+            max_val = self.field_widgets[f'bands_{band_name}_max'].value()
+            bands[band_name] = [min_val, max_val]
+        preset['bands'] = bands
+        
+        # Update durations
+        durations = {}
+        duration_names = list(self.preset_data.get('durations', {}).keys())
+        for dur_name in duration_names:
+            durations[dur_name] = self.field_widgets[f'durations_{dur_name}'].value()
+        preset['durations'] = durations
+        
+        # Update detection parameters
+        preset['threshold_sd'] = self.field_widgets['threshold_sd'].value()
+        preset['epoch_s'] = self.field_widgets['epoch_s'].value()
+        
+        # Update behavioral gating
+        preset['behavior_gating'] = self.field_widgets['behavior_gating'].isChecked()
+        preset['speed_threshold_min_cm_s'] = self.field_widgets['speed_threshold_min_cm_s'].value()
+        preset['speed_threshold_max_cm_s'] = self.field_widgets['speed_threshold_max_cm_s'].value()
+        
+        # Update DL export
+        preset['dl_export'] = {
+            'filter_by_duration': self.field_widgets['dl_filter_by_duration'].isChecked(),
+            'annotate_band': self.field_widgets['dl_annotate_band'].isChecked(),
+            'behavior_gating': self.field_widgets['dl_behavior_gating'].isChecked(),
+        }
+        
+        return preset
+
+
 class ScoreWindow(QtWidgets.QWidget):
     '''This is the window that will pop up to score the '''
 
@@ -280,9 +496,9 @@ class ScoreWindow(QtWidgets.QWidget):
         self.region_selector.setCurrentText(self.current_region)
         self.region_selector.currentTextChanged.connect(self._on_region_changed)
 
-        self.apply_region_btn = QtWidgets.QPushButton("Apply Region Preset")
-        self.apply_region_btn.setToolTip("Load region-specific defaults (bands, durations, behavioral gating, DL export filters).")
-        self.apply_region_btn.clicked.connect(self.applyRegionPreset)
+        self.apply_region_btn = QtWidgets.QPushButton("Region Preset")
+        self.apply_region_btn.setToolTip("Configure region-specific defaults (bands, durations, behavioral gating, DL export filters).")
+        self.apply_region_btn.clicked.connect(self.openRegionPresetDialog)
 
         region_layout = QtWidgets.QHBoxLayout()
         region_layout.addWidget(region_label)
@@ -683,7 +899,8 @@ class ScoreWindow(QtWidgets.QWidget):
                 'threshold_sd': 3.5,
                 'epoch_s': 300,
                 'behavior_gating': True,
-                'speed_threshold_cm_s': 5.0,
+                'speed_threshold_min_cm_s': 0.0,
+                'speed_threshold_max_cm_s': 5.0,
                 'dl_export': {
                     'filter_by_duration': True,
                     'annotate_band': True,
@@ -705,7 +922,8 @@ class ScoreWindow(QtWidgets.QWidget):
                 'threshold_sd': 4.0,
                 'epoch_s': 300,
                 'behavior_gating': True,
-                'speed_threshold_cm_s': 5.0,
+                'speed_threshold_min_cm_s': 0.0,
+                'speed_threshold_max_cm_s': 5.0,
                 'dl_export': {
                     'filter_by_duration': True,
                     'annotate_band': True,
@@ -727,7 +945,8 @@ class ScoreWindow(QtWidgets.QWidget):
                 'threshold_sd': 3.5,
                 'epoch_s': 300,
                 'behavior_gating': True,
-                'speed_threshold_cm_s': 5.0,
+                'speed_threshold_min_cm_s': 0.0,
+                'speed_threshold_max_cm_s': 5.0,
                 'dl_export': {
                     'filter_by_duration': True,
                     'annotate_band': True,
@@ -739,12 +958,20 @@ class ScoreWindow(QtWidgets.QWidget):
     def _on_region_changed(self, region_name):
         self.current_region = region_name
 
-    def applyRegionPreset(self):
+    def openRegionPresetDialog(self):
+        """Open dialog to review and modify region preset before applying."""
         profile = self.region_presets.get(self.current_region, {}).copy()
         if not profile:
             QtWidgets.QMessageBox.warning(self, "Preset Missing", f"No preset found for region: {self.current_region}")
             return
-
+        
+        dialog = RegionPresetDialog(self, self.current_region, profile)
+        if dialog.exec_() == QtWidgets.QDialog.Accepted:
+            modified_profile = dialog.get_modified_preset()
+            self.applyRegionPreset(modified_profile)
+    
+    def applyRegionPreset(self, profile):
+        """Apply the given profile to all detector parameter sets."""
         self.region_profile = profile
         self._update_hilbert_params_from_profile(profile)
         self._update_ste_params_from_profile(profile)
@@ -866,7 +1093,8 @@ class ScoreWindow(QtWidgets.QWidget):
         bands = profile.get('bands', {})
         ripple_band = bands.get('ripple', [80, 250])
         fast_band = bands.get('fast_ripple', [250, 500])
-        speed_threshold = profile.get('speed_threshold_cm_s', 5.0)
+        speed_min = profile.get('speed_threshold_min_cm_s', 0.0)
+        speed_max = profile.get('speed_threshold_max_cm_s', 5.0)
         do_behavior = profile.get('behavior_gating', False)
         export_opts = profile.get('dl_export', {})
         filter_by_duration = export_opts.get('filter_by_duration', True)
@@ -943,7 +1171,8 @@ class ScoreWindow(QtWidgets.QWidget):
                     seg_speed = speed_trace[s_idx:e_idx]
                     if seg_speed.size > 0:
                         mean_speed = float(np.nanmean(seg_speed))
-                        state = 'rest' if mean_speed < speed_threshold else 'active'
+                        # Speed within range [min, max] = 'rest', outside = 'active'
+                        state = 'rest' if (speed_min <= mean_speed <= speed_max) else 'active'
 
             filtered.append([s_ms, e_ms])
             metadata.append({
