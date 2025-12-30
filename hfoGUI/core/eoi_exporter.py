@@ -4,6 +4,41 @@ Utility to export detected EOIs to .npy segments and a CSV manifest for DL train
 import numpy as np
 import pandas as pd
 from pathlib import Path
+import time
+import sys
+
+
+def _safe_write_csv(df, path, max_retries=3, delay=0.5):
+    """
+    Write DataFrame to CSV with retry logic for locked files.
+    
+    Args:
+        df: DataFrame to write
+        path: Output path
+        max_retries: Maximum number of retry attempts
+        delay: Delay in seconds between retries
+    
+    Raises:
+        PermissionError: If file remains locked after all retries
+    """
+    path = Path(path)
+    
+    for attempt in range(max_retries):
+        try:
+            df.to_csv(path, index=False)
+            return  # Success
+        except PermissionError as e:
+            if attempt < max_retries - 1:
+                print(f"Warning: {path.name} is locked (possibly open in Excel). Retrying in {delay}s... ({attempt + 1}/{max_retries})", file=sys.stderr)
+                time.sleep(delay)
+            else:
+                raise PermissionError(
+                    f"Cannot write to {path.name} - file is locked.\n"
+                    f"Please close the file in Excel or other applications and try again."
+                ) from e
+        except Exception as e:
+            # For other errors, fail immediately
+            raise
 
 
 def export_eois_for_training(signal, fs, eois_ms, out_dir, prefix="seg", metadata=None):
@@ -45,7 +80,7 @@ def export_eois_for_training(signal, fs, eois_ms, out_dir, prefix="seg", metadat
         rows.append(row)
 
     manifest_path = out_dir / "manifest.csv"
-    pd.DataFrame(rows).to_csv(manifest_path, index=False)
+    _safe_write_csv(pd.DataFrame(rows), manifest_path)
     return manifest_path
 
 
@@ -87,5 +122,5 @@ def export_labeled_eois_for_training(signal, fs, eois_ms, labels, out_dir, prefi
         rows.append({"segment_path": str(seg_path), "label": int(lbl)})
 
     manifest_path = out_dir / "manifest.csv"
-    pd.DataFrame(rows).to_csv(manifest_path, index=False)
+    _safe_write_csv(pd.DataFrame(rows), manifest_path)
     return manifest_path
