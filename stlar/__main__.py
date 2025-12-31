@@ -14,6 +14,12 @@ Examples:
   python -m stlar hilbert-batch -f data/recording.egf
   python -m stlar consensus-batch -f data/recording.egf --voting-strategy majority
   
+  # Deep Learning Training Pipeline
+  python -m stlar prepare-dl --eoi-file eois.txt --egf-file data.egf -o ./prepared --split-train-val
+  python -m stlar train-dl --train prepared/manifest_train.csv --val prepared/manifest_val.csv --epochs 15 --out-dir models
+  python -m stlar export-dl --ckpt models/best.pt --onnx models/model.onnx --ts models/model.pt
+  python -m stlar dl-batch -f data/recording.egf --model-path models/model.pt
+  
   # Spatial Mapping
   python -m stlar batch-ssm data/recording.eeg --ppm 595 --chunk-size 180
   python -m stlar batch-ssm data/recordings/ --export-binned-jpgs --export-binned-csvs
@@ -37,6 +43,8 @@ Examples:
     consensus_parser = subparsers.add_parser('consensus-batch', help='Consensus HFO detection (voting)', add_help=False)
     dl_parser = subparsers.add_parser('dl-batch', help='Deep learning HFO detection', add_help=False)
     prepare_dl_parser = subparsers.add_parser('prepare-dl', help='Prepare EOIs for DL training', add_help=False)
+    train_dl_parser = subparsers.add_parser('train-dl', help='Train DL model on prepared data', add_help=False)
+    export_dl_parser = subparsers.add_parser('export-dl', help='Export trained DL model to .pt/.onnx', add_help=False)
     
     # Spatial mapping command (delegate to batch_ssm)
     ssm_parser = subparsers.add_parser('batch-ssm', help='Batch spatial spectral mapper', add_help=False)
@@ -61,7 +69,7 @@ Examples:
         return result.returncode
     
     # HFO detection commands
-    if args.command in ['hilbert-batch', 'ste-batch', 'mni-batch', 'consensus-batch', 'dl-batch', 'prepare-dl']:
+    if args.command in ['hilbert-batch', 'ste-batch', 'mni-batch', 'consensus-batch', 'dl-batch', 'prepare-dl', 'train-dl', 'export-dl']:
         from hfoGUI.cli import build_parser, main as hfo_main
         hfo_parser_full = build_parser()
         hfo_args = hfo_parser_full.parse_args([args.command] + remaining)
