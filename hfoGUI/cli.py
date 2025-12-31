@@ -379,10 +379,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     # --- Prepare DL Training Data Parser ---
     prepare_dl = sub.add_parser('prepare-dl', help='Read EOIs from file and prepare for DL training with region presets')
-    prepare_dl.add_argument('--eoi-file', required=True, help='Path to EOI file (.txt, .csv with start_ms,stop_ms columns)')
-    prepare_dl.add_argument('--egf-file', required=True, help='Path to .egf data file for signal')
+    prepare_dl.add_argument('--eoi-file', help='Path to EOI file (.txt, .csv with start_ms,stop_ms columns). Required for single-session mode.')
+    prepare_dl.add_argument('--egf-file', help='Path to .egf data file for signal. Required for single-session mode.')
+    prepare_dl.add_argument('--batch-dir', help='Directory containing subdirectories with .egf and EOI files. Enables batch mode.')
     prepare_dl.add_argument('--set-file', help='Optional .set file for bits-to-uV conversion')
-    prepare_dl.add_argument('-o', '--output', required=True, help='Output directory for segments and manifest.csv')
+    prepare_dl.add_argument('-o', '--output', help='Output directory for segments and manifest.csv. Required for single-session mode.')
     prepare_dl.add_argument('--region', choices=['LEC', 'Hippocampus', 'MEC'], default='LEC',
                            help='Brain region preset (LEC, Hippocampus, MEC; default: LEC)')
     prepare_dl.add_argument('--pos-file', help='Optional .pos file for behavior gating with speed data')
@@ -396,8 +397,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     # --- Train DL Model Parser ---
     train_dl = sub.add_parser('train-dl', help='Train 1D CNN model on prepared data')
-    train_dl.add_argument('--train', required=True, help='Path to train manifest CSV')
-    train_dl.add_argument('--val', required=True, help='Path to val manifest CSV')
+    train_dl.add_argument('--train', help='Path to train manifest CSV (single-session mode)')
+    train_dl.add_argument('--val', help='Path to val manifest CSV (single-session mode)')
+    train_dl.add_argument('--batch-dir', help='Directory with subdirectories containing manifest_train.csv and manifest_val.csv (batch mode)')
     train_dl.add_argument('--epochs', type=int, default=15, help='Number of training epochs (default: 15)')
     train_dl.add_argument('--batch-size', type=int, default=64, help='Training batch size (default: 64)')
     train_dl.add_argument('--lr', type=float, default=1e-3, help='Learning rate (default: 1e-3)')
@@ -408,9 +410,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     # --- Export DL Model Parser ---
     export_dl = sub.add_parser('export-dl', help='Export trained model to TorchScript and ONNX')
-    export_dl.add_argument('--ckpt', required=True, help='Path to best.pt checkpoint file')
-    export_dl.add_argument('--onnx', required=True, help='Output path for ONNX model')
-    export_dl.add_argument('--ts', required=True, help='Output path for TorchScript model (.pt)')
+    export_dl.add_argument('--ckpt', help='Path to best.pt checkpoint file (single-session mode)')
+    export_dl.add_argument('--batch-dir', help='Directory with subdirectories containing best.pt checkpoints (batch mode)')
+    export_dl.add_argument('--onnx', help='Output path for ONNX model (single-session mode, or suffix for batch mode like "_model.onnx")')
+    export_dl.add_argument('--ts', help='Output path for TorchScript model (single-session mode, or suffix for batch mode like "_model.pt")')
     export_dl.add_argument('--example-len', type=int, default=2000, help='Example segment length for tracing (default: 2000)')
     export_dl.add_argument('-v', '--verbose', action='store_true', help='Verbose logging')
 
@@ -583,13 +586,43 @@ def _split_train_val(manifest_df, val_fraction=0.2, random_seed=42, verbose=Fals
     return train_df, val_df
 
 
-def run_prepare_dl(args: argparse.Namespace):
-    """Prepare EOIs for DL training with region presets and behavior gating."""
+def _find_eoi_file(session_dir):
+    """Find an EOI file (.txt or .csv) in a session directory."""
+    session_path = Path(session_dir)
+    for pattern in ['*.txt', '*.csv']:
+        matches = list(session_path.glob(pattern))
+        if matches:
+            return matches[0]
+    return None
+
+
+def _find_egf_file(session_dir):
+    """Find an EGF file in a session directory."""
+    session_path = Path(session_dir)
+    matches = list(session_path.glob('*.egf'))
+    if matches:
+        return matches[0]
+    return None
+
+
+def _process_single_session(eoi_path, egf_path, output_dir, args, region_preset):
+    """Process a single session: load EOIs, extract segments, create manifest.
+    
+    Args:
+        eoi_path: Path object to EOI file
+        egf_path: Path object to EGF file
+        output_dir: Path object for output directory
+        args: argparse Namespace with common settings
+        region_preset: dict with region-specific parameters
+    
+    Returns:
+        tuple: (manifest_df, num_rows)
+    """
     from pathlib import Path
     from .core.eoi_exporter import _safe_write_csv
     
     # Load EOI file
-    eoi_path = Path(args.eoi_file).expanduser()
+    eoi_path = Path(eoi_path)
     if not eoi_path.exists():
         raise FileNotFoundError(f"EOI file not found: {eoi_path}")
     
@@ -656,7 +689,7 @@ def run_prepare_dl(args: argparse.Namespace):
         print(f"Loaded {len(eois_ms)} EOIs from {eoi_path}")
     
     # Load .egf signal file using ReadEEG
-    egf_path = Path(args.egf_file).expanduser()
+    egf_path = Path(egf_path)
     if not egf_path.exists():
         raise FileNotFoundError(f"EGF file not found: {egf_path}")
     
@@ -682,7 +715,282 @@ def run_prepare_dl(args: argparse.Namespace):
         raise RuntimeError(f"Failed to load EGF file: {e}")
     
     # Get region presets (hardcoded to avoid GUI initialization)
-    region_presets = {
+    region_presets = _get_region_presets()
+    region_preset = region_presets.get(args.region, {})
+    
+    if not region_preset:
+        raise ValueError(f"Unknown region: {args.region}")
+    
+    if args.verbose:
+        print(f"Applied region preset: {args.region}")
+        print(f"  Frequency bands: {region_preset.get('bands', {})}")
+        print(f"  Durations: {region_preset.get('durations', {})}")
+        print(f"  Speed range: {region_preset.get('speed_threshold_min_cm_s', 0)}-{region_preset.get('speed_threshold_max_cm_s', 5)} cm/s")
+    
+    # Load optional .pos file for behavior gating
+    speed_signal = None
+    pos_file_path = None
+    
+    # Try to auto-discover .pos file if not provided
+    if args.pos_file:
+        pos_file_path = Path(args.pos_file).expanduser()
+    else:
+        # Look for .pos file in same directory as EGF, with same base name
+        egf_base = egf_path.stem  # e.g., "20160908-2-NO-3700" from "20160908-2-NO-3700.egf"
+        possible_pos = egf_path.parent / f"{egf_base}.pos"
+        if possible_pos.exists():
+            pos_file_path = possible_pos
+            if args.verbose:
+                print(f"Auto-discovered POS file: {pos_file_path}")
+    
+    if pos_file_path:
+        try:
+            from .core.Tint_Matlab import getpos, speed2D
+            # Load raw position data first, without arena-specific transformations
+            x_raw, y_raw, t_raw, fs_speed = getpos(str(pos_file_path), arena='Linear Track', method='raw', custom_ppm=args.ppm)
+            
+            # Only proceed if we got valid position data
+            if x_raw is not None and len(x_raw) > 0 and x_raw.size > 0:
+                # Flatten and remove obvious bad values (1023 = missing in Axona system)
+                x_clean = x_raw.flatten().copy()
+                y_clean = y_raw.flatten().copy()
+                t_clean = t_raw.flatten().copy()
+                
+                # Replace 1023 (missing data marker) with NaN
+                x_clean[x_clean == 1023] = np.nan
+                y_clean[y_clean == 1023] = np.nan
+                
+                # Remove remaining NaNs
+                valid_idx = ~(np.isnan(x_clean) | np.isnan(y_clean))
+                if np.sum(valid_idx) > 0:
+                    x_clean = x_clean[valid_idx]
+                    y_clean = y_clean[valid_idx]
+                    t_clean = t_clean[valid_idx]
+                    
+                    # Calculate 2D speed from x, y coordinates
+                    speed_data = speed2D(x_clean.reshape(-1, 1), y_clean.reshape(-1, 1), t_clean.reshape(-1, 1))
+                    speed_signal = (np.asarray(speed_data, dtype=np.float32).flatten(), fs_speed)
+                    if args.verbose:
+                        print(f"Loaded POS speed data: {speed_signal[0].shape} samples at {fs_speed} Hz")
+                else:
+                    print(f"Warning: POS file has no valid position data after cleaning, behavior gating disabled")
+            else:
+                print(f"Warning: POS file loaded but no position samples found, behavior gating disabled")
+        except Exception as e:
+            if args.verbose:
+                import traceback
+                traceback.print_exc()
+            print(f"Warning: Could not load POS file: {e}, behavior gating disabled")
+    
+    # Filter and annotate EOIs with region preset logic
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    rows = []
+    speed_min = region_preset.get('speed_threshold_min_cm_s', 0.0)
+    speed_max = region_preset.get('speed_threshold_max_cm_s', 5.0)
+    bands = region_preset.get('bands', {})
+    durations = region_preset.get('durations', {})
+    
+    for idx, (s_ms, e_ms) in enumerate(eois_ms):
+        s_ms = float(s_ms)
+        e_ms = float(e_ms)
+        duration = e_ms - s_ms
+        
+        # Extract segment
+        s_idx = int(max(0, np.floor(s_ms / 1000.0 * fs)))
+        e_idx = int(min(len(signal), np.ceil(e_ms / 1000.0 * fs)))
+        
+        if e_idx <= s_idx:
+            continue
+        
+        seg = signal[s_idx:e_idx].astype(np.float32)
+        seg_path = output_dir / f"{args.prefix}_{idx:05d}.npy"
+        np.save(seg_path, seg)
+        
+        # Determine band label (simple heuristic: check duration)
+        band_label = 'ripple_fast_ripple'
+        r_min = durations.get('ripple_min_ms', 15)
+        r_max = durations.get('ripple_max_ms', 120)
+        fr_min = durations.get('fast_min_ms', 10)
+        fr_max = durations.get('fast_max_ms', 80)
+        
+        if r_min <= duration <= r_max:
+            band_label = 'ripple'
+        elif fr_min <= duration <= fr_max:
+            band_label = 'fast_ripple'
+        
+        # Determine behavioral state if speed signal available
+        state = 'unknown'
+        mean_speed = None
+        if speed_signal is not None:
+            speed_trace, fs_speed = speed_signal
+            s_idx_speed = int(max(0, np.floor(s_ms / 1000.0 * fs_speed)))
+            e_idx_speed = int(min(len(speed_trace), np.ceil(e_ms / 1000.0 * fs_speed)))
+            if e_idx_speed > s_idx_speed:
+                seg_speed = speed_trace[s_idx_speed:e_idx_speed]
+                if seg_speed.size > 0:
+                    mean_speed = float(np.nanmean(seg_speed))
+                    state = 'rest' if (speed_min <= mean_speed <= speed_max) else 'active'
+        
+        label = int(labels[idx]) if labels and labels[idx] is not None else None
+        
+        rows.append({
+            'segment_path': str(seg_path),
+            'label': label,
+            'band_label': band_label,
+            'duration_ms': duration,
+            'state': state,
+            'mean_speed_cm_s': mean_speed,
+        })
+    
+    # Write manifest
+    manifest_path = output_dir / 'manifest.csv'
+    manifest_df = pd.DataFrame(rows)
+    _safe_write_csv(manifest_df, manifest_path)
+    
+    # Return manifest dataframe and number of rows
+    return manifest_df, len(rows), manifest_path
+
+
+def run_prepare_dl(args: argparse.Namespace):
+    """Prepare EOIs for DL training with region presets and behavior gating.
+    
+    Supports two modes:
+    1. Single session: --eoi-file, --egf-file, --output
+    2. Batch mode: --batch-dir (auto-discovers EOI/EGF files in subdirectories)
+    """
+    from pathlib import Path
+    from .core.eoi_exporter import _safe_write_csv
+    
+    # Validate arguments
+    if args.batch_dir:
+        # Batch mode
+        batch_path = Path(args.batch_dir).expanduser()
+        if not batch_path.is_dir():
+            raise ValueError(f"--batch-dir must be a directory: {batch_path}")
+        
+        # Scan for subdirectories containing .egf files
+        subdirs = [d for d in batch_path.iterdir() if d.is_dir()]
+        if not subdirs:
+            raise ValueError(f"No subdirectories found in {batch_path}")
+        
+        if args.verbose:
+            print(f"Batch mode: Found {len(subdirs)} subdirectories")
+        
+        # Process each subdirectory
+        total_events = 0
+        processed_dirs = 0
+        failed_dirs = 0
+        
+        for session_dir in sorted(subdirs):
+            session_name = session_dir.name
+            
+            # Find EOI and EGF files
+            eoi_file = _find_eoi_file(session_dir)
+            egf_file = _find_egf_file(session_dir)
+            
+            if not eoi_file or not egf_file:
+                if args.verbose:
+                    print(f"  Skipping {session_name}: missing EOI or EGF file")
+                failed_dirs += 1
+                continue
+            
+            # Create output subdirectory for this session
+            session_output = session_dir / 'prepared_dl'
+            
+            try:
+                if args.verbose:
+                    print(f"  Processing: {session_name}")
+                
+                # Get region preset
+                region_presets = _get_region_presets()
+                region_preset = region_presets.get(args.region, {})
+                
+                # Process session
+                manifest_df, num_rows, manifest_path = _process_single_session(
+                    eoi_file, egf_file, session_output, args, region_preset
+                )
+                
+                # Handle train/val splitting if requested
+                if args.split_train_val:
+                    train_df, val_df = _split_train_val(manifest_df, args.val_fraction, args.random_seed, args.verbose)
+                    train_manifest = session_output / 'manifest_train.csv'
+                    val_manifest = session_output / 'manifest_val.csv'
+                    _safe_write_csv(train_df, train_manifest)
+                    _safe_write_csv(val_df, val_manifest)
+                    total_events += len(train_df) + len(val_df)
+                else:
+                    total_events += num_rows
+                
+                print(f"    ✓ {session_name}: {num_rows} events → {manifest_path}")
+                processed_dirs += 1
+                
+            except Exception as e:
+                print(f"    ✗ {session_name}: {e}")
+                failed_dirs += 1
+                if args.verbose:
+                    import traceback
+                    traceback.print_exc()
+        
+        print(f"\n{'='*60}")
+        print("BATCH PREPARED DL TRAINING DATA")
+        print(f"{'='*60}")
+        print(f"Processed:       {processed_dirs} sessions")
+        print(f"Failed:          {failed_dirs} sessions")
+        print(f"Total events:    {total_events}")
+        print(f"Output base:     {batch_path}")
+        print(f"Region:          {args.region}")
+        print(f"{'='*60}\n")
+        
+        if processed_dirs == 0:
+            raise RuntimeError("No sessions were successfully processed")
+        
+    else:
+        # Single session mode
+        if not args.eoi_file or not args.egf_file or not args.output:
+            raise ValueError("Single-session mode requires: --eoi-file, --egf-file, --output")
+        
+        # Get region preset
+        region_presets = _get_region_presets()
+        region_preset = region_presets.get(args.region, {})
+        
+        # Process single session
+        eoi_path = Path(args.eoi_file).expanduser()
+        egf_path = Path(args.egf_file).expanduser()
+        output_dir = Path(args.output).expanduser()
+        
+        manifest_df, num_rows, manifest_path = _process_single_session(
+            eoi_path, egf_path, output_dir, args, region_preset
+        )
+        
+        # Handle train/val splitting if requested
+        if args.split_train_val:
+            train_df, val_df = _split_train_val(manifest_df, args.val_fraction, args.random_seed, args.verbose)
+            
+            # Write train/val manifests
+            train_manifest_path = output_dir / 'manifest_train.csv'
+            val_manifest_path = output_dir / 'manifest_val.csv'
+            
+            _safe_write_csv(train_df, train_manifest_path)
+            _safe_write_csv(val_df, val_manifest_path)
+        
+        print(f"\n{'='*60}")
+        print("PREPARED DL TRAINING DATA")
+        print(f"{'='*60}")
+        print(f"Region:          {args.region}")
+        print(f"EOIs processed:  {num_rows}")
+        print(f"Output dir:      {output_dir}")
+        print(f"Manifest:        {manifest_path}")
+        if args.split_train_val:
+            print(f"Train manifest:  {train_manifest_path} ({len(train_df)} events)")
+            print(f"Val manifest:    {val_manifest_path} ({len(val_df)} events)")
+        print(f"{'='*60}\n")
+
+
+def _get_region_presets():
+    """Get region presets (hardcoded to avoid GUI initialization)."""
+    return {
         'LEC': {
             'bands': {
                 'ripple': [80, 250],
@@ -753,258 +1061,262 @@ def run_prepare_dl(args: argparse.Namespace):
             },
         },
     }
-    
-    region_preset = region_presets.get(args.region, {})
-    
-    if not region_preset:
-        raise ValueError(f"Unknown region: {args.region}")
-    
-    if args.verbose:
-        print(f"Applied region preset: {args.region}")
-        print(f"  Frequency bands: {region_preset.get('bands', {})}")
-        print(f"  Durations: {region_preset.get('durations', {})}")
-        print(f"  Speed range: {region_preset.get('speed_threshold_min_cm_s', 0)}-{region_preset.get('speed_threshold_max_cm_s', 5)} cm/s")
-    
-    # Load optional .pos file for behavior gating
-    speed_signal = None
-    pos_file_path = None
-    
-    # Try to auto-discover .pos file if not provided
-    if args.pos_file:
-        pos_file_path = Path(args.pos_file).expanduser()
-    else:
-        # Look for .pos file in same directory as EGF, with same base name
-        egf_base = egf_path.stem  # e.g., "20160908-2-NO-3700" from "20160908-2-NO-3700.egf"
-        possible_pos = egf_path.parent / f"{egf_base}.pos"
-        if possible_pos.exists():
-            pos_file_path = possible_pos
-            if args.verbose:
-                print(f"Auto-discovered POS file: {pos_file_path}")
-    
-    if pos_file_path:
-        try:
-            from .core.Tint_Matlab import getpos, speed2D
-            # Load raw position data first, without arena-specific transformations
-            x_raw, y_raw, t_raw, fs_speed = getpos(str(pos_file_path), arena='Linear Track', method='raw', custom_ppm=args.ppm)
-            
-            # Only proceed if we got valid position data
-            if x_raw is not None and len(x_raw) > 0 and x_raw.size > 0:
-                # Flatten and remove obvious bad values (1023 = missing in Axona system)
-                x_clean = x_raw.flatten().copy()
-                y_clean = y_raw.flatten().copy()
-                t_clean = t_raw.flatten().copy()
-                
-                # Replace 1023 (missing data marker) with NaN
-                x_clean[x_clean == 1023] = np.nan
-                y_clean[y_clean == 1023] = np.nan
-                
-                # Remove remaining NaNs
-                valid_idx = ~(np.isnan(x_clean) | np.isnan(y_clean))
-                if np.sum(valid_idx) > 0:
-                    x_clean = x_clean[valid_idx]
-                    y_clean = y_clean[valid_idx]
-                    t_clean = t_clean[valid_idx]
-                    
-                    # Calculate 2D speed from x, y coordinates
-                    speed_data = speed2D(x_clean.reshape(-1, 1), y_clean.reshape(-1, 1), t_clean.reshape(-1, 1))
-                    speed_signal = (np.asarray(speed_data, dtype=np.float32).flatten(), fs_speed)
-                    if args.verbose:
-                        print(f"Loaded POS speed data: {speed_signal[0].shape} samples at {fs_speed} Hz")
-                else:
-                    print(f"Warning: POS file has no valid position data after cleaning, behavior gating disabled")
-            else:
-                print(f"Warning: POS file loaded but no position samples found, behavior gating disabled")
-        except Exception as e:
-            if args.verbose:
-                import traceback
-                traceback.print_exc()
-            print(f"Warning: Could not load POS file: {e}, behavior gating disabled")
-    
-    # Filter and annotate EOIs with region preset logic
-    output_dir = Path(args.output).expanduser()
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    rows = []
-    speed_min = region_preset.get('speed_threshold_min_cm_s', 0.0)
-    speed_max = region_preset.get('speed_threshold_max_cm_s', 5.0)
-    bands = region_preset.get('bands', {})
-    durations = region_preset.get('durations', {})
-    
-    for idx, (s_ms, e_ms) in enumerate(eois_ms):
-        s_ms = float(s_ms)
-        e_ms = float(e_ms)
-        duration = e_ms - s_ms
-        
-        # Extract segment
-        s_idx = int(max(0, np.floor(s_ms / 1000.0 * fs)))
-        e_idx = int(min(len(signal), np.ceil(e_ms / 1000.0 * fs)))
-        
-        if e_idx <= s_idx:
-            continue
-        
-        seg = signal[s_idx:e_idx].astype(np.float32)
-        seg_path = output_dir / f"{args.prefix}_{idx:05d}.npy"
-        np.save(seg_path, seg)
-        
-        # Determine band label (simple heuristic: check duration)
-        band_label = 'ripple_fast_ripple'
-        r_min = durations.get('ripple_min_ms', 15)
-        r_max = durations.get('ripple_max_ms', 120)
-        fr_min = durations.get('fast_min_ms', 10)
-        fr_max = durations.get('fast_max_ms', 80)
-        
-        if r_min <= duration <= r_max:
-            band_label = 'ripple'
-        elif fr_min <= duration <= fr_max:
-            band_label = 'fast_ripple'
-        
-        # Determine behavioral state if speed signal available
-        state = 'unknown'
-        mean_speed = None
-        if speed_signal is not None:
-            speed_trace, fs_speed = speed_signal
-            s_idx_speed = int(max(0, np.floor(s_ms / 1000.0 * fs_speed)))
-            e_idx_speed = int(min(len(speed_trace), np.ceil(e_ms / 1000.0 * fs_speed)))
-            if e_idx_speed > s_idx_speed:
-                seg_speed = speed_trace[s_idx_speed:e_idx_speed]
-                if seg_speed.size > 0:
-                    mean_speed = float(np.nanmean(seg_speed))
-                    state = 'rest' if (speed_min <= mean_speed <= speed_max) else 'active'
-        
-        label = int(labels[idx]) if labels and labels[idx] is not None else None
-        
-        rows.append({
-            'segment_path': str(seg_path),
-            'label': label,
-            'band_label': band_label,
-            'duration_ms': duration,
-            'state': state,
-            'mean_speed_cm_s': mean_speed,
-        })
-    
-    # Write manifest
-    manifest_path = output_dir / 'manifest.csv'
-    manifest_df = pd.DataFrame(rows)
-    _safe_write_csv(manifest_df, manifest_path)
-    
-    # Split manifest into train/val if requested
-    if args.split_train_val:
-        train_df, val_df = _split_train_val(manifest_df, args.val_fraction, args.random_seed, args.verbose)
-        
-        # Write train/val manifests
-        train_manifest_path = output_dir / 'manifest_train.csv'
-        val_manifest_path = output_dir / 'manifest_val.csv'
-        
-        _safe_write_csv(train_df, train_manifest_path)
-        _safe_write_csv(val_df, val_manifest_path)
-        
-        if args.verbose:
-            print(f"\nTrain/Val Split:")
-            print(f"  Train: {len(train_df)} events → {train_manifest_path}")
-            print(f"  Val:   {len(val_df)} events → {val_manifest_path}")
-    
-    print(f"\n{'='*60}")
-    print("PREPARED DL TRAINING DATA")
-    print(f"{'='*60}")
-    print(f"Region:          {args.region}")
-    print(f"EOIs processed:  {len(rows)}")
-    print(f"Output dir:      {output_dir}")
-    print(f"Manifest:        {manifest_path}")
-    if args.split_train_val:
-        print(f"Train manifest:  {train_manifest_path} ({len(train_df)} events)")
-        print(f"Val manifest:    {val_manifest_path} ({len(val_df)} events)")
-    if speed_signal:
-        print(f"Behavior gating: Enabled (speed {speed_min}-{speed_max} cm/s = rest)")
-    else:
-        print("Behavior gating: Disabled (no speed signal)")
-    print(f"{'='*60}\n")
 
 
 def run_train_dl(args: argparse.Namespace):
-    """Train a 1D CNN model on prepared DL training data."""
+    """Train a 1D CNN model on prepared DL training data.
+    
+    Supports two modes:
+    1. Single-session: --train, --val
+    2. Batch mode: --batch-dir (auto-discovers manifest_train.csv and manifest_val.csv in subdirectories)
+    """
+    from pathlib import Path
+    
     try:
         from .dl_training.train import main as train_main
     except ImportError as e:
         print(f"Error: Deep learning dependencies not installed. Install with: pip install torch")
         raise
     
-    # Create a namespace that matches train.py's expected arguments
-    train_args = argparse.Namespace(
-        train=args.train,
-        val=args.val,
-        epochs=args.epochs,
-        batch_size=args.batch_size,
-        lr=args.lr,
-        weight_decay=args.weight_decay,
-        out_dir=args.out_dir,
-        num_workers=args.num_workers,
-    )
-    
-    # Call train.py's main directly
-    import sys
-    old_argv = sys.argv
-    try:
-        # Build command-line arguments
-        train_argv = [
-            'train-dl',
-            '--train', args.train,
-            '--val', args.val,
-            '--epochs', str(args.epochs),
-            '--batch-size', str(args.batch_size),
-            '--lr', str(args.lr),
-            '--weight-decay', str(args.weight_decay),
-            '--out-dir', args.out_dir,
-            '--num-workers', str(args.num_workers),
-        ]
-        sys.argv = train_argv
+    if args.batch_dir:
+        # Batch mode: find all subdirectories with manifest_train.csv and manifest_val.csv
+        batch_path = Path(args.batch_dir).expanduser()
+        if not batch_path.is_dir():
+            raise ValueError(f"--batch-dir must be a directory: {batch_path}")
         
-        # Call train.py's parse_args() and main()
-        from .dl_training.train import parse_args, main
-        train_parsed_args = parse_args()
-        main()
+        # Scan for subdirectories
+        subdirs = [d for d in batch_path.iterdir() if d.is_dir()]
+        if not subdirs:
+            raise ValueError(f"No subdirectories found in {batch_path}")
         
-    finally:
-        sys.argv = old_argv
+        if args.verbose:
+            print(f"Batch mode: Found {len(subdirs)} subdirectories")
+        
+        # Process each subdirectory
+        successful = 0
+        failed = 0
+        
+        for session_dir in sorted(subdirs):
+            session_name = session_dir.name
+            
+            # Look for manifest_train.csv and manifest_val.csv
+            train_manifest = session_dir / 'manifest_train.csv'
+            val_manifest = session_dir / 'manifest_val.csv'
+            
+            # Also check in prepared_dl subdirectory
+            if not train_manifest.exists():
+                train_manifest = session_dir / 'prepared_dl' / 'manifest_train.csv'
+                val_manifest = session_dir / 'prepared_dl' / 'manifest_val.csv'
+            
+            if not train_manifest.exists() or not val_manifest.exists():
+                if args.verbose:
+                    print(f"  Skipping {session_name}: missing manifest_train.csv or manifest_val.csv")
+                failed += 1
+                continue
+            
+            # Create session-specific output directory
+            session_output = session_dir / 'models' if (session_dir / 'prepared_dl').exists() else session_dir / 'models'
+            session_output.mkdir(parents=True, exist_ok=True)
+            
+            try:
+                if args.verbose:
+                    print(f"  Training: {session_name}")
+                
+                # Train model for this session
+                import sys
+                old_argv = sys.argv
+                try:
+                    train_argv = [
+                        'train-dl',
+                        '--train', str(train_manifest),
+                        '--val', str(val_manifest),
+                        '--epochs', str(args.epochs),
+                        '--batch-size', str(args.batch_size),
+                        '--lr', str(args.lr),
+                        '--weight-decay', str(args.weight_decay),
+                        '--out-dir', str(session_output),
+                        '--num-workers', str(args.num_workers),
+                    ]
+                    sys.argv = train_argv
+                    
+                    from .dl_training.train import parse_args, main
+                    train_parsed_args = parse_args()
+                    main()
+                    
+                    print(f"    ✓ {session_name}: Models saved to {session_output}")
+                    successful += 1
+                    
+                finally:
+                    sys.argv = old_argv
+                    
+            except Exception as e:
+                print(f"    ✗ {session_name}: {e}")
+                failed += 1
+                if args.verbose:
+                    import traceback
+                    traceback.print_exc()
+        
+        print(f"\n{'='*60}")
+        print("BATCH TRAINING COMPLETE")
+        print(f"{'='*60}")
+        print(f"Successful:      {successful} sessions")
+        print(f"Failed:          {failed} sessions")
+        print(f"Output base:     {batch_path}")
+        print(f"{'='*60}\n")
+        
+        if successful == 0:
+            raise RuntimeError("No sessions were successfully trained")
+        
+    else:
+        # Single-session mode
+        if not args.train or not args.val:
+            raise ValueError("Single-session mode requires: --train, --val")
+        
+        import sys
+        old_argv = sys.argv
+        try:
+            train_argv = [
+                'train-dl',
+                '--train', args.train,
+                '--val', args.val,
+                '--epochs', str(args.epochs),
+                '--batch-size', str(args.batch_size),
+                '--lr', str(args.lr),
+                '--weight-decay', str(args.weight_decay),
+                '--out-dir', args.out_dir,
+                '--num-workers', str(args.num_workers),
+            ]
+            sys.argv = train_argv
+            
+            from .dl_training.train import parse_args, main
+            train_parsed_args = parse_args()
+            main()
+            
+        finally:
+            sys.argv = old_argv
 
 
 def run_export_dl(args: argparse.Namespace):
-    """Export trained DL model to TorchScript and ONNX formats."""
+    """Export trained DL model to TorchScript and ONNX formats.
+    
+    Supports two modes:
+    1. Single-session: --ckpt, --onnx, --ts
+    2. Batch mode: --batch-dir (auto-discovers best.pt in subdirectories)
+    """
+    from pathlib import Path
+    
     try:
         from .dl_training.export import main as export_main
     except ImportError as e:
         print(f"Error: Deep learning dependencies not installed. Install with: pip install torch")
         raise
     
-    import sys
-    old_argv = sys.argv
-    try:
-        # Build command-line arguments
-        export_argv = [
-            'export-dl',
-            '--ckpt', args.ckpt,
-            '--onnx', args.onnx,
-            '--ts', args.ts,
-            '--example-len', str(args.example_len),
-        ]
-        sys.argv = export_argv
+    if args.batch_dir:
+        # Batch mode: find all best.pt checkpoints in subdirectories
+        batch_path = Path(args.batch_dir).expanduser()
+        if not batch_path.is_dir():
+            raise ValueError(f"--batch-dir must be a directory: {batch_path}")
         
-        # Call export.py's parse_args() and main()
-        from .dl_training.export import parse_args, main
-        export_parsed_args = parse_args()
-        main()
+        # Scan for subdirectories
+        subdirs = [d for d in batch_path.iterdir() if d.is_dir()]
+        if not subdirs:
+            raise ValueError(f"No subdirectories found in {batch_path}")
         
-    finally:
-        sys.argv = old_argv
-
-    
-    if args.verbose:
-        state_counts = {}
-        for row in rows:
-            s = row['state']
-            state_counts[s] = state_counts.get(s, 0) + 1
-        print("State distribution:")
-        for state, count in sorted(state_counts.items()):
-            print(f"  {state}: {count}")
+        if args.verbose:
+            print(f"Batch mode: Found {len(subdirs)} subdirectories")
+        
+        # Process each subdirectory
+        successful = 0
+        failed = 0
+        
+        for session_dir in sorted(subdirs):
+            session_name = session_dir.name
+            
+            # Look for best.pt checkpoint in models subdirectory
+            ckpt_path = session_dir / 'models' / 'best.pt'
+            if not ckpt_path.exists():
+                # Try directly in session directory
+                ckpt_path = session_dir / 'best.pt'
+            
+            if not ckpt_path.exists():
+                if args.verbose:
+                    print(f"  Skipping {session_name}: missing best.pt checkpoint")
+                failed += 1
+                continue
+            
+            try:
+                if args.verbose:
+                    print(f"  Exporting: {session_name}")
+                
+                # Create output paths
+                ckpt_dir = ckpt_path.parent
+                onnx_path = ckpt_dir / f"{session_name}_model.onnx" if not args.onnx else ckpt_dir / args.onnx
+                ts_path = ckpt_dir / f"{session_name}_model.pt" if not args.ts else ckpt_dir / args.ts
+                
+                # Export model
+                import sys
+                old_argv = sys.argv
+                try:
+                    export_argv = [
+                        'export-dl',
+                        '--ckpt', str(ckpt_path),
+                        '--onnx', str(onnx_path),
+                        '--ts', str(ts_path),
+                        '--example-len', str(args.example_len),
+                    ]
+                    sys.argv = export_argv
+                    
+                    from .dl_training.export import parse_args, main
+                    export_parsed_args = parse_args()
+                    main()
+                    
+                    print(f"    ✓ {session_name}: Exported to {ts_path} and {onnx_path}")
+                    successful += 1
+                    
+                finally:
+                    sys.argv = old_argv
+                    
+            except Exception as e:
+                print(f"    ✗ {session_name}: {e}")
+                failed += 1
+                if args.verbose:
+                    import traceback
+                    traceback.print_exc()
+        
+        print(f"\n{'='*60}")
+        print("BATCH EXPORT COMPLETE")
+        print(f"{'='*60}")
+        print(f"Successful:      {successful} sessions")
+        print(f"Failed:          {failed} sessions")
+        print(f"Output base:     {batch_path}")
+        print(f"{'='*60}\n")
+        
+        if successful == 0:
+            raise RuntimeError("No sessions were successfully exported")
+        
+    else:
+        # Single-session mode
+        if not args.ckpt or not args.onnx or not args.ts:
+            raise ValueError("Single-session mode requires: --ckpt, --onnx, --ts")
+        
+        import sys
+        old_argv = sys.argv
+        try:
+            export_argv = [
+                'export-dl',
+                '--ckpt', args.ckpt,
+                '--onnx', args.onnx,
+                '--ts', args.ts,
+                '--example-len', str(args.example_len),
+            ]
+            sys.argv = export_argv
+            
+            from .dl_training.export import parse_args, main
+            export_parsed_args = parse_args()
+            main()
+            
+        finally:
+            sys.argv = old_argv
 
 
 __all__ = ['build_parser', 'run_hilbert_batch', 'run_ste_batch', 'run_mni_batch', 'run_consensus_batch', 'run_dl_batch', 'run_prepare_dl', 'run_train_dl', 'run_export_dl']

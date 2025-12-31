@@ -741,9 +741,9 @@ batch-ssm creates a timestamped output directory for each session:
 
 ## Deep Learning Training Data Preparation (prepare-dl)
 
-The `prepare-dl` command converts detected HFOs (EOIs) into deep learning training data with region-specific presets, behavioral state annotation, and optional train/validation splitting.
+The `prepare-dl` command converts detected HFOs (EOIs) into deep learning training data with region-specific presets, behavioral state annotation, and optional train/validation splitting. Supports both **single-session** and **batch** modes.
 
-### Basic Usage
+### Basic Usage - Single Session
 
 ```bash
 # Simple preparation with auto-discovered position file
@@ -769,13 +769,49 @@ python -m stlar prepare-dl \
   --val-fraction 0.2
 ```
 
+### Batch Mode
+
+Process multiple sessions at once. Each subdirectory should contain `.egf` and EOI files (`.txt` or `.csv`):
+
+```bash
+# Batch process directory structure:
+# data_batch/
+#   session_A/
+#     recording.egf
+#     detections.txt
+#     recording.pos (optional, auto-discovered)
+#   session_B/
+#     recording.egf
+#     detections.csv
+#   session_C/
+#     recording.egf
+#     detections.txt
+
+python -m stlar prepare-dl \
+  --batch-dir data_batch \
+  --region Hippocampus \
+  --split-train-val \
+  -v
+```
+
+**Batch mode output:**
+- For each subdirectory: `session_name/prepared_dl/manifest.csv` (+ train/val splits if `--split-train-val`)
+- Summary statistics printed showing processed/failed count
+
+**Advantages of batch mode:**
+- Process multiple sessions with one command
+- Automatically detects EOI and EGF files in each subdirectory
+- Creates output directories within each session folder for easy organization
+- Useful for multi-animal or multi-session studies
+
 ### Parameters
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `--eoi-file` | str | **required** | Path to EOI file (.txt, .csv with start_ms,stop_ms columns) |
-| `--egf-file` | str | **required** | Path to .egf data file for signal extraction |
-| `-o, --output` | str | **required** | Output directory for segments and manifest files |
+| `--eoi-file` | str | - | Path to EOI file (.txt, .csv). Required for **single-session** mode |
+| `--egf-file` | str | - | Path to .egf file. Required for **single-session** mode |
+| `--batch-dir` | str | - | Directory with subdirectories containing .egf and EOI files. Enables **batch** mode |
+| `-o, --output` | str | - | Output directory. Required for **single-session** mode |
 | `--region` | str | LEC | Brain region preset (LEC, Hippocampus, MEC) |
 | `--set-file` | str | auto | Optional .set file for bits-to-uV conversion |
 | `--pos-file` | str | auto-detect | Optional .pos file for behavior gating (auto-discovered if not specified) |
@@ -880,6 +916,41 @@ python -m stlar prepare-dl \
   -v
 ```
 
+**Batch mode: Process 5 animals (10 sessions) in one command:**
+```bash
+# Directory structure:
+# study_data/
+#   Animal_A_Session1/
+#     recording.egf
+#     detections.txt
+#     recording.pos
+#   Animal_A_Session2/
+#     recording.egf
+#     detections_ste.txt
+#   ...
+#   Animal_E_Session2/
+#     recording.egf
+#     detections.csv
+
+python -m stlar prepare-dl \
+  --batch-dir study_data \
+  --region Hippocampus \
+  --ppm 595 \
+  --split-train-val \
+  --val-fraction 0.2 \
+  -v
+
+# Output summary:
+# BATCH PREPARED DL TRAINING DATA
+# ============================================================
+# Processed:       10 sessions
+# Failed:          0 sessions
+# Total events:    45,320
+# Output base:     study_data
+# Region:          Hippocampus
+# ============================================================
+```
+
 ### Behavior Gating
 
 When a .pos file is provided, events are automatically annotated with behavioral state:
@@ -955,6 +1026,7 @@ python -m stlar prepare-dl \
 
 Train a 1D CNN classifier on the prepared training data:
 
+**Single-session mode:**
 ```bash
 python -m stlar train-dl \
   --train training_data/manifest_train.csv \
@@ -966,17 +1038,39 @@ python -m stlar train-dl \
   --out-dir models
 ```
 
+**Batch mode** (train multiple sessions):
+```bash
+# Directory structure:
+# study_data/
+#   Animal_A_Session1/prepared_dl/
+#     manifest_train.csv
+#     manifest_val.csv
+#   Animal_A_Session2/prepared_dl/
+#     manifest_train.csv
+#     manifest_val.csv
+#   ...
+
+python -m stlar train-dl \
+  --batch-dir study_data \
+  --epochs 15 \
+  --batch-size 64 \
+  -v
+
+# Output: Each session gets models/ subdirectory with best.pt
+```
+
 **Parameters:**
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `--train` | str | **required** | Path to training manifest CSV |
-| `--val` | str | **required** | Path to validation manifest CSV |
+| `--train` | str | - | Path to training manifest CSV (single-session mode) |
+| `--val` | str | - | Path to validation manifest CSV (single-session mode) |
+| `--batch-dir` | str | - | Directory with subdirectories containing manifests (batch mode) |
 | `--epochs` | int | 15 | Number of training epochs |
 | `--batch-size` | int | 64 | Training batch size |
 | `--lr` | float | 1e-3 | Learning rate |
 | `--weight-decay` | float | 1e-4 | L2 regularization coefficient |
-| `--out-dir` | str | models | Output directory for checkpoints |
+| `--out-dir` | str | models | Output directory for checkpoints (single-session only) |
 | `--num-workers` | int | 2 | DataLoader worker processes |
 | `-v, --verbose` | flag | off | Verbose training progress |
 
@@ -996,6 +1090,7 @@ python -m stlar train-dl \
 
 Convert the trained model to production formats:
 
+**Single-session mode:**
 ```bash
 python -m stlar export-dl \
   --ckpt models/best.pt \
@@ -1004,13 +1099,25 @@ python -m stlar export-dl \
   --example-len 2000
 ```
 
+**Batch mode** (export multiple trained models):
+```bash
+# Automatically finds best.pt in each session's models/ subdirectory
+python -m stlar export-dl \
+  --batch-dir study_data \
+  -v
+
+# Output: Each session gets TorchScript and ONNX exports
+# E.g., study_data/Animal_A_Session1/models/Animal_A_Session1_model.pt
+```
+
 **Parameters:**
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `--ckpt` | str | **required** | Path to best.pt checkpoint from training |
-| `--onnx` | str | **required** | Output path for ONNX model |
-| `--ts` | str | **required** | Output path for TorchScript model |
+| `--ckpt` | str | - | Path to best.pt checkpoint (single-session mode) |
+| `--batch-dir` | str | - | Directory with subdirectories containing best.pt (batch mode) |
+| `--onnx` | str | - | Output path for ONNX model (single-session) or suffix (batch) |
+| `--ts` | str | - | Output path for TorchScript model (single-session) or suffix (batch) |
 | `--example-len` | int | 2000 | Example segment length for tracing |
 | `-v, --verbose` | flag | off | Verbose logging |
 
@@ -1081,6 +1188,45 @@ python -m stlar dl-batch \
   --threshold 0.5 \
   -o results/
 # Output: results/session_B_DL.txt
+```
+
+### Complete Batch Example: Multi-Session Training
+
+Process multiple animals/sessions in one workflow:
+
+```bash
+#!/bin/bash
+
+# 1. Prepare training data for multiple sessions (batch mode)
+python -m stlar prepare-dl \
+  --batch-dir study_data \
+  --region Hippocampus \
+  --ppm 595 \
+  --split-train-val \
+  -v
+# Output: Each session gets prepared_dl/ with manifests and segments
+
+# 2. Train models for all sessions (batch mode)
+python -m stlar train-dl \
+  --batch-dir study_data \
+  --epochs 15 \
+  --batch-size 64 \
+  -v
+# Output: Each session gets models/best.pt
+
+# 3. Export all trained models (batch mode)
+python -m stlar export-dl \
+  --batch-dir study_data \
+  -v
+# Output: Each session gets .pt and .onnx exports
+
+# Summary output:
+# BATCH TRAINING COMPLETE
+# ============================================================
+# Successful:      10 sessions
+# Failed:          0 sessions
+# Output base:     study_data
+# ============================================================
 ```
 
 ### Hyperparameter Tuning
