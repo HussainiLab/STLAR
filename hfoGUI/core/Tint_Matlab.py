@@ -1,7 +1,6 @@
 from __future__ import division, print_function
 import numpy as np
 import struct, os
-import numpy.matlib
 from scipy.io import savemat
 import mmap
 import contextlib
@@ -123,7 +122,7 @@ def get_setfile_parameter(parameter, set_filename):
 
 
 def getpos(pos_fpath, arena, method='', flip_y=True, custom_ppm=None):
-    """
+    r"""
     getpos function:
     ---------------------------------------------
     variables:
@@ -350,7 +349,7 @@ def find_tetrodes(set_fullpath):
 
 
 def find_unit(tetrode_list):
-    """Inputs:
+    r"""Inputs:
     tetrode_list: list of tetrodes to find the units that are in the tetrode_path
     example [r'C:Location\of\File\filename.1', r'C:Location\of\File\filename.2' ],
     -------------------------------------------------------------
@@ -462,7 +461,7 @@ def arena_config(posx, posy, arena, conversion='', center='', flip_y=True):
 
 
 def ReadEEG(eeg_fname):
-    """input:
+    r"""input:
     eeg_filename: the fullpath to the eeg file that is desired to be read.
     Example: C:\Location\of\eegfile.eegX
 
@@ -543,7 +542,7 @@ def findCenter(NE, NW, SW, SE):
 
 
 def bits2uV(data, data_fpath, set_fpath=''):
-    '''
+    r'''
     :param data:
     :param data_fpath: example: 'C:\example\filepath.whatever'
     :param set_fpath:
@@ -717,7 +716,7 @@ def importspikes(filename):
                 # calculating the big-endian and little endian matrices so we can convert from bytes -> decimal
     big_endian_vector = 256 ** np.arange(bytes_per_timestamp - 1, -1, -1)
     little_endian_matrix = np.arange(0, bytes_per_sample).reshape(bytes_per_sample, 1)
-    little_endian_matrix = 256 ** numpy.matlib.repmat(little_endian_matrix, 1, samples_per_spike)
+    little_endian_matrix = 256 ** np.tile(little_endian_matrix, (1, samples_per_spike))
 
     number_channels = 4
 
