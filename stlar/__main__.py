@@ -36,6 +36,7 @@ Examples:
     mni_parser = subparsers.add_parser('mni-batch', help='MNI HFO detection', add_help=False)
     consensus_parser = subparsers.add_parser('consensus-batch', help='Consensus HFO detection (voting)', add_help=False)
     dl_parser = subparsers.add_parser('dl-batch', help='Deep learning HFO detection', add_help=False)
+    prepare_dl_parser = subparsers.add_parser('prepare-dl', help='Prepare EOIs for DL training', add_help=False)
     
     # Spatial mapping command (delegate to batch_ssm)
     ssm_parser = subparsers.add_parser('batch-ssm', help='Batch spatial spectral mapper', add_help=False)
@@ -60,7 +61,7 @@ Examples:
         return result.returncode
     
     # HFO detection commands
-    if args.command in ['hilbert-batch', 'ste-batch', 'mni-batch', 'consensus-batch', 'dl-batch']:
+    if args.command in ['hilbert-batch', 'ste-batch', 'mni-batch', 'consensus-batch', 'dl-batch', 'prepare-dl']:
         from hfoGUI.cli import build_parser, main as hfo_main
         hfo_parser_full = build_parser()
         hfo_args = hfo_parser_full.parse_args([args.command] + remaining)

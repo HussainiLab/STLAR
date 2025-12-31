@@ -377,6 +377,20 @@ def build_parser() -> argparse.ArgumentParser:
     dl.add_argument('--skip-bits2uv', action='store_true', help='Skip bits-to-uV conversion')
     dl.add_argument('-v', '--verbose', action='store_true', help='Verbose logging')
 
+    # --- Prepare DL Training Data Parser ---
+    prepare_dl = sub.add_parser('prepare-dl', help='Read EOIs from file and prepare for DL training with region presets')
+    prepare_dl.add_argument('--eoi-file', required=True, help='Path to EOI file (.txt, .csv with start_ms,stop_ms columns)')
+    prepare_dl.add_argument('--egf-file', required=True, help='Path to .egf data file for signal')
+    prepare_dl.add_argument('--set-file', help='Optional .set file for bits-to-uV conversion')
+    prepare_dl.add_argument('-o', '--output', required=True, help='Output directory for segments and manifest.csv')
+    prepare_dl.add_argument('--region', choices=['LEC', 'Hippocampus', 'MEC'], default='LEC',
+                           help='Brain region preset (LEC, Hippocampus, MEC; default: LEC)')
+    prepare_dl.add_argument('--pos-file', help='Optional .pos file for behavior gating with speed data')
+    prepare_dl.add_argument('--ppm', type=int, help='Pixels-per-millimeter for .pos file (e.g., 595)')
+    prepare_dl.add_argument('--prefix', default='seg', help='Prefix for segment filenames (default: seg)')
+    prepare_dl.add_argument('--skip-bits2uv', action='store_true', help='Skip bits-to-uV conversion')
+    prepare_dl.add_argument('-v', '--verbose', action='store_true', help='Verbose logging')
+
     return parser
 
 
@@ -487,7 +501,333 @@ def run_dl_batch(args: argparse.Namespace):
     _run_batch_job(args, _process_dl_file)
 
 
-__all__ = ['build_parser', 'run_hilbert_batch', 'run_ste_batch', 'run_mni_batch', 'run_consensus_batch', 'run_dl_batch']
+def run_prepare_dl(args: argparse.Namespace):
+    """Prepare EOIs for DL training with region presets and behavior gating."""
+    from pathlib import Path
+    from .core.eoi_exporter import _safe_write_csv
+    
+    # Load EOI file
+    eoi_path = Path(args.eoi_file).expanduser()
+    if not eoi_path.exists():
+        raise FileNotFoundError(f"EOI file not found: {eoi_path}")
+    
+    # Determine format and load EOIs
+    if eoi_path.suffix.lower() == '.csv':
+        eoi_df = pd.read_csv(eoi_path)
+        if 'start_ms' not in eoi_df.columns or 'stop_ms' not in eoi_df.columns:
+            raise ValueError("CSV must have 'start_ms' and 'stop_ms' columns")
+        eois_ms = eoi_df[['start_ms', 'stop_ms']].values
+        labels = eoi_df['label'].tolist() if 'label' in eoi_df.columns else None
+    else:
+        # Try to detect format: STLAR output (tab-separated) or generic txt
+        eois_ms = []
+        labels = []
+        
+        with open(eoi_path) as f:
+            first_line = f.readline().strip()
+            f.seek(0)
+            
+            # Check if it's STLAR format (tab-separated with headers)
+            if '\t' in first_line and ('Start Time' in first_line or 'start_ms' in first_line):
+                # STLAR format: tab-separated with "Start Time(ms):" and "Stop Time(ms):" columns
+                eoi_df = pd.read_csv(eoi_path, sep='\t')
+                
+                # Handle different column name formats
+                start_col = None
+                stop_col = None
+                
+                for col in eoi_df.columns:
+                    if 'start' in col.lower() and 'time' in col.lower():
+                        start_col = col
+                    if 'stop' in col.lower() and 'time' in col.lower():
+                        stop_col = col
+                
+                if start_col is None or stop_col is None:
+                    raise ValueError(f"Could not find start/stop time columns. Found: {eoi_df.columns.tolist()}")
+                
+                eois_ms = eoi_df[[start_col, stop_col]].values
+                # Don't use ID column as label - it contains identifiers like "HIL1", not numeric labels
+                labels = None
+            else:
+                # Generic txt format: whitespace-separated start_ms stop_ms [label]
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        try:
+                            start_ms = float(parts[0])
+                            stop_ms = float(parts[1])
+                            eois_ms.append([start_ms, stop_ms])
+                            labels.append(int(parts[2]) if len(parts) > 2 else None)
+                        except ValueError:
+                            continue
+        
+        eois_ms = np.array(eois_ms)
+        labels = labels if (labels and any(l is not None for l in labels)) else None
+    
+    if len(eois_ms) == 0:
+        raise ValueError("No EOIs found in file")
+    
+    if args.verbose:
+        print(f"Loaded {len(eois_ms)} EOIs from {eoi_path}")
+    
+    # Load .egf signal file using ReadEEG
+    egf_path = Path(args.egf_file).expanduser()
+    if not egf_path.exists():
+        raise FileNotFoundError(f"EGF file not found: {egf_path}")
+    
+    try:
+        signal, fs = ReadEEG(str(egf_path))
+        signal = np.asarray(signal, dtype=np.float32).flatten()
+        
+        # Apply bits-to-uV conversion if set file provided
+        if args.set_file and not args.skip_bits2uv:
+            set_path = Path(args.set_file).expanduser()
+            if set_path.exists():
+                try:
+                    conversion_factor = bits2uV(str(set_path))
+                    signal = signal * conversion_factor
+                    if args.verbose:
+                        print(f"Applied bits-to-uV conversion: factor={conversion_factor}")
+                except Exception as e:
+                    print(f"Warning: Could not apply bits-to-uV conversion: {e}")
+        
+        if args.verbose:
+            print(f"Loaded EGF signal: {signal.shape} samples at {fs} Hz")
+    except Exception as e:
+        raise RuntimeError(f"Failed to load EGF file: {e}")
+    
+    # Get region presets (hardcoded to avoid GUI initialization)
+    region_presets = {
+        'LEC': {
+            'bands': {
+                'ripple': [80, 250],
+                'fast_ripple': [250, 500],
+                'gamma': [30, 80],
+            },
+            'durations': {
+                'ripple_min_ms': 15,
+                'ripple_max_ms': 120,
+                'fast_min_ms': 10,
+                'fast_max_ms': 80,
+            },
+            'threshold_sd': 3.5,
+            'epoch_s': 300,
+            'behavior_gating': True,
+            'speed_threshold_min_cm_s': 0.0,
+            'speed_threshold_max_cm_s': 5.0,
+            'dl_export': {
+                'filter_by_duration': True,
+                'annotate_band': True,
+                'behavior_gating': True,
+            },
+        },
+        'Hippocampus': {
+            'bands': {
+                'ripple': [100, 250],
+                'fast_ripple': [250, 500],
+                'gamma': [30, 80],
+            },
+            'durations': {
+                'ripple_min_ms': 15,
+                'ripple_max_ms': 120,
+                'fast_min_ms': 10,
+                'fast_max_ms': 80,
+            },
+            'threshold_sd': 4.0,
+            'epoch_s': 300,
+            'behavior_gating': True,
+            'speed_threshold_min_cm_s': 0.0,
+            'speed_threshold_max_cm_s': 5.0,
+            'dl_export': {
+                'filter_by_duration': True,
+                'annotate_band': True,
+                'behavior_gating': True,
+            },
+        },
+        'MEC': {
+            'bands': {
+                'ripple': [80, 200],
+                'fast_ripple': [200, 500],
+                'gamma': [30, 80],
+            },
+            'durations': {
+                'ripple_min_ms': 15,
+                'ripple_max_ms': 120,
+                'fast_min_ms': 10,
+                'fast_max_ms': 80,
+            },
+            'threshold_sd': 3.5,
+            'epoch_s': 300,
+            'behavior_gating': True,
+            'speed_threshold_min_cm_s': 0.0,
+            'speed_threshold_max_cm_s': 5.0,
+            'dl_export': {
+                'filter_by_duration': True,
+                'annotate_band': True,
+                'behavior_gating': True,
+            },
+        },
+    }
+    
+    region_preset = region_presets.get(args.region, {})
+    
+    if not region_preset:
+        raise ValueError(f"Unknown region: {args.region}")
+    
+    if args.verbose:
+        print(f"Applied region preset: {args.region}")
+        print(f"  Frequency bands: {region_preset.get('bands', {})}")
+        print(f"  Durations: {region_preset.get('durations', {})}")
+        print(f"  Speed range: {region_preset.get('speed_threshold_min_cm_s', 0)}-{region_preset.get('speed_threshold_max_cm_s', 5)} cm/s")
+    
+    # Load optional .pos file for behavior gating
+    speed_signal = None
+    pos_file_path = None
+    
+    # Try to auto-discover .pos file if not provided
+    if args.pos_file:
+        pos_file_path = Path(args.pos_file).expanduser()
+    else:
+        # Look for .pos file in same directory as EGF, with same base name
+        egf_base = egf_path.stem  # e.g., "20160908-2-NO-3700" from "20160908-2-NO-3700.egf"
+        possible_pos = egf_path.parent / f"{egf_base}.pos"
+        if possible_pos.exists():
+            pos_file_path = possible_pos
+            if args.verbose:
+                print(f"Auto-discovered POS file: {pos_file_path}")
+    
+    if pos_file_path:
+        try:
+            from .core.Tint_Matlab import getpos, speed2D
+            # Load raw position data first, without arena-specific transformations
+            x_raw, y_raw, t_raw, fs_speed = getpos(str(pos_file_path), arena='Linear Track', method='raw', custom_ppm=args.ppm)
+            
+            # Only proceed if we got valid position data
+            if x_raw is not None and len(x_raw) > 0 and x_raw.size > 0:
+                # Flatten and remove obvious bad values (1023 = missing in Axona system)
+                x_clean = x_raw.flatten().copy()
+                y_clean = y_raw.flatten().copy()
+                t_clean = t_raw.flatten().copy()
+                
+                # Replace 1023 (missing data marker) with NaN
+                x_clean[x_clean == 1023] = np.nan
+                y_clean[y_clean == 1023] = np.nan
+                
+                # Remove remaining NaNs
+                valid_idx = ~(np.isnan(x_clean) | np.isnan(y_clean))
+                if np.sum(valid_idx) > 0:
+                    x_clean = x_clean[valid_idx]
+                    y_clean = y_clean[valid_idx]
+                    t_clean = t_clean[valid_idx]
+                    
+                    # Calculate 2D speed from x, y coordinates
+                    speed_data = speed2D(x_clean.reshape(-1, 1), y_clean.reshape(-1, 1), t_clean.reshape(-1, 1))
+                    speed_signal = (np.asarray(speed_data, dtype=np.float32).flatten(), fs_speed)
+                    if args.verbose:
+                        print(f"Loaded POS speed data: {speed_signal[0].shape} samples at {fs_speed} Hz")
+                else:
+                    print(f"Warning: POS file has no valid position data after cleaning, behavior gating disabled")
+            else:
+                print(f"Warning: POS file loaded but no position samples found, behavior gating disabled")
+        except Exception as e:
+            if args.verbose:
+                import traceback
+                traceback.print_exc()
+            print(f"Warning: Could not load POS file: {e}, behavior gating disabled")
+    
+    # Filter and annotate EOIs with region preset logic
+    output_dir = Path(args.output).expanduser()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    rows = []
+    speed_min = region_preset.get('speed_threshold_min_cm_s', 0.0)
+    speed_max = region_preset.get('speed_threshold_max_cm_s', 5.0)
+    bands = region_preset.get('bands', {})
+    durations = region_preset.get('durations', {})
+    
+    for idx, (s_ms, e_ms) in enumerate(eois_ms):
+        s_ms = float(s_ms)
+        e_ms = float(e_ms)
+        duration = e_ms - s_ms
+        
+        # Extract segment
+        s_idx = int(max(0, np.floor(s_ms / 1000.0 * fs)))
+        e_idx = int(min(len(signal), np.ceil(e_ms / 1000.0 * fs)))
+        
+        if e_idx <= s_idx:
+            continue
+        
+        seg = signal[s_idx:e_idx].astype(np.float32)
+        seg_path = output_dir / f"{args.prefix}_{idx:05d}.npy"
+        np.save(seg_path, seg)
+        
+        # Determine band label (simple heuristic: check duration)
+        band_label = 'ripple_fast_ripple'
+        r_min = durations.get('ripple_min_ms', 15)
+        r_max = durations.get('ripple_max_ms', 120)
+        fr_min = durations.get('fast_min_ms', 10)
+        fr_max = durations.get('fast_max_ms', 80)
+        
+        if r_min <= duration <= r_max:
+            band_label = 'ripple'
+        elif fr_min <= duration <= fr_max:
+            band_label = 'fast_ripple'
+        
+        # Determine behavioral state if speed signal available
+        state = 'unknown'
+        mean_speed = None
+        if speed_signal is not None:
+            speed_trace, fs_speed = speed_signal
+            s_idx_speed = int(max(0, np.floor(s_ms / 1000.0 * fs_speed)))
+            e_idx_speed = int(min(len(speed_trace), np.ceil(e_ms / 1000.0 * fs_speed)))
+            if e_idx_speed > s_idx_speed:
+                seg_speed = speed_trace[s_idx_speed:e_idx_speed]
+                if seg_speed.size > 0:
+                    mean_speed = float(np.nanmean(seg_speed))
+                    state = 'rest' if (speed_min <= mean_speed <= speed_max) else 'active'
+        
+        label = int(labels[idx]) if labels and labels[idx] is not None else None
+        
+        rows.append({
+            'segment_path': str(seg_path),
+            'label': label,
+            'band_label': band_label,
+            'duration_ms': duration,
+            'state': state,
+            'mean_speed_cm_s': mean_speed,
+        })
+    
+    # Write manifest
+    manifest_path = output_dir / 'manifest.csv'
+    _safe_write_csv(pd.DataFrame(rows), manifest_path)
+    
+    print(f"\n{'='*60}")
+    print("PREPARED DL TRAINING DATA")
+    print(f"{'='*60}")
+    print(f"Region:          {args.region}")
+    print(f"EOIs processed:  {len(rows)}")
+    print(f"Output dir:      {output_dir}")
+    print(f"Manifest:        {manifest_path}")
+    if speed_signal:
+        print(f"Behavior gating: Enabled (speed {speed_min}-{speed_max} cm/s = rest)")
+    else:
+        print("Behavior gating: Disabled (no speed signal)")
+    print(f"{'='*60}\n")
+    
+    if args.verbose:
+        state_counts = {}
+        for row in rows:
+            s = row['state']
+            state_counts[s] = state_counts.get(s, 0) + 1
+        print("State distribution:")
+        for state, count in sorted(state_counts.items()):
+            print(f"  {state}: {count}")
+
+
+__all__ = ['build_parser', 'run_hilbert_batch', 'run_ste_batch', 'run_mni_batch', 'run_consensus_batch', 'run_dl_batch', 'run_prepare_dl']
 
 
 def main(args=None):
@@ -506,6 +846,8 @@ def main(args=None):
         run_consensus_batch(args)
     elif args.command == 'dl-batch':
         run_dl_batch(args)
+    elif args.command == 'prepare-dl':
+        run_prepare_dl(args)
     else:
         parser = build_parser()
         parser.print_help()
