@@ -1172,7 +1172,15 @@ python -m stlar train-dl \
   --batch-size 32 \
   --lr 5e-4 \
   --out-dir models
-# Output: models/best.pt, models/last.pt
+# Output: models/best.pt, models/training_curves.png, models/training_metrics.json
+
+# 3a. Train with real-time GUI monitoring
+python -m stlar train-dl \
+  --train training_data/manifest_train.csv \
+  --val training_data/manifest_val.csv \
+  --epochs 20 \
+  --gui
+# Opens interactive window with live loss curves and diagnostics
 
 # 4. Export to production formats
 python -m stlar export-dl \
@@ -1245,7 +1253,161 @@ The main hyperparameters to tune are:
 - If validation loss plateaus, try reducing learning rate by 2-5x
 - If model overfits (val loss worse than train), increase weight-decay to 1e-3
 - If training is unstable, reduce batch-size to 32 or lower
-- Monitor validation loss; if no improvement for 5 epochs, training stops
+- Monitor validation loss; if no improvement for 5 epochs, training stops automatically
+
+### Training Visualization and Diagnostics
+
+The `train-dl` command includes both static visualization (saved plots) and optional real-time GUI monitoring to help diagnose issues and optimize hyperparameters.
+
+#### Real-Time GUI Monitoring
+
+Enable live training visualization with the `--gui` flag:
+
+```bash
+python -m stlar train-dl \
+  --train data/manifest_train.csv \
+  --val data/manifest_val.csv \
+  --epochs 20 \
+  --gui
+```
+
+**The GUI window shows:**
+- **Live loss curves** updating every epoch (train vs val)
+- **Current metrics** (epoch, train loss, val loss, gap, improvement)
+- **Improvement plot** showing validation loss delta per epoch
+- **Generalization gap** (val - train loss) over time
+- **Training stability** (rolling standard deviation)
+- **Diagnostics log** with warnings for overfitting, plateaus, instability
+- **Stop button** to halt training early if needed
+
+![Training GUI Screenshot](docs/training_gui_example.png)
+
+**GUI Features:**
+- ✅ Updates after each epoch in real-time
+- ✅ Automatic detection of overfitting, plateaus, and instability
+- ✅ Manual stop button to halt training gracefully
+- ✅ Keeps GUI open after training completes for review
+- ✅ All 4 diagnostic plots synchronized with console output
+
+**When to use GUI:**
+- Interactive training sessions where you want to monitor progress
+- Experimenting with hyperparameters and need immediate feedback
+- Long training runs (20+ epochs) where you want to check status
+- Teaching/demonstrations to show training dynamics
+
+**When to skip GUI:**
+- Batch processing multiple models (use `--no-plot` instead)
+- Running on remote servers without display
+- Automated pipelines and scripts
+- Quick test runs
+
+#### Static Visualization (Post-Training)
+
+**Automatic Outputs:**
+
+After training completes, you'll find in the output directory:
+- `training_curves.png` - Comprehensive 4-panel diagnostic plot
+- `training_metrics.json` - Complete training history in JSON format
+
+**What the visualization shows:**
+
+1. **Training vs Validation Loss** (top-left)
+   - Blue line: training loss over epochs
+   - Red line: validation loss over epochs
+   - Automatically detects and flags overfitting (when val >> train)
+
+2. **Loss Improvement per Epoch** (top-right)
+   - Shows how much validation loss decreases each epoch
+   - Automatically detects plateaus (no improvement for 5+ epochs)
+
+3. **Generalization Gap** (bottom-left)
+   - Shows val_loss - train_loss over time
+   - Red zone indicates overfitting
+   - Ideal: gap should be small and stable
+
+4. **Training Stability** (bottom-right)
+   - Shows rolling standard deviation of losses
+   - Detects unstable training (high variance)
+   - Helps identify when to reduce batch size
+
+**Example output:**
+```
+Epoch 10/20 | Train: 0.3245 | Val: 0.3512 | Gap: +0.0267 | Δ: -0.0023
+  ✓ New best! Saved to models/best.pt
+
+============================================================
+Training complete!
+Best epoch: 10 | Best val loss: 0.3512
+============================================================
+
+Generating training visualizations...
+✓ Saved training curves to models/training_curves.png
+✓ Saved training metrics to models/training_metrics.json
+
+📊 Training Diagnostics:
+----------------------------------------
+✓ No significant overfitting
+⚠️  PLATEAU detected
+   Val loss not improving
+   → Try: Reduce --lr by 2-5x
+✓ Training is stable
+----------------------------------------
+```
+
+**Interpreting the diagnostics:**
+
+| Warning | What it means | Action |
+|---------|---------------|--------|
+| ⚠️ OVERFITTING | Val loss much higher than train loss | Increase `--weight-decay` to 1e-3 |
+| ⚠️ PLATEAU | Val loss stopped improving | Reduce `--lr` by 2-5x (e.g., from 1e-3 to 2e-4) |
+| ⚠️ INSTABILITY | Large swings in loss values | Reduce `--batch-size` to 32 or lower |
+
+**Disabling plots:**
+
+If you don't want visualization (e.g., for batch processing on servers without display):
+```bash
+python -m stlar train-dl \
+  --train data/manifest_train.csv \
+  --val data/manifest_val.csv \
+  --no-plot
+```
+
+**Accessing training history programmatically:**
+
+The `training_metrics.json` file contains all loss values:
+```json
+{
+  "train_loss": [0.6234, 0.4521, 0.3845, ...],
+  "val_loss": [0.6421, 0.4712, 0.3912, ...],
+  "best_epoch": 10,
+  "best_val_loss": 0.3512
+}
+```
+
+You can load this to create custom visualizations or analyses:
+```python
+import json
+import matplotlib.pyplot as plt
+
+with open('models/training_metrics.json') as f:
+    history = json.load(f)
+
+plt.plot(history['train_loss'], label='Train')
+plt.plot(history['val_loss'], label='Val')
+plt.xlabel('Epoch')
+plt.ylabel('Loss')
+plt.legend()
+plt.savefig('custom_plot.png')
+```
+
+**Requirements:**
+
+The visualization feature requires matplotlib:
+```bash
+pip install matplotlib
+```
+
+If matplotlib is not installed, training will still work but plots will be skipped with a warning.
 
 ### Model Architecture
 
@@ -1268,6 +1430,7 @@ See `hfoGUI/dl_training/model.py` for implementation details.
 | **Training very slow** | Increase `--batch-size`, reduce number of `--num-workers` |
 | **Model crashes during export** | Ensure checkpoint file is valid `.pt` file from training |
 | **ONNX export fails** | Install with: `pip install onnx onnxruntime` |
+| **Plots not generated** | Install matplotlib: `pip install matplotlib` |
 
 ### Advanced Usage
 
