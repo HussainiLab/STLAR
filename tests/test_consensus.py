@@ -28,7 +28,7 @@ def test_merge_overlaps():
     
     merged = _merge_overlaps(events, overlap_threshold_ms=10.0)
     print(f"✓ Merge overlaps test passed: {len(merged)} merged from {len(events)}")
-    assert len(merged) == 2
+    assert len(merged) == 2, f"Expected 2 merged events, got {len(merged)}"
     print(f"  Merged events: {merged}")
 
 
@@ -45,7 +45,7 @@ def test_vote_consensus():
     consensus = _vote_consensus(all_events, voting_strategy='majority', overlap_threshold_ms=10.0)
     print(f"✓ Majority voting (2/3) test passed: {len(consensus)} consensus events")
     print(f"  Consensus events: {consensus}")
-    assert len(consensus) >= 1
+    assert len(consensus) >= 1, f"Expected at least 1 consensus event, got {len(consensus)}"
     
     # Strict voting (3/3)
     consensus_strict = _vote_consensus(all_events, voting_strategy='strict', overlap_threshold_ms=10.0)
@@ -108,7 +108,8 @@ def test_consensus_detection():
     if len(consensus) > 0:
         print(f"  Consensus events (ms): {consensus}")
     
-    return consensus
+    assert isinstance(consensus, np.ndarray), "Consensus should return ndarray"
+    assert len(consensus) >= 0, "Consensus events should be non-negative"
 
 
 if __name__ == '__main__':
