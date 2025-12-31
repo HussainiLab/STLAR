@@ -31,9 +31,10 @@ STLAR (pronounced Stellar) is a Spatio-Temporal LFP analysis tool combining hfoG
 - Train custom models on your data
 - PyTorch (.pt) and ONNX export
 - Pre-trained models available
+- CLI tool to prepare training data with behavioral annotation and train/val splitting
 
 ### ⚡ Batch Processing
-- Multi-file batch CLI processing with 5 detection methods
+- Multi-file batch CLI processing with 5 detection methods + training data prep
 - Recursive directory scanning
 - Configurable detection thresholds
 - Progress tracking and summary statistics
@@ -274,6 +275,7 @@ python -m stlar <command> [options]
 **Supported commands:**
 - **HFO Detection:** `hilbert-batch`, `ste-batch`, `mni-batch`, `consensus-batch`, `dl-batch`
 - **Spatial Mapping:** `batch-ssm`
+- **DL Training Data:** `prepare-dl`
 
 **Key features:**
 - ✅ Single-file or directory (recursive) processing
@@ -737,6 +739,433 @@ batch-ssm creates a timestamped output directory for each session:
 - Adjust `--speed-filter` threshold if filtering out too much data
 - Verify ppm calibration is correct (incorrect scaling affects spatial binning)
 
+## Deep Learning Training Data Preparation (prepare-dl)
+
+The `prepare-dl` command converts detected HFOs (EOIs) into deep learning training data with region-specific presets, behavioral state annotation, and optional train/validation splitting.
+
+### Basic Usage
+
+```bash
+# Simple preparation with auto-discovered position file
+python -m stlar prepare-dl \
+  --eoi-file detections.txt \
+  --egf-file recording.egf \
+  --output training_data
+
+# With behavior gating (speed annotation)
+python -m stlar prepare-dl \
+  --eoi-file detections.txt \
+  --egf-file recording.egf \
+  --pos-file recording.pos \
+  --ppm 595 \
+  --output training_data
+
+# With train/validation splitting
+python -m stlar prepare-dl \
+  --eoi-file detections.txt \
+  --egf-file recording.egf \
+  --output training_data \
+  --split-train-val \
+  --val-fraction 0.2
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `--eoi-file` | str | **required** | Path to EOI file (.txt, .csv with start_ms,stop_ms columns) |
+| `--egf-file` | str | **required** | Path to .egf data file for signal extraction |
+| `-o, --output` | str | **required** | Output directory for segments and manifest files |
+| `--region` | str | LEC | Brain region preset (LEC, Hippocampus, MEC) |
+| `--set-file` | str | auto | Optional .set file for bits-to-uV conversion |
+| `--pos-file` | str | auto-detect | Optional .pos file for behavior gating (auto-discovered if not specified) |
+| `--ppm` | int | - | Pixels-per-millimeter for position calibration (e.g., 595) |
+| `--prefix` | str | seg | Prefix for segment filenames |
+| `--skip-bits2uv` | flag | off | Skip bits-to-uV conversion |
+| `--split-train-val` | flag | off | Split manifest into train/val sets |
+| `--val-fraction` | float | 0.2 | Fraction of data for validation (0.0-1.0) |
+| `--random-seed` | int | 42 | Random seed for reproducible splits |
+| `-v, --verbose` | flag | off | Verbose progress logging |
+
+### Region Presets
+
+Each brain region has pre-configured frequency bands, duration constraints, and speed thresholds:
+
+**LEC (Lateral Entorhinal Cortex)**
+- Ripples: 80-250 Hz, 15-120 ms
+- Fast ripples: 250-500 Hz, 10-80 ms
+- Immobile threshold: 0.0-5.0 cm/s
+
+**Hippocampus**
+- Ripples: 100-250 Hz, 15-120 ms
+- Fast ripples: 250-500 Hz, 10-80 ms
+- Immobile threshold: 0.0-5.0 cm/s
+
+**MEC (Medial Entorhinal Cortex)**
+- Ripples: 80-200 Hz, 15-120 ms
+- Fast ripples: 200-500 Hz, 10-80 ms
+- Immobile threshold: 0.0-5.0 cm/s
+
+### Output Structure
+
+The `prepare-dl` command creates:
+
+```
+training_data/
+├── manifest.csv                    # Complete manifest (all events)
+├── manifest_train.csv              # Training set (if --split-train-val)
+├── manifest_val.csv                # Validation set (if --split-train-val)
+├── seg_00000.npy                   # Signal segments (16-bit float)
+├── seg_00001.npy
+├── seg_00002.npy
+└── ...
+```
+
+**Manifest columns:**
+- `segment_path`: Path to .npy signal file
+- `label`: Event label (None if unlabeled)
+- `band_label`: Band classification (ripple, fast_ripple, gamma)
+- `duration_ms`: Event duration in milliseconds
+- `state`: Behavioral state (rest=immobile, active=moving, unknown=no position data)
+- `mean_speed_cm_s`: Mean speed during event (cm/s)
+
+### Examples
+
+**Prepare labeled data for LEC:**
+```bash
+python -m stlar prepare-dl \
+  --eoi-file scoring/session_HIL.txt \
+  --egf-file data/session.egf \
+  --set-file data/session.set \
+  --region LEC \
+  --output training_data/lec \
+  -v
+```
+
+**Prepare with behavior gating and PPM calibration:**
+```bash
+python -m stlar prepare-dl \
+  --eoi-file scoring/session_HIL.txt \
+  --egf-file data/session.egf \
+  --pos-file data/session.pos \
+  --ppm 595 \
+  --region Hippocampus \
+  --output training_data/hippo \
+  -v
+```
+
+**Prepare with train/val split (80/20):**
+```bash
+python -m stlar prepare-dl \
+  --eoi-file scoring/session_HIL.txt \
+  --egf-file data/session.egf \
+  --pos-file data/session.pos \
+  --ppm 595 \
+  --output training_data \
+  --split-train-val \
+  --val-fraction 0.2 \
+  --random-seed 42 \
+  -v
+```
+
+**Prepare with 70/30 split and custom seed:**
+```bash
+python -m stlar prepare-dl \
+  --eoi-file scoring/session_HIL.txt \
+  --egf-file data/session.egf \
+  --output training_data \
+  --split-train-val \
+  --val-fraction 0.3 \
+  --random-seed 123 \
+  -v
+```
+
+### Behavior Gating
+
+When a .pos file is provided, events are automatically annotated with behavioral state:
+- **Rest**: Speed within region preset range (e.g., 0.0-5.0 cm/s) → immobile animal
+- **Active**: Speed outside range → moving animal
+- **Unknown**: No position data available
+
+This enables training deep learning models on behavioral context:
+```python
+# Example: Train only on immobile periods
+train_data = manifest[manifest['state'] == 'rest']
+```
+
+### Train/Val Splitting
+
+The `--split-train-val` flag creates two additional manifests:
+- **manifest_train.csv**: Training set (default 80%)
+- **manifest_val.csv**: Validation set (default 20%)
+
+Splitting is:
+- **Random event-wise split** when labels are absent
+- **Stratified split** when labels exist (preserves label distribution)
+- **Reproducible** with `--random-seed` parameter
+
+Example: Using the splits for training:
+```python
+import pandas as pd
+from pathlib import Path
+
+# Load manifests
+train_df = pd.read_csv('training_data/manifest_train.csv')
+val_df = pd.read_csv('training_data/manifest_val.csv')
+
+# Load signals
+train_signals = [np.load(path) for path in train_df['segment_path']]
+val_signals = [np.load(path) for path in val_df['segment_path']]
+
+# Train model...
+```
+
+## Complete Deep Learning Training Workflow
+
+This section describes the end-to-end workflow for training a custom deep learning model and using it for HFO detection.
+
+### Workflow Overview
+
+The complete DL training pipeline has **4 steps**:
+
+1. **prepare-dl**: Convert EOIs to training segments and manifests
+2. **train-dl**: Train a 1D CNN classifier on the prepared data
+3. **export-dl**: Export the trained model to production formats
+4. **dl-batch**: Use the exported model for detection on new recordings
+
+### Step 1: Prepare Training Data
+
+```bash
+python -m stlar prepare-dl \
+  --eoi-file detections.txt \
+  --egf-file recording.egf \
+  --output training_data \
+  --split-train-val \
+  --val-fraction 0.2
+```
+
+**Output:**
+- `training_data/manifest_train.csv` - Training manifest (80% of events)
+- `training_data/manifest_val.csv` - Validation manifest (20% of events)
+- `training_data/seg_*.npy` - Signal segments (16-bit float arrays)
+
+**See:** [Deep Learning Training Data Preparation (prepare-dl)](#deep-learning-training-data-preparation-prepare-dl) section above for detailed parameter documentation.
+
+### Step 2: Train the Model
+
+Train a 1D CNN classifier on the prepared training data:
+
+```bash
+python -m stlar train-dl \
+  --train training_data/manifest_train.csv \
+  --val training_data/manifest_val.csv \
+  --epochs 15 \
+  --batch-size 64 \
+  --lr 1e-3 \
+  --weight-decay 1e-4 \
+  --out-dir models
+```
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `--train` | str | **required** | Path to training manifest CSV |
+| `--val` | str | **required** | Path to validation manifest CSV |
+| `--epochs` | int | 15 | Number of training epochs |
+| `--batch-size` | int | 64 | Training batch size |
+| `--lr` | float | 1e-3 | Learning rate |
+| `--weight-decay` | float | 1e-4 | L2 regularization coefficient |
+| `--out-dir` | str | models | Output directory for checkpoints |
+| `--num-workers` | int | 2 | DataLoader worker processes |
+| `-v, --verbose` | flag | off | Verbose training progress |
+
+**Output:**
+- `models/best.pt` - Best model checkpoint (saved by validation loss)
+- `models/last.pt` - Final model checkpoint
+- Training logs printed to console
+
+**Training Process:**
+- Trains for N epochs on training set
+- Evaluates on validation set after each epoch
+- Saves best model when validation loss improves
+- Uses early stopping (stops if no improvement for 5 epochs)
+- Device auto-detection (GPU if available, CPU fallback)
+
+### Step 3: Export the Model
+
+Convert the trained model to production formats:
+
+```bash
+python -m stlar export-dl \
+  --ckpt models/best.pt \
+  --onnx models/model.onnx \
+  --ts models/model.pt \
+  --example-len 2000
+```
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `--ckpt` | str | **required** | Path to best.pt checkpoint from training |
+| `--onnx` | str | **required** | Output path for ONNX model |
+| `--ts` | str | **required** | Output path for TorchScript model |
+| `--example-len` | int | 2000 | Example segment length for tracing |
+| `-v, --verbose` | flag | off | Verbose logging |
+
+**Output:**
+- `models/model.onnx` - ONNX format (cross-platform inference)
+- `models/model.pt` - TorchScript format (fast inference, pure C++)
+
+**Note:** ONNX export requires `pip install onnx`. If onnx is not installed, only TorchScript will be saved.
+
+### Step 4: Use the Model for Detection
+
+Detect HFOs in new recordings using the trained model:
+
+```bash
+python -m stlar dl-batch \
+  -f recording.egf \
+  --model-path models/model.pt \
+  --threshold 0.5 \
+  -o results/
+```
+
+**Result:** Detections saved to `results/recording_DL.txt` (start_ms, stop_ms format)
+
+### Complete Example: Start-to-Finish Training
+
+This example trains a model on one session and tests it on another:
+
+```bash
+#!/bin/bash
+
+# 1. Detect HFOs in training session using consensus voting
+python -m stlar consensus-batch \
+  -f data/session_A.egf \
+  -o scoring/
+# Output: scoring/session_A_CONSENSUS.txt
+
+# 2. Prepare training data from detected HFOs
+python -m stlar prepare-dl \
+  --eoi-file scoring/session_A_CONSENSUS.txt \
+  --egf-file data/session_A.egf \
+  --set-file data/session_A.set \
+  --output training_data \
+  --split-train-val \
+  --val-fraction 0.2
+# Output: training_data/manifest_train.csv, manifest_val.csv, seg_*.npy
+
+# 3. Train the model
+python -m stlar train-dl \
+  --train training_data/manifest_train.csv \
+  --val training_data/manifest_val.csv \
+  --epochs 20 \
+  --batch-size 32 \
+  --lr 5e-4 \
+  --out-dir models
+# Output: models/best.pt, models/last.pt
+
+# 4. Export to production formats
+python -m stlar export-dl \
+  --ckpt models/best.pt \
+  --onnx models/hfo_detector.onnx \
+  --ts models/hfo_detector.pt
+# Output: models/hfo_detector.pt, models/hfo_detector.onnx
+
+# 5. Test on new recording
+python -m stlar dl-batch \
+  -f data/session_B.egf \
+  --model-path models/hfo_detector.pt \
+  --threshold 0.5 \
+  -o results/
+# Output: results/session_B_DL.txt
+```
+
+### Hyperparameter Tuning
+
+The main hyperparameters to tune are:
+
+| Parameter | Range | Default | Effect |
+|-----------|-------|---------|--------|
+| `--lr` (learning rate) | 1e-5 to 1e-2 | 1e-3 | Too high: unstable training. Too low: slow convergence |
+| `--batch-size` | 8 to 256 | 64 | Lower: more noise but better generalization. Higher: faster training but less stable |
+| `--weight-decay` | 0 to 1e-2 | 1e-4 | Higher: more regularization, reduces overfitting |
+| `--epochs` | 5 to 100 | 15 | More epochs can improve performance (with early stopping) |
+
+**Tuning advice:**
+- Start with defaults (lr=1e-3, batch-size=64)
+- If validation loss plateaus, try reducing learning rate by 2-5x
+- If model overfits (val loss worse than train), increase weight-decay to 1e-3
+- If training is unstable, reduce batch-size to 32 or lower
+- Monitor validation loss; if no improvement for 5 epochs, training stops
+
+### Model Architecture
+
+The 1D CNN uses:
+- **Input:** 1D signal segments (variable length, typically 2000-5000 samples)
+- **Architecture:** 3 convolutional blocks with batch norm and max pooling
+- **Output:** Binary logit (HFO vs non-HFO)
+- **Loss:** Binary cross-entropy with logits
+- **Optimizer:** Adam with weight decay
+
+See `hfoGUI/dl_training/model.py` for implementation details.
+
+### Troubleshooting Training
+
+| Issue | Solution |
+|-------|----------|
+| **CUDA out of memory** | Reduce `--batch-size` to 32 or lower |
+| **Very high training loss** | Check data format (should be float32, normalized) |
+| **Validation loss not decreasing** | Try smaller `--lr` (e.g., 5e-4), increase `--weight-decay` |
+| **Training very slow** | Increase `--batch-size`, reduce number of `--num-workers` |
+| **Model crashes during export** | Ensure checkpoint file is valid `.pt` file from training |
+| **ONNX export fails** | Install with: `pip install onnx onnxruntime` |
+
+### Advanced Usage
+
+**Using trained model in Python:**
+```python
+import torch
+from hfoGUI.dl_training.model import build_model
+
+# Load checkpoint
+ckpt = torch.load('models/best.pt', weights_only=False)
+model = build_model()
+model.load_state_dict(ckpt['model_state'])
+model.eval()
+
+# Inference
+with torch.no_grad():
+    signal = torch.randn(1, 1, 2000)  # batch_size=1, channels=1, length=2000
+    logit = model(signal)
+    prob = torch.sigmoid(logit)
+```
+
+**Using TorchScript export:**
+```python
+import torch
+
+# Load TorchScript model (no PyTorch training code needed)
+model = torch.jit.load('models/model.pt')
+signal = torch.randn(1, 1, 2000)
+logit = model(signal)
+prob = torch.sigmoid(logit)
+```
+
+**Using ONNX export:**
+```python
+import onnxruntime as rt
+import numpy as np
+
+# Load ONNX model
+sess = rt.InferenceSession('models/model.onnx')
+signal = np.random.randn(1, 1, 2000).astype(np.float32)
+logit = sess.run(None, {'input': signal})[0]
+prob = 1 / (1 + np.exp(-logit))
+```
+
 ## Module Structure
 
 ### Temporal Analysis (HFO Detection)
@@ -748,6 +1177,11 @@ batch-ssm creates a timestamped output directory for each session:
 - Location: `spatial_mapper/`
 - Entry: `python -m stlar spatial-gui` (GUI) or `python -m stlar batch-ssm` (CLI)
 - See: [spatial_mapper/README.md](spatial_mapper/README.md)
+
+### Deep Learning (Training Data Preparation)
+- Location: `hfoGUI/dl_training/`
+- Entry: `python -m stlar prepare-dl` (CLI) or GUI Score window
+- See: [hfoGUI/dl_training/README.md](hfoGUI/dl_training/README.md)
 
 ## Original Tools
 

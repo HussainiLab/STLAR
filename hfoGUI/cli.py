@@ -389,7 +389,30 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_dl.add_argument('--ppm', type=int, help='Pixels-per-millimeter for .pos file (e.g., 595)')
     prepare_dl.add_argument('--prefix', default='seg', help='Prefix for segment filenames (default: seg)')
     prepare_dl.add_argument('--skip-bits2uv', action='store_true', help='Skip bits-to-uV conversion')
+    prepare_dl.add_argument('--split-train-val', action='store_true', help='Split manifest into train/val sets')
+    prepare_dl.add_argument('--val-fraction', type=float, default=0.2, help='Fraction of data for validation (default: 0.2)')
+    prepare_dl.add_argument('--random-seed', type=int, default=42, help='Random seed for reproducible splits (default: 42)')
     prepare_dl.add_argument('-v', '--verbose', action='store_true', help='Verbose logging')
+
+    # --- Train DL Model Parser ---
+    train_dl = sub.add_parser('train-dl', help='Train 1D CNN model on prepared data')
+    train_dl.add_argument('--train', required=True, help='Path to train manifest CSV')
+    train_dl.add_argument('--val', required=True, help='Path to val manifest CSV')
+    train_dl.add_argument('--epochs', type=int, default=15, help='Number of training epochs (default: 15)')
+    train_dl.add_argument('--batch-size', type=int, default=64, help='Training batch size (default: 64)')
+    train_dl.add_argument('--lr', type=float, default=1e-3, help='Learning rate (default: 1e-3)')
+    train_dl.add_argument('--weight-decay', type=float, default=1e-4, help='L2 regularization (default: 1e-4)')
+    train_dl.add_argument('--out-dir', type=str, default='models', help='Output directory for checkpoints (default: models)')
+    train_dl.add_argument('--num-workers', type=int, default=2, help='DataLoader workers (default: 2)')
+    train_dl.add_argument('-v', '--verbose', action='store_true', help='Verbose logging')
+
+    # --- Export DL Model Parser ---
+    export_dl = sub.add_parser('export-dl', help='Export trained model to TorchScript and ONNX')
+    export_dl.add_argument('--ckpt', required=True, help='Path to best.pt checkpoint file')
+    export_dl.add_argument('--onnx', required=True, help='Output path for ONNX model')
+    export_dl.add_argument('--ts', required=True, help='Output path for TorchScript model (.pt)')
+    export_dl.add_argument('--example-len', type=int, default=2000, help='Example segment length for tracing (default: 2000)')
+    export_dl.add_argument('-v', '--verbose', action='store_true', help='Verbose logging')
 
     return parser
 
@@ -499,6 +522,65 @@ def run_dl_batch(args: argparse.Namespace):
         print("\nTip: Activate your environment first (e.g., 'conda activate stlar').")
         return
     _run_batch_job(args, _process_dl_file)
+
+
+def _split_train_val(manifest_df, val_fraction=0.2, random_seed=42, verbose=False):
+    """
+    Split manifest dataframe into train and validation sets.
+    Uses random event-wise split (stratified if label column exists).
+    
+    Args:
+        manifest_df: DataFrame with manifest data
+        val_fraction: Fraction of events for validation (0.0-1.0)
+        random_seed: Random seed for reproducibility
+        verbose: Print verbose output
+    
+    Returns:
+        train_df, val_df: Split dataframes
+    """
+    np.random.seed(random_seed)
+    
+    n_total = len(manifest_df)
+    n_val = max(1, int(n_total * val_fraction))
+    n_train = n_total - n_val
+    
+    # Try to do stratified split by label if label column exists
+    if 'label' in manifest_df.columns and manifest_df['label'].notna().sum() > 0:
+        # Stratified split to preserve label distribution
+        from sklearn.model_selection import train_test_split
+        try:
+            train_df, val_df = train_test_split(
+                manifest_df,
+                test_size=val_fraction,
+                random_state=random_seed,
+                stratify=manifest_df['label'].fillna('unknown')
+            )
+            if verbose:
+                print(f"\nUsing stratified split (preserving label distribution)")
+        except Exception as e:
+            # Fall back to random split if stratification fails
+            if verbose:
+                print(f"\nWarning: Stratified split failed ({e}), using random split")
+            indices = np.random.permutation(n_total)
+            val_indices = indices[:n_val]
+            train_indices = indices[n_val:]
+            train_df = manifest_df.iloc[train_indices].copy()
+            val_df = manifest_df.iloc[val_indices].copy()
+    else:
+        # Random event-wise split
+        indices = np.random.permutation(n_total)
+        val_indices = indices[:n_val]
+        train_indices = indices[n_val:]
+        train_df = manifest_df.iloc[train_indices].copy()
+        val_df = manifest_df.iloc[val_indices].copy()
+        if verbose:
+            print(f"\nUsing random event-wise split")
+    
+    # Reset indices
+    train_df = train_df.reset_index(drop=True)
+    val_df = val_df.reset_index(drop=True)
+    
+    return train_df, val_df
 
 
 def run_prepare_dl(args: argparse.Namespace):
@@ -802,7 +884,24 @@ def run_prepare_dl(args: argparse.Namespace):
     
     # Write manifest
     manifest_path = output_dir / 'manifest.csv'
-    _safe_write_csv(pd.DataFrame(rows), manifest_path)
+    manifest_df = pd.DataFrame(rows)
+    _safe_write_csv(manifest_df, manifest_path)
+    
+    # Split manifest into train/val if requested
+    if args.split_train_val:
+        train_df, val_df = _split_train_val(manifest_df, args.val_fraction, args.random_seed, args.verbose)
+        
+        # Write train/val manifests
+        train_manifest_path = output_dir / 'manifest_train.csv'
+        val_manifest_path = output_dir / 'manifest_val.csv'
+        
+        _safe_write_csv(train_df, train_manifest_path)
+        _safe_write_csv(val_df, val_manifest_path)
+        
+        if args.verbose:
+            print(f"\nTrain/Val Split:")
+            print(f"  Train: {len(train_df)} events → {train_manifest_path}")
+            print(f"  Val:   {len(val_df)} events → {val_manifest_path}")
     
     print(f"\n{'='*60}")
     print("PREPARED DL TRAINING DATA")
@@ -811,11 +910,92 @@ def run_prepare_dl(args: argparse.Namespace):
     print(f"EOIs processed:  {len(rows)}")
     print(f"Output dir:      {output_dir}")
     print(f"Manifest:        {manifest_path}")
+    if args.split_train_val:
+        print(f"Train manifest:  {train_manifest_path} ({len(train_df)} events)")
+        print(f"Val manifest:    {val_manifest_path} ({len(val_df)} events)")
     if speed_signal:
         print(f"Behavior gating: Enabled (speed {speed_min}-{speed_max} cm/s = rest)")
     else:
         print("Behavior gating: Disabled (no speed signal)")
     print(f"{'='*60}\n")
+
+
+def run_train_dl(args: argparse.Namespace):
+    """Train a 1D CNN model on prepared DL training data."""
+    try:
+        from .dl_training.train import main as train_main
+    except ImportError as e:
+        print(f"Error: Deep learning dependencies not installed. Install with: pip install torch")
+        raise
+    
+    # Create a namespace that matches train.py's expected arguments
+    train_args = argparse.Namespace(
+        train=args.train,
+        val=args.val,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        lr=args.lr,
+        weight_decay=args.weight_decay,
+        out_dir=args.out_dir,
+        num_workers=args.num_workers,
+    )
+    
+    # Call train.py's main directly
+    import sys
+    old_argv = sys.argv
+    try:
+        # Build command-line arguments
+        train_argv = [
+            'train-dl',
+            '--train', args.train,
+            '--val', args.val,
+            '--epochs', str(args.epochs),
+            '--batch-size', str(args.batch_size),
+            '--lr', str(args.lr),
+            '--weight-decay', str(args.weight_decay),
+            '--out-dir', args.out_dir,
+            '--num-workers', str(args.num_workers),
+        ]
+        sys.argv = train_argv
+        
+        # Call train.py's parse_args() and main()
+        from .dl_training.train import parse_args, main
+        train_parsed_args = parse_args()
+        main()
+        
+    finally:
+        sys.argv = old_argv
+
+
+def run_export_dl(args: argparse.Namespace):
+    """Export trained DL model to TorchScript and ONNX formats."""
+    try:
+        from .dl_training.export import main as export_main
+    except ImportError as e:
+        print(f"Error: Deep learning dependencies not installed. Install with: pip install torch")
+        raise
+    
+    import sys
+    old_argv = sys.argv
+    try:
+        # Build command-line arguments
+        export_argv = [
+            'export-dl',
+            '--ckpt', args.ckpt,
+            '--onnx', args.onnx,
+            '--ts', args.ts,
+            '--example-len', str(args.example_len),
+        ]
+        sys.argv = export_argv
+        
+        # Call export.py's parse_args() and main()
+        from .dl_training.export import parse_args, main
+        export_parsed_args = parse_args()
+        main()
+        
+    finally:
+        sys.argv = old_argv
+
     
     if args.verbose:
         state_counts = {}
@@ -827,7 +1007,7 @@ def run_prepare_dl(args: argparse.Namespace):
             print(f"  {state}: {count}")
 
 
-__all__ = ['build_parser', 'run_hilbert_batch', 'run_ste_batch', 'run_mni_batch', 'run_consensus_batch', 'run_dl_batch', 'run_prepare_dl']
+__all__ = ['build_parser', 'run_hilbert_batch', 'run_ste_batch', 'run_mni_batch', 'run_consensus_batch', 'run_dl_batch', 'run_prepare_dl', 'run_train_dl', 'run_export_dl']
 
 
 def main(args=None):
@@ -848,6 +1028,10 @@ def main(args=None):
         run_dl_batch(args)
     elif args.command == 'prepare-dl':
         run_prepare_dl(args)
+    elif args.command == 'train-dl':
+        run_train_dl(args)
+    elif args.command == 'export-dl':
+        run_export_dl(args)
     else:
         parser = build_parser()
         parser.print_help()
