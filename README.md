@@ -27,8 +27,8 @@ STLAR (pronounced Stellar) is a Spatio-Temporal LFP analysis tool combining hfoG
 - Cross-region coordination metrics
 
 ### 🤖 Deep Learning
-- Automated HFO classification
-- Train custom models on your data
+- Automated HFO classification with 1D CNN models
+- Train custom models on your data with **real-time GUI monitoring**
 - PyTorch (.pt) and ONNX export
 - Pre-trained models available
 - CLI tool to prepare training data with behavioral annotation and train/val splitting
@@ -1072,6 +1072,8 @@ python -m stlar train-dl \
 | `--weight-decay` | float | 1e-4 | L2 regularization coefficient |
 | `--out-dir` | str | models | Output directory for checkpoints (single-session only) |
 | `--num-workers` | int | 2 | DataLoader worker processes |
+| `--gui` | flag | off | Enable real-time training GUI with live loss curves and diagnostics |
+| `--no-plot` | flag | off | Disable static training curve plot (GUI takes precedence) |
 | `-v, --verbose` | flag | off | Verbose training progress |
 
 **Output:**
@@ -1280,24 +1282,49 @@ python -m stlar train-dl \
 - **Diagnostics log** with warnings for overfitting, plateaus, instability
 - **Stop button** to halt training early if needed
 
-![Training GUI Screenshot](docs/training_gui_example.png)
-
 **GUI Features:**
-- ✅ Updates after each epoch in real-time
+- ✅ Real-time updates after each epoch
 - ✅ Automatic detection of overfitting, plateaus, and instability
 - ✅ Manual stop button to halt training gracefully
-- ✅ Keeps GUI open after training completes for review
+- ✅ GUI stays open after training completes for review
 - ✅ All 4 diagnostic plots synchronized with console output
+- ✅ Works on Windows, macOS, and Linux
+- ✅ No configuration needed - just use `--gui` flag
 
 **When to use GUI:**
 - Interactive training sessions where you want to monitor progress
 - Experimenting with hyperparameters and need immediate feedback
 - Long training runs (20+ epochs) where you want to check status
 - Teaching/demonstrations to show training dynamics
+- Debugging overfitting or convergence issues
 
 **When to skip GUI:**
 - Batch processing multiple models (use `--no-plot` instead)
 - Running on remote servers without display
+- Server/background training jobs
+
+#### Static Visualization (Automatic)
+
+Even without the GUI, `train-dl` saves training curves automatically:
+
+```bash
+python -m stlar train-dl \
+  --train data/manifest_train.csv \
+  --val data/manifest_val.csv \
+  --epochs 20 \
+  --out-dir models
+```
+
+**Automatic output:**
+- `models/training_curves.png` - 4-panel diagnostic plot (loss, improvement, gap, stability)
+- `models/training_metrics.json` - Metrics in JSON format for programmatic analysis
+- `models/best.pt` - Best model checkpoint
+
+**The diagnostic plot shows:**
+- Loss curves (overfitting indicator)
+- Validation improvement rate (convergence speed)
+- Generalization gap (model accuracy)
+- Training stability (variance)
 - Automated pipelines and scripts
 - Quick test runs
 
@@ -1544,6 +1571,36 @@ Include:
 - Error message (full traceback)
 - Python version: `python --version`
 - Operating system
+
+## Recent Changes
+
+### Deep Learning Training GUI (Latest)
+- ✅ **Real-time training monitor** with live loss curves and diagnostics plots
+- ✅ **Fixed QApplication initialization** for PyQt5/pyqtgraph compatibility
+- ✅ **Automatic diagnostics** for overfitting detection, loss plateaus, and training instability  
+- ✅ **Early stopping** (stops after 5 epochs without improvement)
+- ✅ **Static training plots** saved automatically (`training_curves.png`, `training_metrics.json`)
+- ✅ **Better console output** with readable diagnostics (replaced UTF-8 symbols for Windows compatibility)
+- ✅ **Lazy imports** for GUI modules to avoid requiring QApplication before training starts
+
+**Usage:**
+```bash
+python -m stlar train-dl \
+  --train manifest_train.csv \
+  --val manifest_val.csv \
+  --epochs 20 \
+  --gui  # <-- New flag for real-time monitoring
+```
+
+### Architecture Improvements
+- Refactored `training_gui.py` to defer Qt widget creation until after QApplication initialization
+- Moved Qt-dependent imports (pyqtgraph, FileDialog) to lazy initialization in exporters
+- Removed `exporters` from module-level imports in `stlar/__init__.py` to prevent import errors in non-GUI contexts
+
+### Compatibility
+- Cross-platform support (Windows, macOS, Linux)
+- Works with Conda and venv virtual environments
+- CPU and GPU training supported (auto-detection)
 
 ## License
 
