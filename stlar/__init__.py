@@ -13,9 +13,10 @@ except Exception:
     version = '0.0.0'
 
 # Alias key submodules so imports like `stlar.core` resolve
+# NOTE: We avoid importing 'exporters' at module level because it depends on Qt/pyqtgraph
+# and requires QApplication to be created first. Instead, use lazy imports.
 for sub in [
     'core',
-    'exporters',
     'dl_training',
     'intan_rhd_format',
 ]:
@@ -26,3 +27,4 @@ try:
     from hfoGUI.main import run  # noqa: F401
 except Exception:
     pass
+

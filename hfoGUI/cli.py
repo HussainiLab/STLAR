@@ -406,6 +406,8 @@ def build_parser() -> argparse.ArgumentParser:
     train_dl.add_argument('--weight-decay', type=float, default=1e-4, help='L2 regularization (default: 1e-4)')
     train_dl.add_argument('--out-dir', type=str, default='models', help='Output directory for checkpoints (default: models)')
     train_dl.add_argument('--num-workers', type=int, default=2, help='DataLoader workers (default: 2)')
+    train_dl.add_argument('--no-plot', action='store_true', help='Disable saving training curve plots')
+    train_dl.add_argument('--gui', action='store_true', help='Show real-time training GUI with live plots')
     train_dl.add_argument('-v', '--verbose', action='store_true', help='Verbose logging')
 
     # --- Export DL Model Parser ---
@@ -1137,6 +1139,10 @@ def run_train_dl(args: argparse.Namespace):
                         '--out-dir', str(session_output),
                         '--num-workers', str(args.num_workers),
                     ]
+                    if args.no_plot:
+                        train_argv.append('--no-plot')
+                    if args.gui:
+                        train_argv.append('--gui')
                     sys.argv = train_argv
                     
                     from .dl_training.train import parse_args, main
@@ -1186,6 +1192,10 @@ def run_train_dl(args: argparse.Namespace):
                 '--out-dir', args.out_dir,
                 '--num-workers', str(args.num_workers),
             ]
+            if args.no_plot:
+                train_argv.append('--no-plot')
+            if args.gui:
+                train_argv.append('--gui')
             sys.argv = train_argv
             
             from .dl_training.train import parse_args, main

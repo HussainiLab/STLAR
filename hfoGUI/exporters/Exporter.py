@@ -1,10 +1,27 @@
-from pyqtgraph.widgets.FileDialog import FileDialog
-from  pyqtgraph.Qt import QtGui, QtCore, QtSvg
-from pyqtgraph.GraphicsScene import GraphicsScene
 import os, re
 import numpy as np
 
 LastExportDirectory = None
+
+# Lazy imports - FileDialog will be imported only when needed
+_FileDialog = None
+_QtGui = None
+_QtCore = None
+_QtSvg = None
+_GraphicsScene = None
+
+def _ensure_imports():
+    """Lazily import Qt modules only when needed."""
+    global _FileDialog, _QtGui, _QtCore, _QtSvg, _GraphicsScene
+    if _FileDialog is None:
+        from pyqtgraph.widgets.FileDialog import FileDialog
+        from pyqtgraph.Qt import QtGui, QtCore, QtSvg
+        from pyqtgraph.GraphicsScene import GraphicsScene
+        _FileDialog = FileDialog
+        _QtGui = QtGui
+        _QtCore = QtCore
+        _QtSvg = QtSvg
+        _GraphicsScene = GraphicsScene
 
 
 class Exporter(object):
