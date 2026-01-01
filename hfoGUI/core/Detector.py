@@ -104,6 +104,7 @@ class _LocalDLDetector:
         hop = max(1, int(win * self.hop_frac))
 
         pos_windows = []
+        prob_values = []
         for start in range(0, len(x), hop):
             end = min(len(x), start + win)
             seg = x[start:end]
@@ -118,9 +119,19 @@ class _LocalDLDetector:
                 if isinstance(logit, (list, tuple)):
                     logit = logit[0]
                 prob = torch.sigmoid(logit.squeeze()).item()
+                prob_values.append(prob)
             if prob >= float(self.params.threshold):
                 pos_windows.append((start, end))
 
+        # Debug: show probability distribution
+        if prob_values:
+            prob_min = min(prob_values)
+            prob_max = max(prob_values)
+            prob_mean = sum(prob_values) / len(prob_values)
+            self._progress(f"[DL Detection] Probability distribution - min: {prob_min:.4f}, max: {prob_max:.4f}, mean: {prob_mean:.4f}")
+            self._progress(f"[DL Detection] Threshold: {float(self.params.threshold):.4f}")
+        self._progress(f"[DL Detection] Found {len(pos_windows)} positive windows out of {len(prob_values)} total windows")
+        
         # Merge overlapping/nearby windows (within 200ms gap)
         # This prevents merging distant positive detections into one event
         max_gap_samples = int(0.2 * fs)  # 200ms gap threshold
@@ -134,6 +145,11 @@ class _LocalDLDetector:
             else:
                 # Gap too large, start new event
                 merged.append([start, end])
+
+        self._progress(f"[DL Detection] After merging: {len(merged)} events (threshold=0.2s gap)")
+        for i, (start, end) in enumerate(merged):
+            duration_sec = (end - start) / float(fs)
+            self._progress(f"[DL Detection]   Event {i+1}: {start//int(fs)}s - {end//int(fs)}s (duration: {duration_sec:.3f}s)")
 
         return [{'start': s/float(fs), 'end': e/float(fs)} for s, e in merged]
 
