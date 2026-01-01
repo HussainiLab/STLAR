@@ -2,6 +2,8 @@ import numpy as np
 from scipy.signal import butter, sosfiltfilt
 from dataclasses import dataclass
 from pathlib import Path
+import threading
+import os
 
 # All detection methods now use local implementations
 # No external dependencies required
@@ -26,42 +28,68 @@ class ParamDL:
 class _LocalDLDetector:
     """Lightweight DL detector wrapper with TorchScript fallback and RMS backup."""
 
-    def __init__(self, params: ParamDL):
+    def __init__(self, params: ParamDL, progress_callback=None):
         self.params = params
         self.model = None
         self.device = 'cpu'
         self.window_secs = 1.0  # 1-second windows by default
         self.hop_frac = 0.5      # 50% overlap
+        self.progress_callback = progress_callback
         self._load_model()
+
+    def _progress(self, msg):
+        """Send progress message to callback and print to console."""
+        print(msg)
+        if self.progress_callback:
+            try:
+                self.progress_callback(msg)
+            except Exception as e:
+                print(f"Progress callback error: {e}")
 
     def _load_model(self):
         path = Path(self.params.model_path)
         if not path.exists():
+            self._progress(f"[DL Detection] Model file not found: {path}")
             self.model = None
             return
+        
+        file_size = path.stat().st_size / (1024*1024)
+        self._progress(f"[DL Detection] Loading model ({file_size:.1f} MB)...")
+        
         try:
             import torch
             torch.set_grad_enabled(False)
             # Try TorchScript first
+            self._progress("[DL Detection] Attempting torch.jit.load...")
             try:
                 self.model = torch.jit.load(str(path), map_location=self.device)
-            except Exception:
+                self._progress("[DL Detection] Successfully loaded as TorchScript")
+                self.model = torch.jit.load(str(path), map_location=self.device)
+                self._progress("[DL Detection] Successfully loaded as TorchScript")
+            except Exception as e:
                 # Fallback to regular torch.load (state_dict or full model)
+                self._progress(f"[DL Detection] TorchScript failed ({type(e).__name__}), trying torch.load...")
                 try:
                     obj = torch.load(str(path), map_location=self.device)
                     if hasattr(obj, 'state_dict'):
                         # Attempt to rebuild simple model if state_dict
+                        self._progress("[DL Detection] Loading state_dict...")
                         from hfoGUI.dl_training.model import build_model  # local import
                         mdl = build_model()
                         mdl.load_state_dict(obj['model_state'] if isinstance(obj, dict) and 'model_state' in obj else obj)
                         self.model = mdl
+                        self._progress("[DL Detection] Model reconstructed from state_dict")
                     else:
                         self.model = obj
-                except Exception:
+                        self._progress("[DL Detection] Model loaded with torch.load")
+                except Exception as e2:
+                    self._progress(f"[DL Detection] torch.load failed ({type(e2).__name__})")
                     self.model = None
             if self.model is not None:
                 self.model.eval()
-        except Exception:
+                self._progress("[DL Detection] Model ready for inference")
+        except Exception as e:
+            self._progress(f"[DL Detection] Unexpected error: {type(e).__name__}")
             self.model = None
 
     def detect(self, signal, ch_name='chn1'):
@@ -106,8 +134,8 @@ class _LocalDLDetector:
         return [{'start': s/float(fs), 'end': e/float(fs)} for s, e in merged]
 
 
-def set_DL_detector(params: ParamDL):
-    return _LocalDLDetector(params)
+def set_DL_detector(params: ParamDL, progress_callback=None):
+    return _LocalDLDetector(params, progress_callback=progress_callback)
 
 
 def _convert_pyhfo_results_to_eois(hfos, Fs):
@@ -371,7 +399,7 @@ def _local_mni_detect(data, fs, baseline_window=10.0, threshold_percentile=99.0,
     return np.asarray(events, dtype=float)
 
 
-def dl_detect_events(data, fs, model_path, threshold=0.5, batch_size=32, **kwargs):
+def dl_detect_events(data, fs, model_path, threshold=0.5, batch_size=32, progress_callback=None, **kwargs):
     """
     Run Deep Learning detection using local PyTorch/ONNX implementation.
     """
@@ -383,13 +411,13 @@ def dl_detect_events(data, fs, model_path, threshold=0.5, batch_size=32, **kwarg
         threshold=float(threshold),
         batch_size=int(batch_size)
     )
-    detector = set_DL_detector(args)
+    detector = set_DL_detector(args, progress_callback=progress_callback)
     signal = np.asarray(data, dtype=np.float32)
     detection_results = detector.detect(signal, 'chn1')
     return _convert_pyhfo_results_to_eois(detection_results, fs)
 
 
-def dl_classify_segments(data, fs, segments_ms, model_path, threshold=0.5, batch_size=32):
+def dl_classify_segments(data, fs, segments_ms, model_path, threshold=0.5, batch_size=32, progress_callback=None):
     """
     Classify provided segments (EOIs) using a deep learning model if available.
 
@@ -400,18 +428,39 @@ def dl_classify_segments(data, fs, segments_ms, model_path, threshold=0.5, batch
     - model_path: path to model file (.pt/.pth for PyTorch, .onnx for ONNX)
     - threshold: probability threshold for positive class
     - batch_size: batch size for inference
+    - progress_callback: optional function to call with progress updates
 
     Returns:
     - probs: 1D array of probabilities per segment (float in [0,1])
     - labels: list of string labels ('positive'/'negative') based on threshold
     """
+    def _progress(msg):
+        print(msg)
+        if progress_callback:
+            try:
+                progress_callback(msg)
+            except Exception as e:
+                print(f"Progress callback error: {e}")
+    
     segments_ms = np.asarray(segments_ms, dtype=float)
     if segments_ms.size == 0:
         return np.asarray([]), []
 
+    # Verify model file exists and is valid
+    if not model_path:
+        _progress("ERROR: Model path is empty")
+        _progress("WARNING: Using energy-based fallback instead of DL model")
+        model_path = None
+    elif not os.path.exists(model_path):
+        _progress(f"ERROR: Model file not found: {model_path}")
+        _progress("WARNING: Using energy-based fallback instead of DL model")
+        model_path = None
+    else:
+        file_size = os.path.getsize(model_path)
+        _progress(f"[DL] Model file size: {file_size / (1024*1024):.1f} MB")
+    
+    # Extract segments
     x = np.asarray(data, dtype=np.float32)
-
-    # Extract segments in samples
     idx = (np.column_stack([segments_ms[:, 0], segments_ms[:, 1]]) * float(fs) / 1000.0).astype(int)
     idx[:, 0] = np.clip(idx[:, 0], 0, len(x))
     idx[:, 1] = np.clip(idx[:, 1], 0, len(x))
@@ -422,21 +471,52 @@ def dl_classify_segments(data, fs, segments_ms, model_path, threshold=0.5, batch
         else:
             segs.append(x[s:e].copy())
 
+    # If model file not available, use energy-based fallback
+    if not model_path:
+        _progress("[DL] Using energy-based fallback (no model available)")
+        energies = np.asarray([float(np.mean(s*s)) for s in segs], dtype=float)
+        if energies.size == 0:
+            return np.asarray([]), []
+        low = np.percentile(energies, 5.0)
+        high = np.percentile(energies, 95.0)
+        denom = max(high - low, 1e-8)
+        probs = np.clip((energies - low) / denom, 0.0, 1.0)
+        labels = ['positive' if float(p) >= float(threshold) else 'negative' for p in probs]
+        return np.asarray(probs, dtype=float), labels
+
     # Try PyTorch model first
     probs = None
     try:
+        _progress("[DL] Step 1/5: Importing PyTorch...")
         import torch
+        _progress(f"[DL] PyTorch version: {torch.__version__}")
         torch.set_grad_enabled(False)
-        # Load model
+        
+        _progress(f"[DL] Step 2/5: Checking model file...")
+        _progress(f"[DL] Model path: {model_path}")
+        
+        # Load model - this is where it likely hangs
+        _progress(f"[DL] Step 3/5: Loading model (this may take 10-60 seconds)...")
         mdl = None
+        
+        # Try TorchScript first
         try:
+            _progress(f"[DL] Attempting torch.jit.load...")
             mdl = torch.jit.load(model_path, map_location='cpu')
-        except Exception:
+            _progress(f"[DL] Successfully loaded as TorchScript")
+        except Exception as e:
+            _progress(f"[DL] TorchScript load failed: {type(e).__name__}")
+            # Try regular torch.load
             try:
+                _progress(f"[DL] Attempting torch.load...")
                 mdl = torch.load(model_path, map_location='cpu')
-            except Exception:
+                _progress(f"[DL] Successfully loaded with torch.load")
+            except Exception as e2:
+                _progress(f"[DL] torch.load failed: {type(e2).__name__}")
                 mdl = None
+        
         if mdl is not None:
+            _progress(f"[DL] Step 4/5: Preparing {len(segs)} segments for inference...")
             mdl.eval()
             # Prepare batch: pad to max length, add channel dim
             max_len = max(int(s.size) for s in segs)
@@ -453,6 +533,7 @@ def dl_classify_segments(data, fs, segments_ms, model_path, threshold=0.5, batch
             arr = (arr - mu) / sd
             tens = torch.from_numpy(arr).unsqueeze(1)  # (N, 1, L)
 
+            _progress(f"[DL] Step 5/5: Running inference on {len(segs)} segments...")
             out = []
             for i in range(0, tens.size(0), int(batch_size)):
                 batch = tens[i:i+int(batch_size)]
@@ -465,9 +546,14 @@ def dl_classify_segments(data, fs, segments_ms, model_path, threshold=0.5, batch
                     p = 1.0 / (1.0 + np.exp(-y.squeeze()))
                 out.append(p)
             probs = np.concatenate(out, axis=0)
+            _progress(f"[DL] Inference complete! Classified {len(probs)} segments")
+        else:
+            _progress("[DL] Model unavailable, using energy-based fallback")
     except ImportError:
+        _progress("[DL] PyTorch not installed, using energy-based fallback")
         probs = None
-    except Exception:
+    except Exception as e:
+        _progress(f"[DL] Unexpected error: {type(e).__name__}: {str(e)[:100]}")
         probs = None
 
     # Try ONNX Runtime if PyTorch unavailable
