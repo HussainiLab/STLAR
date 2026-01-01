@@ -437,7 +437,7 @@ def build_parser() -> argparse.ArgumentParser:
     train_dl.add_argument('--weight-decay', type=float, default=1e-4, help='L2 regularization (default: 1e-4)')
     train_dl.add_argument('--out-dir', type=str, default='models', help='Output directory for checkpoints (default: models)')
     train_dl.add_argument('--num-workers', type=int, default=2, help='DataLoader workers (default: 2)')
-    train_dl.add_argument('--model-type', type=int, default=2, help='Model architecture: 1=SimpleCNN, 2=ResNet1D, 3=InceptionTime (default: 2)')
+    train_dl.add_argument('--model-type', type=int, default=2, help='Model architecture: 1=SimpleCNN, 2=ResNet1D, 3=InceptionTime, 4=Transformer, 5=2D_CNN (default: 2)')
     train_dl.add_argument('--no-plot', action='store_true', help='Disable saving training curve plots')
     train_dl.add_argument('--gui', action='store_true', help='Show real-time training GUI with live plots')
     train_dl.add_argument('-v', '--verbose', action='store_true', help='Verbose logging')
@@ -449,6 +449,7 @@ def build_parser() -> argparse.ArgumentParser:
     export_dl.add_argument('--onnx', help='Output path for ONNX model (single-session mode, or suffix for batch mode like "_model.onnx")')
     export_dl.add_argument('--ts', help='Output path for TorchScript model (single-session mode, or suffix for batch mode like "_model.pt")')
     export_dl.add_argument('--example-len', type=int, default=2000, help='Example segment length for tracing (default: 2000)')
+    export_dl.add_argument('--model-type', type=int, default=2, help='Model architecture: 1=SimpleCNN, 2=ResNet1D, 3=InceptionTime, 4=Transformer, 5=2D_CNN (default: 2)')
     export_dl.add_argument('-v', '--verbose', action='store_true', help='Verbose logging')
 
     return parser
@@ -1307,6 +1308,7 @@ def run_export_dl(args: argparse.Namespace):
                         '--onnx', str(onnx_path),
                         '--ts', str(ts_path),
                         '--example-len', str(args.example_len),
+                        '--model-type', str(args.model_type),
                     ]
                     sys.argv = export_argv
                     
@@ -1352,6 +1354,7 @@ def run_export_dl(args: argparse.Namespace):
                 '--onnx', args.onnx,
                 '--ts', args.ts,
                 '--example-len', str(args.example_len),
+                '--model-type', str(args.model_type),
             ]
             sys.argv = export_argv
             

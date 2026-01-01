@@ -692,6 +692,8 @@ class ScoreWindow(QtWidgets.QWidget):
         self.model_type_combo.addItem("Simple 1D CNN", 1)
         self.model_type_combo.addItem("ResNet1D (Default)", 2)
         self.model_type_combo.addItem("InceptionTime", 3)
+        self.model_type_combo.addItem("1D Transformer", 4)
+        self.model_type_combo.addItem("2D Spectrogram CNN", 5)
         self.model_type_combo.setCurrentIndex(1)
         train_form.addRow("Model Architecture:", self.model_type_combo)
 
@@ -2517,6 +2519,7 @@ class ScoreWindow(QtWidgets.QWidget):
             "--ckpt", ckpt,
             "--onnx", onnx_path,
             "--ts", ts_path,
+            "--model-type", str(self.model_type_combo.currentData()),
         ]
 
         # Prevent overlapping runs
