@@ -688,6 +688,13 @@ class ScoreWindow(QtWidgets.QWidget):
         train_form.addRow("Val manifest (CSV):", val_row)
 
         # Hyperparameters
+        self.model_type_combo = QtWidgets.QComboBox()
+        self.model_type_combo.addItem("Simple 1D CNN", 1)
+        self.model_type_combo.addItem("ResNet1D (Default)", 2)
+        self.model_type_combo.addItem("InceptionTime", 3)
+        self.model_type_combo.setCurrentIndex(1)
+        train_form.addRow("Model Architecture:", self.model_type_combo)
+
         self.epochs_spin = QtWidgets.QSpinBox()
         self.epochs_spin.setRange(1, 1000)
         self.epochs_spin.setValue(15)
@@ -2459,6 +2466,7 @@ class ScoreWindow(QtWidgets.QWidget):
             "--lr", str(self.lr_spin.value()),
             "--weight-decay", str(self.weight_decay_spin.value()),
             "--out-dir", out_dir,
+            "--model-type", str(self.model_type_combo.currentData()),
         ]
         
         # Add GUI flag if checkbox is checked
