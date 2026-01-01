@@ -1897,7 +1897,14 @@ class ScoreWindow(QtWidgets.QWidget):
                 elif 'Stop Time' in score_key:
                     new_item.setText(score_value, str(e_ms))
                 elif 'Duration' in score_key:
-                    new_item.setText(score_value, str(e_ms - s_ms))
+                    try:
+                        dur_ms = float(e_ms) - float(s_ms)
+                        if dur_ms > 0:
+                            new_item.setText(score_value, f"{dur_ms:.3f}")
+                        else:
+                            new_item.setText(score_value, "")
+                    except Exception:
+                        new_item.setText(score_value, "")
                 elif 'Settings File' in score_key:
                     # Try to copy from original EOI item if available
                     if idx < len(selected_items):
@@ -4216,7 +4223,7 @@ class DLParametersWindow(QtWidgets.QWidget):
         path_layout.addWidget(self.model_path_edit)
         path_layout.addWidget(self.browse_btn)
 
-        self.threshold_edit = QtWidgets.QLineEdit("0.5")
+        self.threshold_edit = QtWidgets.QLineEdit("0.85")
         self.batch_size_edit = QtWidgets.QLineEdit("32")
 
         layout.addRow("Model Path:", path_layout)
