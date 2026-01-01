@@ -133,7 +133,54 @@ def subject_wise_split(df: pd.DataFrame,
     # Get unique subjects
     subjects = df['subject_id'].unique()
     n_subjects = len(subjects)
+    
+    # Handle single-subject case
+    if n_subjects == 1:
+        from sklearn.model_selection import train_test_split
+        
+        print(f"\n{'='*60}")
+        print(f"⚠️  WARNING: Only 1 subject detected!")
+        print(f"{'='*60}")
+        print("Performing EVENT-LEVEL random split (accepts data leakage risk).")
+        print(f"This is acceptable for initial testing but not recommended for final models.")
+        print(f"{'='*60}\n")
+        
+        try:
+            train_df, val_df = train_test_split(
+                df,
+                test_size=val_fraction,
+                random_state=random_state,
+                stratify=df['label']  # Maintain class balance
+            )
+        except ValueError:
+            # If stratification fails (e.g., too few samples), do regular split
+            train_df, val_df = train_test_split(
+                df,
+                test_size=val_fraction,
+                random_state=random_state
+            )
+        
+        print(f"\n{'='*60}")
+        print(f"EVENT-LEVEL SPLIT (Single Subject - Data Leakage Risk)")
+        print(f"{'='*60}")
+        print(f"Train events: {len(train_df)}")
+        print(f"Val events: {len(val_df)}")
+        
+        return train_df, val_df
+    
     n_val = max(1, int(n_subjects * val_fraction))  # At least 1 subject for val
+    n_train = n_subjects - n_val
+    
+    # Ensure at least 1 subject in training
+    if n_train == 0:
+        print(f"\n{'='*60}")
+        print(f"⚠️  WARNING: Validation fraction too high for {n_subjects} subjects!")
+        print(f"{'='*60}")
+        print(f"Requested val_fraction={val_fraction} would leave 0 training subjects.")
+        print(f"Adjusting to: {n_subjects-1} train, 1 val")
+        print(f"{'='*60}\n")
+        n_val = 1
+        n_train = n_subjects - 1
     
     # Shuffle subjects
     np.random.seed(random_state)
