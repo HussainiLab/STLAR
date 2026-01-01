@@ -351,7 +351,14 @@ class ScoreWindow(QtWidgets.QWidget):
         scorer_layout.addWidget(scorer_filename_label)
         scorer_layout.addWidget(self.scorer)
 
-        source_label = QtWidgets.QLabel("Source:")
+        brain_region_label = QtWidgets.QLabel('Brain Region:')
+        self.brain_region = QtWidgets.QLineEdit()
+
+        brain_region_layout = QtWidgets.QHBoxLayout()
+        brain_region_layout.addWidget(brain_region_label)
+        brain_region_layout.addWidget(self.brain_region)
+
+        source_label = QtWidgets.QLabel('Source:')
         self.source = QtWidgets.QComboBox()
         self.source.setEditable(True)
         self.source.lineEdit().setReadOnly(True)
@@ -381,7 +388,8 @@ class ScoreWindow(QtWidgets.QWidget):
             'Stop Time(ms):': 3,
             'Duration(ms):': 4,
             'Scorer:': 5,
-            'Settings File:': 6,
+            'Brain Region:': 6,
+            'Settings File:': 7,
         }
 
         for key, value in self.score_headers.items():
@@ -439,7 +447,7 @@ class ScoreWindow(QtWidgets.QWidget):
             btn_layout.addWidget(button)
         # ------------------ layout ------------------------------
 
-        layout_order = [score_filename_btn_layout, score_filename_layout,  scorer_layout, self.scores, score_layout,
+        layout_order = [score_filename_btn_layout, score_filename_layout, scorer_layout, brain_region_layout, self.scores, score_layout,
                         btn_layout]
 
         layout_score = QtWidgets.QVBoxLayout()
@@ -716,6 +724,14 @@ class ScoreWindow(QtWidgets.QWidget):
         self.lr_spin.setValue(1e-3)
         train_form.addRow("Learning rate:", self.lr_spin)
 
+        self.weight_decay_spin = QtWidgets.QDoubleSpinBox()
+        self.weight_decay_spin.setDecimals(6)
+        self.weight_decay_spin.setRange(0.0, 1.0)
+        self.weight_decay_spin.setSingleStep(1e-4)
+        self.weight_decay_spin.setValue(1e-4)
+        self.weight_decay_spin.setToolTip("L2 regularization strength (typical: 1e-4). Increase to 1e-3 or 1e-2 to reduce overfitting.")
+        train_form.addRow("Weight decay:", self.weight_decay_spin)
+
         self.train_out_dir_edit = QtWidgets.QLineEdit()
         train_out_btn = QtWidgets.QPushButton("Browse…")
         train_out_btn.clicked.connect(self.browseTrainOutDir)
@@ -725,6 +741,11 @@ class ScoreWindow(QtWidgets.QWidget):
         train_form.addRow("Output dir:", out_row)
 
         train_layout.addLayout(train_form)
+
+        # GUI visualization checkbox
+        self.train_gui_check = QtWidgets.QCheckBox("Show training visualization GUI")
+        self.train_gui_check.setToolTip("Opens a real-time visualization window showing loss curves and metrics during training")
+        train_layout.addWidget(self.train_gui_check)
 
         # Train button
         self.train_btn = QtWidgets.QPushButton("Start Training")
@@ -807,10 +828,26 @@ class ScoreWindow(QtWidgets.QWidget):
                             <li><b>STE</b>: Local RMS-based detector (windowed energy thresholding).</li>
                             <li><b>MNI</b>: Percentile/energy-based baseline detector.</li>
                             <li><b>Deep Learning</b>: Requires an exported TorchScript model (Train tab).</li>
-                            <li><b>Add Selected EOI to Score</b>: Moves EOIs into the Score tab for labeling.</li>
+                            <li><b>Add Selected EOI(s) to Score</b>: Moves EOIs into the Score tab for labeling. 
+                                <br><i>If a brain region preset is active, automatically applies:</i>
+                                <ul style="margin-left: 20px; margin-top: 5px;">
+                                    <li>Duration filtering (ripple vs fast ripple ranges)</li>
+                                    <li>Behavioral gating (speed thresholds if .pos file loaded)</li>
+                                    <li>Automatic band labeling via PSD analysis</li>
+                                </ul>
+                            </li>
                             <li><b>Update EOI Region</b>: Updates EOI start/stop (ms) from current graph selection.</li>
-                            <li><b>Export EOIs for DL Training</b>: Exports unlabeled segments + manifest CSV.</li>
+                            <li><b>Export EOIs for DL Training</b>: Exports unlabeled segments + manifest CSV (applies region preset if active).</li>
                         </ul>
+
+                        <h3>Recommended Workflow for DL Training:</h3>
+                        <ol style="margin-left: 20px; background-color: #f0f0f0; padding: 10px; border-radius: 5px;">
+                            <li>Run automated detection (Hilbert/STE/MNI)</li>
+                            <li>Apply brain region preset if desired (see Settings)</li>
+                            <li>Select EOIs → <b>"Add Selected EOI(s) to Score"</b> (applies preset filters + auto-labels)</li>
+                            <li>Manually add artifact examples or other scores as needed</li>
+                            <li>Use <b>"Create labels for DL training"</b> to export (Ripple-family=1, Artifact=0)</li>
+                        </ol>
 
                         <h3>3) CSV convert (Train/Val split)</h3>
                         <ul>
@@ -828,7 +865,9 @@ class ScoreWindow(QtWidgets.QWidget):
                             <li><b>Epochs</b>: Full passes over the training set (typical: 15–50).</li>
                             <li><b>Batch size</b>: Segments per step (typical: 32–128). Larger batches train faster but may overfit.</li>
                             <li><b>Learning rate</b>: Optimizer step size (typical: 1e-3). Lower (5e-4) for stability; higher (5e-3) for speed.</li>
+                            <li><b>Weight decay</b>: L2 regularization strength (typical: 1e-4). Increase to 1e-3 or 1e-2 to reduce overfitting.</li>
                             <li><b>Output dir</b>: Folder for checkpoints; saves best.pt when validation loss improves.</li>
+                            <li><b>Show training visualization GUI</b>: Opens a real-time window with loss curves and metrics during training.</li>
                             <li><b>Start Training</b>: Launches training and streams logs here.</li>
                             <li><b>Export Model</b>: Select best.pt → export TorchScript (always) and ONNX (optional). TorchScript (.pt) is used for DL detection.</li>
                         </ul>
@@ -1100,6 +1139,9 @@ class ScoreWindow(QtWidgets.QWidget):
         2) If band powers within 10% (ambiguous), fall back to duration thresholds.
         3) If duration also ambiguous, label as 'ripple_fast_ripple'.
         """
+        # Get brain region name if available
+        brain_region_name = getattr(self, 'current_region', None)
+        
         durations = profile.get('durations', {})
         r_min = durations.get('ripple_min_ms', 0)
         r_max = durations.get('ripple_max_ms', np.inf)
@@ -1190,12 +1232,15 @@ class ScoreWindow(QtWidgets.QWidget):
                         state = 'rest' if (speed_min <= mean_speed <= speed_max) else 'active'
 
             filtered.append([s_ms, e_ms])
-            metadata.append({
+            meta_dict = {
                 'band_label': band_label,
                 'duration_ms': duration,
                 'state': state,
                 'mean_speed_cm_s': mean_speed,
-            })
+            }
+            if brain_region_name:
+                meta_dict['brain_region'] = brain_region_name
+            metadata.append(meta_dict)
 
         return filtered, metadata
 
@@ -1281,6 +1326,9 @@ class ScoreWindow(QtWidgets.QWidget):
                 new_item.setText(value, 'N/A')
             elif 'Scorer' in key:
                 new_item.setText(value, scorer_name)
+            elif 'Brain Region' in key:
+                brain_region = self.brain_region.text().strip()
+                new_item.setText(value, brain_region if brain_region else 'Unknown')
 
         self.scores.addTopLevelItem(new_item)
 
@@ -1458,6 +1506,7 @@ class ScoreWindow(QtWidgets.QWidget):
         scorer_exists = any('Scorer' in column for column in df.columns)
         score_settings_file_exists = any('Settings File' in column for column in df.columns)
         duration_exists = any('Duration' in column for column in df.columns)
+        brain_region_exists = any('Brain Region' in column for column in df.columns)
 
         for key, value in self.score_headers.items():
             if 'ID' in key:
@@ -1465,6 +1514,9 @@ class ScoreWindow(QtWidgets.QWidget):
 
             elif 'Scorer' in key:
                 scorer_value = value
+
+            elif 'Brain Region' in key:
+                brain_region_value = value
 
             elif 'Settings File' in key:
                 settings_value = value
@@ -1492,6 +1544,9 @@ class ScoreWindow(QtWidgets.QWidget):
 
             if not scorer_exists:
                 item.setText(scorer_value, 'Scorer 1')
+
+            if not brain_region_exists:
+                item.setText(brain_region_value, 'Unknown')
 
             if not score_settings_file_exists:
                 item.setText(settings_value, 'N/A')
@@ -1728,43 +1783,128 @@ class ScoreWindow(QtWidgets.QWidget):
         self.mainWindow.stop_time_object.setText(str(stop_time))
 
     def addEOI(self):
-        '''This method will add the EOI values to the score list (supports multiple selections)'''
+        '''This method will add the EOI values to the score list (supports multiple selections).
+        
+        If a region profile is active, applies brain region presets, behavioral gating, 
+        and automatic labeling (same logic as "Export EOIs for DL Training").
+        '''
 
         # Auto-fill Scorer field if empty
         scorer_name = self.scorer.text().strip()
         if scorer_name == '':
             scorer_name = 'Scorer 1'
             self.scorer.setText(scorer_name)
+        
+        # Get default brain region from text field (can be overridden by metadata)
+        default_brain_region = self.brain_region.text().strip()
+        if default_brain_region == '':
+            default_brain_region = 'Unknown'
 
         # Get all selected items (supports multi-select) - make a copy to avoid modification during iteration
         selected_items = list(self.EOI.selectedItems())
         if not selected_items:
             return
 
-        # Collect indices first (before any modifications)
+        # Get column indices
+        start_col = None
+        stop_col = None
+        for key, value in self.EOI_headers.items():
+            if 'Start' in key:
+                start_col = value
+            elif 'Stop' in key:
+                stop_col = value
+
+        # Extract EOI times from selected items
+        eoi_times = []
+        for item in selected_items:
+            try:
+                s_ms = float(item.data(start_col, 0))
+                e_ms = float(item.data(stop_col, 0))
+                eoi_times.append([s_ms, e_ms])
+            except Exception:
+                continue
+
+        if not eoi_times:
+            return
+
+        # Apply region-aware filtering and annotation if profile is active
+        metadata_rows = None
+        if hasattr(self, 'region_profile') and self.region_profile:
+            try:
+                filtered_eois, metadata_rows = self._filter_and_annotate_eois_for_export(
+                    np.asarray(eoi_times), self.region_profile
+                )
+                
+                if not filtered_eois:
+                    QtWidgets.QMessageBox.warning(
+                        self, "No EOIs After Filters", 
+                        "All selected EOIs were excluded by duration/behavior filters from the region preset."
+                    )
+                    return
+                
+                # Update eoi_times to filtered set
+                eoi_times = filtered_eois
+                
+            except Exception as e:
+                QtWidgets.QMessageBox.warning(
+                    self, "Filter Error", 
+                    f"Error applying region preset filters: {e}\n\nProceeding without filtering."
+                )
+                metadata_rows = None
+
+        # Collect indices to remove from EOI tree
         indices_to_remove = []
         for item in selected_items:
             index = self.EOI.indexOfTopLevelItem(item)
             if index >= 0:
                 indices_to_remove.append(index)
 
-        # Process each selected item
-        for item in selected_items:
-            # Create new score item
+        # Process each EOI (filtered if profile active)
+        for idx, (s_ms, e_ms) in enumerate(eoi_times):
             new_item = TreeWidgetItem()
 
-            # Copy data from EOI to Score item, matching column headers
+            # Get metadata for this EOI if available
+            metadata = metadata_rows[idx] if metadata_rows else None
+            
+            # Determine score label based on band_label from metadata
+            score_label = self.EOI_score.currentText()
+            if metadata and 'band_label' in metadata:
+                band = metadata['band_label']
+                if band == 'ripple':
+                    score_label = 'Ripple'
+                elif band == 'fast_ripple':
+                    score_label = 'Fast Ripple'
+                elif band == 'ripple_fast_ripple':
+                    score_label = 'Sharp Wave Ripple'  # ambiguous → SWR
+            
+            # Get brain region from metadata (preset) or use default
+            brain_region = metadata.get('brain_region', default_brain_region) if metadata else default_brain_region
+
+            # Fill Score item columns
             for score_key, score_value in self.score_headers.items():
-                if 'Score:' in score_key:
-                    new_item.setText(score_value, self.EOI_score.currentText())
+                if 'ID' in score_key:
+                    new_id = self.createID('Manual')
+                    self.IDs.append(new_id)
+                    new_item.setText(score_value, new_id)
+                elif 'Score:' in score_key:
+                    new_item.setText(score_value, score_label)
                 elif 'Scorer' in score_key:
                     new_item.setText(score_value, scorer_name)
-                else:
-                    # Try to match with EOI headers
-                    for eoi_key, eoi_value in self.EOI_headers.items():
-                        if eoi_key == score_key:
-                            new_item.setText(score_value, item.text(eoi_value))
-                            break
+                elif 'Brain Region' in score_key:
+                    new_item.setText(score_value, brain_region)
+                elif 'Start Time' in score_key:
+                    new_item.setText(score_value, str(s_ms))
+                elif 'Stop Time' in score_key:
+                    new_item.setText(score_value, str(e_ms))
+                elif 'Duration' in score_key:
+                    new_item.setText(score_value, str(e_ms - s_ms))
+                elif 'Settings File' in score_key:
+                    # Try to copy from original EOI item if available
+                    if idx < len(selected_items):
+                        for eoi_key, eoi_value in self.EOI_headers.items():
+                            if 'Settings' in eoi_key:
+                                new_item.setText(score_value, selected_items[idx].text(eoi_value))
+                                break
 
             # Add to scores tree
             self.scores.addTopLevelItem(new_item)
@@ -1775,6 +1915,18 @@ class ScoreWindow(QtWidgets.QWidget):
 
         # Update events detected count
         self.events_detected.setText(str(self.EOI.topLevelItemCount()))
+        
+        # Notify user if filtering was applied
+        if metadata_rows:
+            added = len(eoi_times)
+            selected = len(selected_items)
+            if added < selected:
+                QtWidgets.QMessageBox.information(
+                    self, "Region Preset Applied",
+                    f"Added {added} of {selected} selected EOIs to Score tab.\n\n"
+                    f"{selected - added} EOIs were filtered out by region preset criteria "
+                    "(duration/behavior/speed thresholds)."
+                )
 
     def deleteEOI(self):
         '''Delete selected EOIs (supports multiple selections)'''
@@ -2090,6 +2242,12 @@ class ScoreWindow(QtWidgets.QWidget):
         neg_labels = {'artifact'}
 
         try:
+            score_col = None
+            start_col = None
+            stop_col = None
+            scorer_col = None
+            brain_region_col = None
+            
             for key, value in self.score_headers.items():
                 if 'Score:' in key:
                     score_col = value
@@ -2097,9 +2255,14 @@ class ScoreWindow(QtWidgets.QWidget):
                     start_col = value
                 elif 'Stop' in key:
                     stop_col = value
+                elif 'Scorer:' in key:
+                    scorer_col = value
+                elif 'Brain Region:' in key:
+                    brain_region_col = value
 
             eois = []
             labels = []
+            metadata_rows = []
             for item_count in range(self.scores.topLevelItemCount()):
                 item = self.scores.topLevelItem(item_count)
                 try:
@@ -2114,6 +2277,22 @@ class ScoreWindow(QtWidgets.QWidget):
                     e_ms = float(item.data(stop_col, 0))
                     eois.append([s_ms, e_ms])
                     labels.append(lbl)
+                    
+                    # Collect metadata (optional fields)
+                    metadata = {}
+                    try:
+                        scorer = str(item.data(scorer_col, 0)).strip()
+                        if scorer and scorer != 'Unknown':
+                            metadata['scorer'] = scorer
+                    except:
+                        pass
+                    try:
+                        brain_region = str(item.data(brain_region_col, 0)).strip()
+                        if brain_region and brain_region != 'Unknown':
+                            metadata['brain_region'] = brain_region
+                    except:
+                        pass
+                    metadata_rows.append(metadata if metadata else None)
                 except Exception:
                     continue
 
@@ -2125,7 +2304,7 @@ class ScoreWindow(QtWidgets.QWidget):
             raw_data = np.asarray(raw_data, dtype=np.float32)
 
             from core.eoi_exporter import export_labeled_eois_for_training
-            manifest_path = export_labeled_eois_for_training(raw_data, Fs, np.asarray(eois), labels, out_dir)
+            manifest_path = export_labeled_eois_for_training(raw_data, Fs, np.asarray(eois), labels, out_dir, metadata=metadata_rows)
 
             QtWidgets.QMessageBox.information(
                 self, "Export Complete",
@@ -2289,8 +2468,13 @@ class ScoreWindow(QtWidgets.QWidget):
             "--epochs", str(self.epochs_spin.value()),
             "--batch-size", str(self.batch_spin.value()),
             "--lr", str(self.lr_spin.value()),
+            "--weight-decay", str(self.weight_decay_spin.value()),
             "--out-dir", out_dir,
         ]
+        
+        # Add GUI flag if checkbox is checked
+        if self.train_gui_check.isChecked():
+            args.append("--gui")
 
         # Prevent overlapping runs
         if self.train_process and self.train_process.state() == QtCore.QProcess.Running:
@@ -2582,10 +2766,12 @@ def hilbert_detect_events(raw_data, Fs, *, epoch, sd_num, min_duration, min_freq
 
 def HilbertDetection(self):
     try:
-        if not hasattr(self, 'source_filename'):
+        if not hasattr(self, 'source_filename') or self.source_filename is None:
+            self.progressSignal.progress.emit("Hilbert: Error - No source file loaded")
             return
 
         if not os.path.exists(self.source_filename):
+            self.progressSignal.progress.emit("Hilbert: Error - Source file not found")
             return
 
         self.progressSignal.progress.emit("Hilbert: 10% - Loading data")
@@ -2837,7 +3023,8 @@ def PyHFODetection(self):
 
 def STEDetection(self):
     try:
-        if not hasattr(self, 'source_filename') or not os.path.exists(self.source_filename):
+        if not hasattr(self, 'source_filename') or self.source_filename is None or not os.path.exists(self.source_filename):
+            self.progressSignal.progress.emit("STE: Error - No source file loaded")
             return
 
         self.progressSignal.progress.emit("STE: 10% - Loading data")
@@ -2866,7 +3053,8 @@ def STEDetection(self):
 
 def MNIDetection(self):
     try:
-        if not hasattr(self, 'source_filename') or not os.path.exists(self.source_filename):
+        if not hasattr(self, 'source_filename') or self.source_filename is None or not os.path.exists(self.source_filename):
+            self.progressSignal.progress.emit("MNI: Error - No source file loaded")
             return
 
         self.progressSignal.progress.emit("MNI: 10% - Loading data")
@@ -2893,7 +3081,8 @@ def MNIDetection(self):
 
 def DLDetection(self):
     try:
-        if not hasattr(self, 'source_filename') or not os.path.exists(self.source_filename):
+        if not hasattr(self, 'source_filename') or self.source_filename is None or not os.path.exists(self.source_filename):
+            self.progressSignal.progress.emit("DL: Error - No source file loaded")
             return
 
         self.progressSignal.progress.emit("DL: 10% - Loading data")
@@ -2922,14 +3111,39 @@ def DLDetection(self):
 
         if len(existing_eois) > 0:
             # Classify existing EOIs
-            self.progressSignal.progress.emit(f"DL: 30% - Classifying {len(existing_eois)} EOIs")
+            self.progressSignal.progress.emit(f"DL: 20% - Verifying model file")
+            
+            # Check model path
+            if not hasattr(self, 'dl_model_path') or not self.dl_model_path:
+                self.progressSignal.progress.emit("DL: Error - No model path set. Configure model in Settings → Deep Learning")
+                return
+            
+            if not os.path.exists(self.dl_model_path):
+                self.progressSignal.progress.emit(f"DL: Error - Model file not found: {self.dl_model_path}")
+                return
+            
+            self.progressSignal.progress.emit(f"DL: 30% - Loading model from {os.path.basename(self.dl_model_path)}")
+            
             from core.Detector import dl_classify_segments
+            
+            # Progress callback to update GUI during model loading
+            def dl_progress(msg):
+                if "timeout" in msg.lower() or "error" in msg.lower():
+                    self.progressSignal.progress.emit(f"DL: {msg}")
+                elif "torch.jit.load" in msg.lower() or "torch.load" in msg.lower():
+                    self.progressSignal.progress.emit(f"DL: 30% - {msg}")
+                elif "loaded successfully" in msg.lower():
+                    self.progressSignal.progress.emit(f"DL: 40% - Model ready, starting inference")
+            
             probs, labels = dl_classify_segments(
                 raw_data, Fs, existing_eois,
                 model_path=self.dl_model_path,
                 threshold=self.dl_threshold,
-                batch_size=self.dl_batch_size
+                batch_size=self.dl_batch_size,
+                progress_callback=dl_progress
             )
+            
+            self.progressSignal.progress.emit(f"DL: 50% - Model loaded, classifying {len(existing_eois)} EOIs")
 
             # Populate scores tree with classification results
             self.progressSignal.progress.emit("DL: 70% - Populating results")
@@ -2962,17 +3176,24 @@ def DLDetection(self):
                         p = probs[idx] if idx < len(probs) else 0.0
                         new_item.setText(value, f"DL(p={p:.3f})")
                 self.scores.addTopLevelItem(new_item)
+            self.progressSignal.progress.emit(f"DL: 70% - Processed {len(existing_eois)} EOIs")
             self.progressSignal.progress.emit("DL: 100% - Complete")
             return
         else:
             # No EOIs present; run DL detection as a fallback
             self.progressSignal.progress.emit("DL: 30% - Running detection")
+            
+            # Progress callback for model loading
+            def dl_progress(msg):
+                self.progressSignal.progress.emit(f"DL: {msg}")
+            
             from core.Detector import dl_detect_events
             EOIs = dl_detect_events(
                 raw_data, Fs,
                 model_path=self.dl_model_path,
                 threshold=self.dl_threshold,
-                batch_size=self.dl_batch_size
+                batch_size=self.dl_batch_size,
+                progress_callback=dl_progress
             )
             if EOIs is None or len(EOIs) == 0:
                 self.progressSignal.progress.emit("DL: Complete - 0 events")
@@ -2991,7 +3212,8 @@ def DLDetection(self):
 def ConsensusDetection(self):
     """Run consensus detection combining Hilbert, STE, and MNI."""
     try:
-        if not hasattr(self, 'source_filename') or not os.path.exists(self.source_filename):
+        if not hasattr(self, 'source_filename') or self.source_filename is None or not os.path.exists(self.source_filename):
+            self.progressSignal.progress.emit("Consensus: Error - No source file loaded")
             return
 
         self.progressSignal.progress.emit("Consensus: 10% - Loading data")
