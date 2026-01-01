@@ -195,6 +195,14 @@ python -m stlar spatial-gui
 
 ![Spatial Mapper Screenshot](docs/images/spatial_mapper_annotated.png)
 
+#### Score window workflow (fast overview)
+- Detect EOIs with Hilbert / STE / MNI / Consensus / Deep Learning in the <b>Automatic Detection</b> tab.
+- Select EOIs and click <b>Add Selected EOI(s) to Score</b> to move them into the <b>Score</b> tab (applies presets if enabled).
+- Refine: add, relabel, hide, or delete scores; save the Score list to the default text file for analysis/spatial mapper.
+- Prep DL data: use <b>Create labels for DL training</b> (Ripple-family=1, Artifact=0) or <b>Export EOIs for DL Training</b> for unlabeled segments + manifest.
+- Split train/val in <b>CSV convert</b>, then train in <b>Train</b>; export TorchScript (.pt) for detection.
+- Run Deep Learning detection from the GUI or CLI. For CLI sanity checks, add <code>--dump-probs</code> to print per-window probability spread and a quick quality assessment.
+
 #### 2️⃣ Command Line (Batch Processing)
 
 Process multiple files automatically:
@@ -560,8 +568,11 @@ python -m stlar dl-batch \
 | `--model-path` | str | **required** | Path to trained model (.pt or .onnx) |
 | `--threshold` | float | 0.5 | Detection probability threshold (0-1) |
 | `--batch-size` | int | 32 | Inference batch size |
+| `--dump-probs` | flag | off | Print per-window probability stats + assessment (sanity-check model spread) |
 | `--skip-bits2uv` | flag | off | Skip scaling conversion |
 | `-v, --verbose` | flag | off | Verbose logging |
+
+Tip: add `--dump-probs` to quickly see min/max/mean and percentile spread of DL probabilities; very narrow spreads usually mean the model needs more epochs or better labels.
 
 ---
 

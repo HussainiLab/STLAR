@@ -10,6 +10,28 @@ from .core.Score import hilbert_detect_events
 from .core.Detector import ste_detect_events, mni_detect_events, dl_detect_events, consensus_detect_events
 from .core.Tint_Matlab import ReadEEG, bits2uV, TintException
 
+
+def _print_prob_summary(probs):
+    probs = np.asarray(probs, dtype=float)
+    if probs.size == 0:
+        print("[DL Detection] No probability windows to summarize (empty signal or model fallback).")
+        return
+
+    pcts = np.percentile(probs, [1, 5, 25, 50, 75, 95, 99])
+    spread = probs.max() - probs.min()
+    std = probs.std()
+
+    print(f"[DL Detection] Probability stats: windows={len(probs)}, min={probs.min():.4f}, max={probs.max():.4f}, mean={probs.mean():.4f}")
+    print("[DL Detection] Percentiles 1,5,25,50,75,95,99:", " ".join(f"{p:.4f}" for p in pcts))
+
+    if spread < 0.10 or std < 0.03:
+        verdict = "Very narrow probability spread; model likely undertrained. Retrain with more epochs and ensure good labels."
+    elif spread < 0.25:
+        verdict = "Moderately narrow spread; add more epochs or harder negatives to improve separation."
+    else:
+        verdict = "Healthy spread; tweak detection threshold or continue training if quality is still low."
+    print(f"[DL Detection] Assessment: {verdict}")
+
 def _default_freqs(data_path: Path, max_freq: Optional[float]) -> Tuple[float, float]:
     """Choose sensible defaults based on file extension."""
     # Defaults mirror the GUI: 80 Hz min, 125 Hz max for EEG, 500 Hz max for EGF
@@ -181,7 +203,15 @@ def _process_dl_file(data_path: Path, set_path: Optional[Path], args: argparse.N
         'batch_size': int(args.batch_size),
     }
 
-    events = dl_detect_events(raw_data, Fs, **params)
+    dump_probs = getattr(args, 'dump_probs', False)
+    dl_result = dl_detect_events(raw_data, Fs, dump_probs=dump_probs, **params)
+
+    prob_values = None
+    if dump_probs:
+        events, prob_values = dl_result
+        _print_prob_summary(prob_values)
+    else:
+        events = dl_result
 
     return _save_results(events, params, data_path, set_path, args, method_tag='DL')
 
@@ -374,6 +404,7 @@ def build_parser() -> argparse.ArgumentParser:
     dl.add_argument('--model-path', required=True, help='Path to trained model file')
     dl.add_argument('--threshold', type=float, default=0.5, help='Detection probability threshold')
     dl.add_argument('--batch-size', type=int, default=32, help='Inference batch size')
+    dl.add_argument('--dump-probs', action='store_true', help='Print per-window probability stats')
     dl.add_argument('--skip-bits2uv', action='store_true', help='Skip bits-to-uV conversion')
     dl.add_argument('-v', '--verbose', action='store_true', help='Verbose logging')
 
