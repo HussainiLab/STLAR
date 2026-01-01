@@ -84,7 +84,7 @@ def export_eois_for_training(signal, fs, eois_ms, out_dir, prefix="seg", metadat
     return manifest_path
 
 
-def export_labeled_eois_for_training(signal, fs, eois_ms, labels, out_dir, prefix="seg"):
+def export_labeled_eois_for_training(signal, fs, eois_ms, labels, out_dir, prefix="seg", metadata=None):
     """
     Extract EOI segments with labels and write .npy files plus a manifest.
 
@@ -95,6 +95,7 @@ def export_labeled_eois_for_training(signal, fs, eois_ms, labels, out_dir, prefi
         labels: iterable of same length as eois_ms with int labels (0/1).
         out_dir: Output directory (will be created).
         prefix: Prefix for segment filenames.
+        metadata: Optional list of dicts with metadata for each segment (scorer, brain_region, etc).
 
     Returns:
         Path to the manifest CSV.
@@ -104,12 +105,17 @@ def export_labeled_eois_for_training(signal, fs, eois_ms, labels, out_dir, prefi
     labels = np.asarray(labels).astype(int)
     if eois_ms.shape[0] != labels.shape[0]:
         raise ValueError("labels and eois_ms must have the same length")
+    
+    if metadata is None:
+        metadata = [None] * len(labels)
+    elif len(metadata) != len(labels):
+        raise ValueError("metadata and labels must have the same length")
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     rows = []
-    for idx, ((s_ms, e_ms), lbl) in enumerate(zip(eois_ms, labels)):
+    for idx, ((s_ms, e_ms), lbl, meta) in enumerate(zip(eois_ms, labels, metadata)):
         s = int(float(s_ms) * fs / 1000.0)
         e = int(float(e_ms) * fs / 1000.0)
         s = max(0, s)
@@ -119,7 +125,16 @@ def export_labeled_eois_for_training(signal, fs, eois_ms, labels, out_dir, prefi
         seg = signal[s:e].astype(np.float32)
         seg_path = out_dir / f"{prefix}_{idx:05d}.npy"
         np.save(seg_path, seg)
-        rows.append({"segment_path": str(seg_path), "label": int(lbl)})
+        
+        row = {"segment_path": str(seg_path), "label": int(lbl)}
+        # Add optional metadata fields
+        if meta:
+            if 'scorer' in meta:
+                row['scorer'] = meta['scorer']
+            if 'brain_region' in meta:
+                row['brain_region'] = meta['brain_region']
+        
+        rows.append(row)
 
     manifest_path = out_dir / "manifest.csv"
     _safe_write_csv(pd.DataFrame(rows), manifest_path)
