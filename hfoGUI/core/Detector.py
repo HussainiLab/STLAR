@@ -90,12 +90,14 @@ class _LocalDLDetector:
             self._progress(f"[DL Detection] Unexpected error: {type(e).__name__}")
             self.model = None
 
-    def detect(self, signal, ch_name='chn1'):
+    def detect(self, signal, ch_name='chn1', collect_probs=False):
+        prob_values = []
+
         # If no model, fall back to RMS detector
         if self.model is None:
             events_ms = _local_ste_rms_detect(signal, self.params.sample_freq)
-            # Convert ms to seconds for downstream converter
-            return [{'start': s/1000.0, 'end': e/1000.0} for s, e in events_ms]
+            events_sec = [{'start': s/1000.0, 'end': e/1000.0} for s, e in events_ms]
+            return (events_sec, prob_values) if collect_probs else events_sec
 
         import torch
         x = np.asarray(signal, dtype=np.float32)
@@ -104,7 +106,6 @@ class _LocalDLDetector:
         hop = max(1, int(win * self.hop_frac))
 
         pos_windows = []
-        prob_values = []
         for start in range(0, len(x), hop):
             end = min(len(x), start + win)
             seg = x[start:end]
@@ -132,9 +133,9 @@ class _LocalDLDetector:
             self._progress(f"[DL Detection] Threshold: {float(self.params.threshold):.4f}")
         self._progress(f"[DL Detection] Found {len(pos_windows)} positive windows out of {len(prob_values)} total windows")
         
-        # Merge overlapping/nearby windows (within 200ms gap)
+        # Merge overlapping/nearby windows (within 500ms gap for better event grouping)
         # This prevents merging distant positive detections into one event
-        max_gap_samples = int(0.2 * fs)  # 200ms gap threshold
+        max_gap_samples = int(0.5 * fs)  # 500ms gap threshold (allows nearby bursts to merge)
         merged = []
         for start, end in pos_windows:
             if not merged:
@@ -146,12 +147,22 @@ class _LocalDLDetector:
                 # Gap too large, start new event
                 merged.append([start, end])
 
-        self._progress(f"[DL Detection] After merging: {len(merged)} events (threshold=0.2s gap)")
-        for i, (start, end) in enumerate(merged):
+        # Filter out very short events (< 20ms noise) and extremely long events (> 2 seconds artifact)
+        min_duration_samples = int(0.02 * fs)  # 20ms minimum
+        max_duration_samples = int(2.0 * fs)   # 2 second maximum
+        filtered = []
+        for start, end in merged:
+            duration = end - start
+            if min_duration_samples <= duration <= max_duration_samples:
+                filtered.append([start, end])
+
+        self._progress(f"[DL Detection] After merging: {len(merged)} events (0.5s gap)")
+        self._progress(f"[DL Detection] After filtering (20ms-2s): {len(filtered)} events")
+        for i, (start, end) in enumerate(filtered):
             duration_sec = (end - start) / float(fs)
             self._progress(f"[DL Detection]   Event {i+1}: {start//int(fs)}s - {end//int(fs)}s (duration: {duration_sec:.3f}s)")
-
-        return [{'start': s/float(fs), 'end': e/float(fs)} for s, e in merged]
+        events_sec = [{'start': s/float(fs), 'end': e/float(fs)} for s, e in filtered]
+        return (events_sec, prob_values) if collect_probs else events_sec
 
 
 def set_DL_detector(params: ParamDL, progress_callback=None):
@@ -419,7 +430,7 @@ def _local_mni_detect(data, fs, baseline_window=10.0, threshold_percentile=99.0,
     return np.asarray(events, dtype=float)
 
 
-def dl_detect_events(data, fs, model_path, threshold=0.5, batch_size=32, progress_callback=None, **kwargs):
+def dl_detect_events(data, fs, model_path, threshold=0.5, batch_size=32, progress_callback=None, dump_probs=False, **kwargs):
     """
     Run Deep Learning detection using local PyTorch/ONNX implementation.
     """
@@ -433,8 +444,17 @@ def dl_detect_events(data, fs, model_path, threshold=0.5, batch_size=32, progres
     )
     detector = set_DL_detector(args, progress_callback=progress_callback)
     signal = np.asarray(data, dtype=np.float32)
-    detection_results = detector.detect(signal, 'chn1')
-    return _convert_pyhfo_results_to_eois(detection_results, fs)
+    detection_results = detector.detect(signal, 'chn1', collect_probs=dump_probs)
+
+    prob_values = None
+    if dump_probs:
+        detection_results, prob_values = detection_results
+
+    eois = _convert_pyhfo_results_to_eois(detection_results, fs)
+    if dump_probs:
+        probs_arr = np.asarray(prob_values, dtype=float) if prob_values is not None else np.asarray([])
+        return eois, probs_arr
+    return eois
 
 
 def dl_classify_segments(data, fs, segments_ms, model_path, threshold=0.5, batch_size=32, progress_callback=None):
