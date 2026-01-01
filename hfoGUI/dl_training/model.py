@@ -170,6 +170,65 @@ class InceptionTime(nn.Module):
         return x
 
 
+class HFOTransformer(nn.Module):
+    """Simple 1D Transformer for time-series classification."""
+    def __init__(self, n_channels=1, num_classes=1, d_model=64, nhead=4, num_layers=2):
+        super().__init__()
+        # Project input to d_model dimensions
+        self.embedding = nn.Sequential(
+            nn.Conv1d(n_channels, d_model, kernel_size=10, stride=5, padding=2),
+            nn.BatchNorm1d(d_model),
+            nn.ReLU()
+        )
+        # Learnable positional encoding (max len 1000 after stride)
+        self.pos_encoder = nn.Parameter(torch.randn(1, d_model, 1000) * 0.02)
+        
+        encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dim_feedforward=256, batch_first=True)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        
+        self.fc = nn.Linear(d_model, num_classes)
+
+    def forward(self, x):
+        x = self.embedding(x) # (B, d_model, L)
+        
+        # Add positional encoding (truncate to current length)
+        L = x.shape[2]
+        if L <= self.pos_encoder.shape[2]:
+            x = x + self.pos_encoder[:, :, :L]
+        
+        x = x.permute(0, 2, 1) # (B, L, d_model) for Transformer
+        x = self.transformer_encoder(x)
+        x = x.mean(dim=1) # Global Average Pooling
+        x = self.fc(x)
+        return x
+
+
+class Spectrogram2DCNN(nn.Module):
+    """Computes STFT on-the-fly and applies 2D CNN."""
+    def __init__(self, n_channels=1, num_classes=1):
+        super().__init__()
+        self.n_fft = 128
+        self.net = nn.Sequential(
+            nn.Conv2d(1, 16, kernel_size=3, padding=1),
+            nn.BatchNorm2d(16), nn.ReLU(), nn.MaxPool2d(2),
+            nn.Conv2d(16, 32, kernel_size=3, padding=1),
+            nn.BatchNorm2d(32), nn.ReLU(), nn.MaxPool2d(2),
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64), nn.ReLU(), nn.AdaptiveAvgPool2d(1)
+        )
+        self.fc = nn.Linear(64, num_classes)
+
+    def forward(self, x):
+        # x: (B, 1, L) -> STFT -> (B, F, T)
+        # return_complex=True is default in newer torch, we need magnitude
+        spec = torch.stft(x.squeeze(1), n_fft=self.n_fft, hop_length=self.n_fft//4, 
+                          window=torch.hann_window(self.n_fft).to(x.device), return_complex=True)
+        img = torch.log1p(torch.abs(spec)).unsqueeze(1) # (B, 1, F, T)
+        
+        feat = self.net(img).flatten(1)
+        return self.fc(feat)
+
+
 def build_model(model_type=2):
     """Factory function to build model based on ID."""
     if model_type == 1:
@@ -178,5 +237,9 @@ def build_model(model_type=2):
         return ResNet1D(n_channels=1)
     elif model_type == 3:
         return InceptionTime(n_channels=1)
+    elif model_type == 4:
+        return HFOTransformer(n_channels=1)
+    elif model_type == 5:
+        return Spectrogram2DCNN(n_channels=1)
     else:
-        raise ValueError(f"Unknown model type: {model_type}. Options: 1=SimpleCNN, 2=ResNet1D, 3=InceptionTime")
+        raise ValueError(f"Unknown model type: {model_type}. Options: 1=SimpleCNN, 2=ResNet1D, 3=InceptionTime, 4=Transformer, 5=2D_CNN")

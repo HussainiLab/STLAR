@@ -11,6 +11,7 @@ def parse_args():
     p.add_argument('--onnx', required=True, help='Output ONNX path')
     p.add_argument('--ts', required=True, help='Output TorchScript path (.pt)')
     p.add_argument('--example-len', type=int, default=2000, help='Example segment length for tracing')
+    p.add_argument('--model-type', type=int, default=2, help='Model architecture: 1=SimpleCNN, 2=ResNet1D, 3=InceptionTime, 4=Transformer, 5=2D_CNN')
     return p.parse_args()
 
 
@@ -19,7 +20,11 @@ def main():
     device = torch.device('cpu')
 
     ckpt = torch.load(args.ckpt, map_location=device, weights_only=False)
-    model = build_model()
+    
+    # Try to infer model type from checkpoint if available, else use arg
+    model_type = ckpt.get('model_type', args.model_type)
+    
+    model = build_model(model_type)
     model.load_state_dict(ckpt['model_state'])
     model.eval()
 

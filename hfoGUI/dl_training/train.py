@@ -20,7 +20,7 @@ def parse_args():
     p.add_argument('--out-dir', type=str, default='models')
     p.add_argument('--num-workers', type=int, default=2)
     p.add_argument('--no-plot', action='store_true', help='Disable training curve plots')
-    p.add_argument('--model-type', type=int, default=2, help='Model architecture: 1=SimpleCNN, 2=ResNet1D, 3=InceptionTime')
+    p.add_argument('--model-type', type=int, default=2, help='Model architecture: 1=SimpleCNN, 2=ResNet1D, 3=InceptionTime, 4=Transformer, 5=2D_CNN')
     p.add_argument('--gui', action='store_true', help='Show real-time training GUI')
     return p.parse_args()
 
@@ -253,7 +253,10 @@ def main():
             best_epoch = epoch
             epochs_since_improvement = 0
             is_best = True
-            torch.save({'model_state': model.state_dict()}, best_ckpt)
+            torch.save({
+                'model_state': model.state_dict(),
+                'model_type': args.model_type
+            }, best_ckpt)
             print(f"  [NEW BEST] Saved to {best_ckpt}")
         else:
             epochs_since_improvement += 1
