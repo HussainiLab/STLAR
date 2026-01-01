@@ -28,10 +28,23 @@ class TreeWidgetItem(QtWidgets.QTreeWidgetItem):
 
     def __lt__(self, otherItem):
         column = self.treeWidget().sortColumn()
+        text1 = self.text(column)
+        text2 = otherItem.text(column)
+        
+        # Try to extract numeric portion for ID columns or fully numeric values
         try:
-            return float(self.text(column)) < float(otherItem.text(column))
+            # First try direct numeric conversion
+            return float(text1) < float(text2)
         except ValueError:
-            return self.text(column) < otherItem.text(column)
+            # If that fails, try to extract numeric suffix (for IDs like "H_1", "H_10", etc.)
+            try:
+                # Extract the numeric part after underscore or other separators
+                num1 = float(''.join(c for c in text1 if c.isdigit() or c == '.'))
+                num2 = float(''.join(c for c in text2 if c.isdigit() or c == '.'))
+                return num1 < num2
+            except (ValueError, IndexError):
+                # Fall back to string comparison
+                return text1 < text2
 
 
 class AddItemSignal(QObject):
@@ -355,6 +368,7 @@ class ScoreWindow(QtWidgets.QWidget):
 
         self.scores = QtWidgets.QTreeWidget()
         self.scores.setSortingEnabled(True)
+        self.scores.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
         self.scores.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.scores.customContextMenuRequested.connect(functools.partial(self.openMenu, 'score'))
 
@@ -516,6 +530,7 @@ class ScoreWindow(QtWidgets.QWidget):
 
         self.EOI = QtWidgets.QTreeWidget()
         self.EOI.setSortingEnabled(True)
+        self.EOI.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
         self.EOI.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.EOI.customContextMenuRequested.connect(functools.partial(self.openMenu, 'EOI'))
         self.EOI_headers = {
@@ -541,10 +556,10 @@ class ScoreWindow(QtWidgets.QWidget):
         self.eoi_hide = QtWidgets.QPushButton("Hide")
         self.find_eoi_btn = QtWidgets.QPushButton("Find EOIs")
         self.find_eoi_btn.clicked.connect(self.findEOIs)
-        self.delete_eoi_btn = QtWidgets.QPushButton("Remove Selected EOI")
+        self.delete_eoi_btn = QtWidgets.QPushButton("Remove Selected EOI(s)")
         self.delete_eoi_btn.clicked.connect(self.deleteEOI)
 
-        self.add_eoi_btn = QtWidgets.QPushButton("Add Selected EOI to Score")
+        self.add_eoi_btn = QtWidgets.QPushButton("Add Selected EOI(s) to Score")
         self.add_eoi_btn.clicked.connect(self.addEOI)
 
         self.export_eoi_btn = QtWidgets.QPushButton("Export EOIs for DL Training")
@@ -1241,13 +1256,11 @@ class ScoreWindow(QtWidgets.QWidget):
         if self.mainWindow.score_x1 is None or self.mainWindow.score_x2 is None:
             return
 
-        if self.scorer.text() == '':
-            self.mainWindow.choice = ''
-            self.mainWindow.ErrorDialogue.myGUI_signal.emit("NoScorer")
-
-            while self.mainWindow.choice == '':
-                time.sleep(0.1)
-            return
+        # Auto-fill Scorer field if empty
+        scorer_name = self.scorer.text().strip()
+        if scorer_name == '':
+            scorer_name = 'Scorer 1'
+            self.scorer.setText(scorer_name)
 
         # new_item = QtWidgets.QTreeWidgetItem()
         new_item = TreeWidgetItem()
@@ -1267,7 +1280,7 @@ class ScoreWindow(QtWidgets.QWidget):
                 # there is no settings file involved in manual detection
                 new_item.setText(value, 'N/A')
             elif 'Scorer' in key:
-                new_item.setText(value, self.scorer.text())
+                new_item.setText(value, scorer_name)
 
         self.scores.addTopLevelItem(new_item)
 
@@ -1319,18 +1332,36 @@ class ScoreWindow(QtWidgets.QWidget):
         return ID
 
     def deleteScores(self):
-        '''deletes the selected scores in the Scores Window\'s TreeWidget'''
-        root = self.scores.invisibleRootItem()
+        '''deletes the selected scores in the Scores Window's TreeWidget'''
+        
+        # Get selected items as a list (copy to avoid modification during iteration)
+        selected_items = list(self.scores.selectedItems())
+        if not selected_items:
+            return
 
         for key, value in self.score_headers.items():
             if 'ID' in key:
                 id_value = value
                 break
 
-        for item in self.scores.selectedItems():
-            ID = item.data(id_value, 0)
-            self.IDs.pop(self.IDs.index(ID))  # remove the id from the list of IDs
-            (item.parent() or root).removeChild(item)
+        # Collect indices and IDs first
+        indices_to_remove = []
+        ids_to_remove = []
+        for item in selected_items:
+            index = self.scores.indexOfTopLevelItem(item)
+            if index >= 0:
+                indices_to_remove.append(index)
+                ID = item.data(id_value, 0)
+                if ID in self.IDs:
+                    ids_to_remove.append(ID)
+
+        # Remove IDs from tracking list
+        for ID in ids_to_remove:
+            self.IDs.pop(self.IDs.index(ID))
+
+        # Remove items in reverse order by index
+        for index in sorted(indices_to_remove, reverse=True):
+            self.scores.takeTopLevelItem(index)
 
     def updateScores(self):
         '''updates the selected scores in the Score Window\'s TreeWidget'''
@@ -1367,6 +1398,18 @@ class ScoreWindow(QtWidgets.QWidget):
                 item.setText(stop_value, f"{x2_ms:.10g}")
         else:
            pass
+
+    def _calculateAndSetDuration(self, item, start_col, stop_col, duration_col):
+        """Helper function to auto-calculate and set duration if missing"""
+        try:
+            start_time = float(item.text(start_col))
+            stop_time = float(item.text(stop_col))
+            duration = stop_time - start_time
+            if duration > 0:
+                item.setText(duration_col, f"{duration:.3f}")
+        except (ValueError, IndexError):
+            # If unable to calculate, leave duration empty
+            pass
 
     def loadScores(self):
 
@@ -1414,6 +1457,7 @@ class ScoreWindow(QtWidgets.QWidget):
         ids_exist = any('ID' in column for column in df.columns)
         scorer_exists = any('Scorer' in column for column in df.columns)
         score_settings_file_exists = any('Settings File' in column for column in df.columns)
+        duration_exists = any('Duration' in column for column in df.columns)
 
         for key, value in self.score_headers.items():
             if 'ID' in key:
@@ -1428,6 +1472,12 @@ class ScoreWindow(QtWidgets.QWidget):
             elif 'Start' in key:
                 start_value = value
 
+            elif 'Stop' in key:
+                stop_value = value
+
+            elif 'Duration' in key:
+                duration_value = value
+
             elif 'Score:' in key:
                 score_value = value
 
@@ -1441,7 +1491,7 @@ class ScoreWindow(QtWidgets.QWidget):
                 item.setText(id_value, ID)
 
             if not scorer_exists:
-                item.setText(scorer_value, 'Unknown')
+                item.setText(scorer_value, 'Scorer 1')
 
             if not score_settings_file_exists:
                 item.setText(settings_value, 'N/A')
@@ -1473,6 +1523,10 @@ class ScoreWindow(QtWidgets.QWidget):
 
                     elif 'Stop' in column and 'Stop' in key:
                         item.setText(value, str(df[column][score_index]))
+
+            # Auto-calculate duration if not present in file
+            if not duration_exists:
+                self._calculateAndSetDuration(item, start_value, stop_value, duration_value)
 
             self.scores.addTopLevelItem(item)
 
@@ -1674,77 +1728,92 @@ class ScoreWindow(QtWidgets.QWidget):
         self.mainWindow.stop_time_object.setText(str(stop_time))
 
     def addEOI(self):
-        '''This method will add the EOI values to the score list'''
+        '''This method will add the EOI values to the score list (supports multiple selections)'''
 
-        # get the detection method
-        # method = self.eoi_method.currentText()
+        # Auto-fill Scorer field if empty
+        scorer_name = self.scorer.text().strip()
+        if scorer_name == '':
+            scorer_name = 'Scorer 1'
+            self.scorer.setText(scorer_name)
 
-        if self.scorer.text() == '':
-            self.mainWindow.choice = ''
-            self.mainWindow.ErrorDialogue.myGUI_signal.emit("NoScorer")
-
-            while self.mainWindow.choice == '':
-                time.sleep(0.1)
+        # Get all selected items (supports multi-select) - make a copy to avoid modification during iteration
+        selected_items = list(self.EOI.selectedItems())
+        if not selected_items:
             return
 
-        # root = self.scores.invisibleRootItem()
-        for item in self.EOI.selectedItems():
+        # Collect indices first (before any modifications)
+        indices_to_remove = []
+        for item in selected_items:
+            index = self.EOI.indexOfTopLevelItem(item)
+            if index >= 0:
+                indices_to_remove.append(index)
 
-            # new_item = QtWidgets.QTreeWidgetItem()
+        # Process each selected item
+        for item in selected_items:
+            # Create new score item
             new_item = TreeWidgetItem()
 
+            # Copy data from EOI to Score item, matching column headers
             for score_key, score_value in self.score_headers.items():
-                for eoi_key, eoi_value in self.EOI_headers.items():
-                    if 'Score:' in score_key:
-                        new_item.setText(score_value, self.EOI_score.currentText())
-                        break
+                if 'Score:' in score_key:
+                    new_item.setText(score_value, self.EOI_score.currentText())
+                elif 'Scorer' in score_key:
+                    new_item.setText(score_value, scorer_name)
+                else:
+                    # Try to match with EOI headers
+                    for eoi_key, eoi_value in self.EOI_headers.items():
+                        if eoi_key == score_key:
+                            new_item.setText(score_value, item.text(eoi_value))
+                            break
 
-                    elif 'Scorer' in score_key:
-                        new_item.setText(score_value, self.scorer.text())
-
-                    elif eoi_key == score_key:
-                        new_item.setText(score_value, item.data(eoi_value, 0))
-                        break
-
-            for item_children in range(self.EOI.topLevelItemCount()):
-                query_item = self.EOI.topLevelItem(item_children)
-                if item == query_item:
-                    self.EOI.takeTopLevelItem(item_children)
-                    break
-
+            # Add to scores tree
             self.scores.addTopLevelItem(new_item)
 
+        # Remove items from EOI tree in reverse order (to maintain correct indices)
+        for index in sorted(indices_to_remove, reverse=True):
+            self.EOI.takeTopLevelItem(index)
+
+        # Update events detected count
+        self.events_detected.setText(str(self.EOI.topLevelItemCount()))
+
+    def deleteEOI(self):
+        '''Delete selected EOIs (supports multiple selections)'''
+        root = self.EOI.invisibleRootItem()
+        selected_items = self.EOI.selectedItems()
+        
+        if not selected_items:
+            return
+
+        # Get ID column index
+        id_column = None
+        for key, id_col in self.EOI_headers.items():
+            if 'ID' in key:
+                id_column = id_col
+                break
+
+        # Delete items in reverse order to maintain proper indices
+        # Convert to list to avoid modifying selection while iterating
+        items_to_delete = list(selected_items)
+        
+        for item in items_to_delete:
+            # Get the ID for removal from tracking list
+            if id_column is not None:
+                ID = item.data(id_column, 0)
+                if ID in self.IDs:
+                    self.IDs.pop(self.IDs.index(ID))
+            
+            # Remove the item from the tree
+            (item.parent() or root).removeChild(item)
+            
+            # Update the events detected count
             new_detected_events = str(int(self.events_detected.text()) - 1)
             self.events_detected.setText(new_detected_events)
 
-    def deleteEOI(self):
-        root = self.EOI.invisibleRootItem()
-        item = self.EOI.selectedItems()[0]
-        for item_count in range(self.EOI.topLevelItemCount()):
-            query_item = self.EOI.topLevelItem(item_count)
-            if query_item == item:
-                # item_count += 1
-                break
-
-        for key, id_column in self.EOI_headers.items():
-            if 'ID' in key:
-                break
-        ID = item.data(id_column, 0)
-        self.IDs.pop(self.IDs.index(ID))
-        (item.parent() or root).removeChild(item)
-
-        # select the next item
-
-        if self.EOI.topLevelItem(item_count) is not None:
-            selected_item = self.EOI.topLevelItem(item_count).setSelected(True)
-
-        else:
-            self.events_detected.setText(str(self.EOI.topLevelItemCount()))
-            return
-
-        # update the events detected
-        new_detected_events = str(int(self.events_detected.text()) - 1)
-        self.events_detected.setText(new_detected_events)
+        # Select the next available item
+        if self.EOI.topLevelItemCount() > 0:
+            next_item = self.EOI.topLevelItem(0)
+            if next_item is not None:
+                next_item.setSelected(True)
 
     def get_automatic_detection_filename(self):
 
@@ -1804,6 +1873,7 @@ class ScoreWindow(QtWidgets.QWidget):
         ids_exist = any('ID' in column for column in df.columns)
 
         settings_filename_exist = any('Settings File' in column for column in df.columns)
+        duration_exists = any('Duration' in column for column in df.columns)
 
         for key, value in self.EOI_headers.items():
             if 'ID' in key:
@@ -1812,6 +1882,10 @@ class ScoreWindow(QtWidgets.QWidget):
                 settings_value = value
             elif 'Start Time' in key:
                 start_value = value
+            elif 'Stop Time' in key:
+                stop_value = value
+            elif 'Duration' in key:
+                duration_value = value
 
         for eoi_index in range(N):
             # item = QtWidgets.QTreeWidgetItem()
@@ -1851,6 +1925,9 @@ class ScoreWindow(QtWidgets.QWidget):
                     elif 'Stop' in column and 'Stop' in key:
                         item.setText(value, str(df[column][eoi_index]))
 
+            # Auto-calculate duration if not present in file
+            if not duration_exists:
+                self._calculateAndSetDuration(item, start_value, stop_value, duration_value)
 
             self.EOI.addTopLevelItem(item)
 
@@ -2543,6 +2620,8 @@ def HilbertDetection(self):
                 start_value = value
             elif 'Stop' in key:
                 stop_value = value
+            elif 'Duration' in key:
+                duration_value = value
             elif 'Settings' in key:
                 settings_value = value
 
@@ -2554,6 +2633,14 @@ def HilbertDetection(self):
             EOI_item.setText(ID_value, new_id)
             EOI_item.setText(start_value, str(EOI[0]))
             EOI_item.setText(stop_value, str(EOI[1]))
+            try:
+                dur_ms = float(EOI[1]) - float(EOI[0])
+                if dur_ms > 0:
+                    EOI_item.setText(duration_value, f"{dur_ms:.3f}")
+                else:
+                    EOI_item.setText(duration_value, "")
+            except Exception:
+                EOI_item.setText(duration_value, "")
             EOI_item.setText(settings_value, self.settings_fname)
 
             self.AddItemSignal.childAdded.emit(EOI_item)
@@ -2714,6 +2801,8 @@ def PyHFODetection(self):
                 start_value = value
             elif 'Stop' in key:
                 stop_value = value
+            elif 'Duration' in key:
+                duration_value = value
             elif 'Settings' in key:
                 settings_value = value
 
@@ -2725,6 +2814,14 @@ def PyHFODetection(self):
             EOI_item.setText(ID_value, new_id)
             EOI_item.setText(start_value, str(EOI[0]))
             EOI_item.setText(stop_value, str(EOI[1]))
+            try:
+                dur_ms = float(EOI[1]) - float(EOI[0])
+                if dur_ms > 0:
+                    EOI_item.setText(duration_value, f"{dur_ms:.3f}")
+                else:
+                    EOI_item.setText(duration_value, "")
+            except Exception:
+                EOI_item.setText(duration_value, "")
             EOI_item.setText(settings_value, getattr(self, 'settings_fname', 'N/A'))
 
             self.AddItemSignal.childAdded.emit(EOI_item)
