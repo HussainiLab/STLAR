@@ -437,6 +437,7 @@ def build_parser() -> argparse.ArgumentParser:
     train_dl.add_argument('--weight-decay', type=float, default=1e-4, help='L2 regularization (default: 1e-4)')
     train_dl.add_argument('--out-dir', type=str, default='models', help='Output directory for checkpoints (default: models)')
     train_dl.add_argument('--num-workers', type=int, default=2, help='DataLoader workers (default: 2)')
+    train_dl.add_argument('--model-type', type=int, default=2, help='Model architecture: 1=SimpleCNN, 2=ResNet1D, 3=InceptionTime (default: 2)')
     train_dl.add_argument('--no-plot', action='store_true', help='Disable saving training curve plots')
     train_dl.add_argument('--gui', action='store_true', help='Show real-time training GUI with live plots')
     train_dl.add_argument('-v', '--verbose', action='store_true', help='Verbose logging')
@@ -1169,6 +1170,7 @@ def run_train_dl(args: argparse.Namespace):
                         '--weight-decay', str(args.weight_decay),
                         '--out-dir', str(session_output),
                         '--num-workers', str(args.num_workers),
+                        '--model-type', str(args.model_type),
                     ]
                     if args.no_plot:
                         train_argv.append('--no-plot')
@@ -1222,6 +1224,7 @@ def run_train_dl(args: argparse.Namespace):
                 '--weight-decay', str(args.weight_decay),
                 '--out-dir', args.out_dir,
                 '--num-workers', str(args.num_workers),
+                '--model-type', str(args.model_type),
             ]
             if args.no_plot:
                 train_argv.append('--no-plot')
