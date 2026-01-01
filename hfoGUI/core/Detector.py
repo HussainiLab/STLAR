@@ -64,8 +64,6 @@ class _LocalDLDetector:
             try:
                 self.model = torch.jit.load(str(path), map_location=self.device)
                 self._progress("[DL Detection] Successfully loaded as TorchScript")
-                self.model = torch.jit.load(str(path), map_location=self.device)
-                self._progress("[DL Detection] Successfully loaded as TorchScript")
             except Exception as e:
                 # Fallback to regular torch.load (state_dict or full model)
                 self._progress(f"[DL Detection] TorchScript failed ({type(e).__name__}), trying torch.load...")
@@ -123,13 +121,19 @@ class _LocalDLDetector:
             if prob >= float(self.params.threshold):
                 pos_windows.append((start, end))
 
-        # Merge overlapping windows
+        # Merge overlapping/nearby windows (within 200ms gap)
+        # This prevents merging distant positive detections into one event
+        max_gap_samples = int(0.2 * fs)  # 200ms gap threshold
         merged = []
         for start, end in pos_windows:
-            if not merged or start > merged[-1][1]:
+            if not merged:
                 merged.append([start, end])
-            else:
+            elif start <= merged[-1][1] + max_gap_samples:
+                # Within gap threshold, merge by extending the end
                 merged[-1][1] = max(merged[-1][1], end)
+            else:
+                # Gap too large, start new event
+                merged.append([start, end])
 
         return [{'start': s/float(fs), 'end': e/float(fs)} for s, e in merged]
 
