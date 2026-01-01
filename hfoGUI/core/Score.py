@@ -74,95 +74,76 @@ class RegionPresetDialog(QtWidgets.QDialog):
         self.setWindowTitle(f"Region Preset - {region_name}")
         self.preset_data = preset_data.copy()
         self.modified_preset = None
+        self.field_widgets = {}
         
         self.setMinimumWidth(500)
         layout = QtWidgets.QVBoxLayout()
         
-        # Info label
         info_label = QtWidgets.QLabel(
             f"<b>Configure parameters for {region_name}</b><br>"
-            "Adjust the values below and click Apply to update detector settings."
+            "Adjust band limits, durations, gating, and DL export options before applying."
         )
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
-        
+
         # Scroll area for all parameters
         scroll = QtWidgets.QScrollArea()
         scroll.setWidgetResizable(True)
         scroll_widget = QtWidgets.QWidget()
         form_layout = QtWidgets.QFormLayout()
-        
-        self.field_widgets = {}
-        
-        # Frequency Bands section
-        bands_label = QtWidgets.QLabel("<b>Frequency Bands (Hz)</b>")
-        form_layout.addRow(bands_label)
-        
+
+        # Bands
+        form_layout.addRow(QtWidgets.QLabel("<b>Bands (Hz)</b>"))
         bands = preset_data.get('bands', {})
-        for band_name, (min_freq, max_freq) in bands.items():
-            row_widget = QtWidgets.QWidget()
-            row_layout = QtWidgets.QHBoxLayout(row_widget)
-            row_layout.setContentsMargins(0, 0, 0, 0)
-            
-            min_spin = QtWidgets.QSpinBox()
-            min_spin.setRange(1, 1000)
-            min_spin.setValue(min_freq)
-            min_spin.setSuffix(" Hz")
-            
-            max_spin = QtWidgets.QSpinBox()
-            max_spin.setRange(1, 1000)
-            max_spin.setValue(max_freq)
-            max_spin.setSuffix(" Hz")
-            
+        for band_name, bounds in bands.items():
+            min_val, max_val = (bounds + [0, 0])[:2] if isinstance(bounds, (list, tuple)) else (0.0, 0.0)
+            row_layout = QtWidgets.QHBoxLayout()
+            min_spin = QtWidgets.QDoubleSpinBox()
+            min_spin.setRange(0.0, 1000.0)
+            min_spin.setSingleStep(5.0)
+            min_spin.setValue(min_val)
+            max_spin = QtWidgets.QDoubleSpinBox()
+            max_spin.setRange(0.0, 1000.0)
+            max_spin.setSingleStep(5.0)
+            max_spin.setValue(max_val)
+            self.field_widgets[f'bands_{band_name}_min'] = min_spin
+            self.field_widgets[f'bands_{band_name}_max'] = max_spin
             row_layout.addWidget(QtWidgets.QLabel("Min:"))
             row_layout.addWidget(min_spin)
             row_layout.addWidget(QtWidgets.QLabel("Max:"))
             row_layout.addWidget(max_spin)
             row_layout.addStretch()
-            
-            self.field_widgets[f'bands_{band_name}_min'] = min_spin
-            self.field_widgets[f'bands_{band_name}_max'] = max_spin
-            
-            form_layout.addRow(f"  {band_name.replace('_', ' ').title()}:", row_widget)
-        
-        # Duration constraints section
-        form_layout.addRow(QtWidgets.QLabel(""))  # Spacer
-        durations_label = QtWidgets.QLabel("<b>Duration Constraints (ms)</b>")
-        form_layout.addRow(durations_label)
-        
+            row_widget = QtWidgets.QWidget()
+            row_widget.setLayout(row_layout)
+            form_layout.addRow(f"{band_name.replace('_', ' ').title()}:", row_widget)
+
+        # Durations
+        form_layout.addRow(QtWidgets.QLabel("<b>Durations (ms)</b>"))
         durations = preset_data.get('durations', {})
-        for dur_name, dur_value in durations.items():
-            spin = QtWidgets.QSpinBox()
-            spin.setRange(1, 500)
-            spin.setValue(dur_value)
-            spin.setSuffix(" ms")
+        for dur_name, dur_val in durations.items():
+            spin = QtWidgets.QDoubleSpinBox()
+            spin.setRange(1.0, 2000.0)
+            spin.setSingleStep(5.0)
+            spin.setValue(dur_val)
             self.field_widgets[f'durations_{dur_name}'] = spin
-            display_name = dur_name.replace('_', ' ').replace('ms', '').title()
-            form_layout.addRow(f"  {display_name}:", spin)
-        
-        # Detection parameters section
-        form_layout.addRow(QtWidgets.QLabel(""))  # Spacer
-        detection_label = QtWidgets.QLabel("<b>Detection Parameters</b>")
-        form_layout.addRow(detection_label)
-        
-        # Threshold SD
-        threshold_spin = QtWidgets.QDoubleSpinBox()
-        threshold_spin.setRange(1.0, 10.0)
-        threshold_spin.setSingleStep(0.1)
-        threshold_spin.setValue(preset_data.get('threshold_sd', 3.5))
-        threshold_spin.setSuffix(" SD")
-        self.field_widgets['threshold_sd'] = threshold_spin
-        form_layout.addRow("  Threshold:", threshold_spin)
-        
-        # Epoch size
-        epoch_spin = QtWidgets.QSpinBox()
-        epoch_spin.setRange(10, 3600)
-        epoch_spin.setValue(preset_data.get('epoch_s', 300))
-        epoch_spin.setSuffix(" s")
+            form_layout.addRow(f"{dur_name.replace('_', ' ')}:", spin)
+
+        # Detection params
+        form_layout.addRow(QtWidgets.QLabel("<b>Detection defaults</b>"))
+        thr_spin = QtWidgets.QDoubleSpinBox()
+        thr_spin.setRange(0.1, 10.0)
+        thr_spin.setSingleStep(0.1)
+        thr_spin.setValue(preset_data.get('threshold_sd', 3.5))
+        self.field_widgets['threshold_sd'] = thr_spin
+        form_layout.addRow("Threshold (SD):", thr_spin)
+
+        epoch_spin = QtWidgets.QDoubleSpinBox()
+        epoch_spin.setRange(1.0, 3600.0)
+        epoch_spin.setSingleStep(10.0)
+        epoch_spin.setDecimals(1)
+        epoch_spin.setValue(preset_data.get('epoch_s', 300.0))
         self.field_widgets['epoch_s'] = epoch_spin
-        form_layout.addRow("  Epoch Size:", epoch_spin)
-        
-        # Behavioral gating section
+        form_layout.addRow("Epoch (s):", epoch_spin)
         form_layout.addRow(QtWidgets.QLabel(""))  # Spacer
         behavior_label = QtWidgets.QLabel("<b>Behavioral Gating</b>")
         form_layout.addRow(behavior_label)
@@ -827,6 +808,7 @@ class ScoreWindow(QtWidgets.QWidget):
                             <li><b>Hilbert</b>: Bandpass + Hilbert envelope; thresholds via SD and peak counts.</li>
                             <li><b>STE</b>: Local RMS-based detector (windowed energy thresholding).</li>
                             <li><b>MNI</b>: Percentile/energy-based baseline detector.</li>
+                            <li><b>Consensus</b>: Voting of Hilbert + STE + MNI (strict/majority/any).</li>
                             <li><b>Deep Learning</b>: Requires an exported TorchScript model (Train tab).</li>
                             <li><b>Add Selected EOI(s) to Score</b>: Moves EOIs into the Score tab for labeling. 
                                 <br><i>If a brain region preset is active, automatically applies:</i>
@@ -887,7 +869,7 @@ class ScoreWindow(QtWidgets.QWidget):
         tabs.addTab(eoi_tab, 'Automatic Detection')
         tabs.addTab(convert_tab, 'CSV convert')
         tabs.addTab(train_tab, 'Train')
-        tabs.addTab(help_tab, 'Help')
+        tabs.addTab(help_tab, 'How to Score')
 
         window_layout = QtWidgets.QVBoxLayout()
         for item in [source_layout, tabs]:
@@ -4223,7 +4205,7 @@ class DLParametersWindow(QtWidgets.QWidget):
         path_layout.addWidget(self.model_path_edit)
         path_layout.addWidget(self.browse_btn)
 
-        self.threshold_edit = QtWidgets.QLineEdit("0.85")
+        self.threshold_edit = QtWidgets.QLineEdit("0.75")
         self.batch_size_edit = QtWidgets.QLineEdit("32")
 
         layout.addRow("Model Path:", path_layout)
