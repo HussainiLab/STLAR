@@ -20,6 +20,7 @@ def parse_args():
     p.add_argument('--out-dir', type=str, default='models')
     p.add_argument('--num-workers', type=int, default=2)
     p.add_argument('--no-plot', action='store_true', help='Disable training curve plots')
+    p.add_argument('--model-type', type=int, default=2, help='Model architecture: 1=SimpleCNN, 2=ResNet1D, 3=InceptionTime')
     p.add_argument('--gui', action='store_true', help='Show real-time training GUI')
     return p.parse_args()
 
@@ -203,7 +204,7 @@ def main():
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, collate_fn=pad_collate_fn)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers, collate_fn=pad_collate_fn)
 
-    model = build_model().to(device)
+    model = build_model(args.model_type).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
     best_val = float('inf')
