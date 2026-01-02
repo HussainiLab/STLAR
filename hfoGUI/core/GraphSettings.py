@@ -323,7 +323,19 @@ class GraphSettingsWindows(QtWidgets.QWidget):
             self.mainWindow.score_x1 = self.drag_start * 1000.0  # start in ms
             self.mainWindow.score_x2 = self.drag_stop * 1000.0  # stop in ms
 
-            self.remove_lines()  # remove any lines marking central position for
+            # Also update T-F plot to center of selection
+            center_time = (self.drag_start + self.drag_stop) / 2.0
+
+            # Remove any existing T-F plot line
+            self.remove_lines()
+
+            # Create a new vertical line at the center of the selection
+            self.lines = pg.InfiniteLine(pos=center_time, angle=90, movable=False, pen=(0, 0, 0))
+            self.mainWindow.Graph_axis.addItem(self.lines)
+            self.selected_time = center_time
+
+            # Emit signal to replot T-F plots
+            self.RePlotTFSignal.myGUI_signal.emit('RePlot')
 
             self.drag_start = None
             self.drag_stop = None
@@ -1683,14 +1695,9 @@ class GraphSettingsWindows(QtWidgets.QWidget):
             if not hasattr(self.mainWindow, 'graph_max'):
                 return
 
-            if hasattr(self.mainWindow, 'lr'):
-                # remove and replace the linear region selector so it doesn't show up at the same time as this line
-                self.mainWindow.Graph_axis.removeItem(self.mainWindow.lr)  # removes the lr
-                # self.mainWindow.create_lr()  # creates the lr again
-                self.newData.lr_signal.emit(
-                    'create')  # creates the lr again
-                self.mainWindow.score_x1 = None
-                self.mainWindow.score_x2 = None
+            # A click is for inspecting a time point for T-F analysis.
+            # It should not clear the user's drag-selection (LinearRegionItem).
+            # The drag-selection is cleared when a new drag is initiated.
 
             # create a black vertical line
             self.lines = pg.InfiniteLine(pos=mousePoint.x(), angle=90, movable=False, pen=(0, 0, 0))
@@ -1854,4 +1861,3 @@ class ProgressWindow(QtWidgets.QWidget):
 
     def __init__(self):
         super(ProgressWindow, self).__init__()
-
