@@ -107,24 +107,56 @@ class _LocalDLDetector:
         win = max(1, int(self.window_secs * fs))
         hop = max(1, int(win * self.hop_frac))
 
-        pos_windows = []
+        # Collect all windows first for batch processing
+        windows = []
+        window_indices = []
         for start in range(0, len(x), hop):
             end = min(len(x), start + win)
             seg = x[start:end]
             if seg.size == 0:
                 continue
+            # Normalize
             mu = seg.mean()
             sd = seg.std() + 1e-8
             seg = (seg - mu) / sd
-            seg = torch.from_numpy(seg).unsqueeze(0).unsqueeze(0)  # (1,1,L)
+            
+            # Pad if needed to ensure consistent window size
+            if len(seg) < win:
+                seg = np.pad(seg, (0, win - len(seg)), mode='constant', constant_values=0)
+            
+            windows.append(seg)
+            window_indices.append((start, end))
+        
+        # Batch inference for speed
+        batch_size = 256  # Process 256 windows at a time
+        pos_windows = []
+        
+        for batch_start in range(0, len(windows), batch_size):
+            batch_end = min(len(windows), batch_start + batch_size)
+            batch = windows[batch_start:batch_end]
+            
+            # Stack into tensor (B, 1, L)
+            batch_tensor = torch.from_numpy(np.stack(batch)).unsqueeze(1)
+            
             with torch.no_grad():
-                logit = self.model(seg)
-                if isinstance(logit, (list, tuple)):
-                    logit = logit[0]
-                prob = torch.sigmoid(logit.squeeze()).item()
-                prob_values.append(prob)
-            if prob >= float(self.params.threshold):
-                pos_windows.append((start, end))
+                logits = self.model(batch_tensor)
+                if isinstance(logits, (list, tuple)):
+                    logits = logits[0]
+                probs = torch.sigmoid(logits.squeeze(-1)).cpu().numpy()
+                
+                # Handle both 1D and 2D outputs
+                if probs.ndim > 1:
+                    probs = probs.squeeze()
+                if probs.ndim == 0:
+                    probs = np.array([probs])
+                
+                prob_values.extend(probs.tolist())
+                
+                # Identify positive windows
+                for i, prob in enumerate(probs):
+                    if prob >= float(self.params.threshold):
+                        idx = batch_start + i
+                        pos_windows.append(window_indices[idx])
 
         # Debug: show probability distribution
         if prob_values:

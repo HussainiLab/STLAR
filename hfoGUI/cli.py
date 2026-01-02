@@ -415,8 +415,8 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_dl.add_argument('--batch-dir', help='Directory containing subdirectories with .egf and EOI files. Enables batch mode.')
     prepare_dl.add_argument('--set-file', help='Optional .set file for bits-to-uV conversion')
     prepare_dl.add_argument('-o', '--output', help='Output directory for segments and manifest.csv. Required for single-session mode.')
-    prepare_dl.add_argument('--region', choices=['LEC', 'Hippocampus', 'MEC'], default='LEC',
-                           help='Brain region preset (LEC, Hippocampus, MEC; default: LEC)')
+    prepare_dl.add_argument('--region', choices=['None', 'LEC', 'Hippocampus', 'MEC'], default='None',
+                           help='Brain region preset (None, LEC, Hippocampus, MEC; default: None)')
     prepare_dl.add_argument('--pos-file', help='Optional .pos file for behavior gating with speed data')
     prepare_dl.add_argument('--ppm', type=int, help='Pixels-per-millimeter for .pos file (e.g., 595)')
     prepare_dl.add_argument('--prefix', default='seg', help='Prefix for segment filenames (default: seg)')
@@ -751,16 +751,23 @@ def _process_single_session(eoi_path, egf_path, output_dir, args, region_preset)
     
     # Get region presets (hardcoded to avoid GUI initialization)
     region_presets = _get_region_presets()
-    region_preset = region_presets.get(args.region, {})
     
-    if not region_preset:
-        raise ValueError(f"Unknown region: {args.region}")
-    
-    if args.verbose:
-        print(f"Applied region preset: {args.region}")
-        print(f"  Frequency bands: {region_preset.get('bands', {})}")
-        print(f"  Durations: {region_preset.get('durations', {})}")
-        print(f"  Speed range: {region_preset.get('speed_threshold_min_cm_s', 0)}-{region_preset.get('speed_threshold_max_cm_s', 5)} cm/s")
+    # Handle 'None' option - skip preset filtering
+    if args.region == 'None':
+        region_preset = {}
+        if args.verbose:
+            print("No region preset applied (--region None)")
+    else:
+        region_preset = region_presets.get(args.region, {})
+        
+        if not region_preset:
+            raise ValueError(f"Unknown region: {args.region}")
+        
+        if args.verbose:
+            print(f"Applied region preset: {args.region}")
+            print(f"  Frequency bands: {region_preset.get('bands', {})}")
+            print(f"  Durations: {region_preset.get('durations', {})}")
+            print(f"  Speed range: {region_preset.get('speed_threshold_min_cm_s', 0)}-{region_preset.get('speed_threshold_max_cm_s', 5)} cm/s")
     
     # Load optional .pos file for behavior gating
     speed_signal = None
