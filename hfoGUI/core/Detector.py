@@ -23,6 +23,8 @@ class ParamDL:
     model_path: str
     threshold: float = 0.5
     batch_size: int = 32
+    window_size: float = 1.0
+    overlap: float = 0.5
 
 
 class _LocalDLDetector:
@@ -32,8 +34,8 @@ class _LocalDLDetector:
         self.params = params
         self.model = None
         self.device = 'cpu'
-        self.window_secs = 1.0  # 1-second windows by default
-        self.hop_frac = 0.5      # 50% overlap
+        self.window_secs = params.window_size
+        self.hop_frac = params.overlap
         self.progress_callback = progress_callback
         self._load_model()
 
@@ -430,7 +432,7 @@ def _local_mni_detect(data, fs, baseline_window=10.0, threshold_percentile=99.0,
     return np.asarray(events, dtype=float)
 
 
-def dl_detect_events(data, fs, model_path, threshold=0.5, batch_size=32, progress_callback=None, dump_probs=False, **kwargs):
+def dl_detect_events(data, fs, model_path, threshold=0.5, batch_size=32, window_size=1.0, overlap=0.5, progress_callback=None, dump_probs=False, **kwargs):
     """
     Run Deep Learning detection using local PyTorch/ONNX implementation.
     """
@@ -440,7 +442,9 @@ def dl_detect_events(data, fs, model_path, threshold=0.5, batch_size=32, progres
         sample_freq=float(fs),
         model_path=str(model_path),
         threshold=float(threshold),
-        batch_size=int(batch_size)
+        batch_size=int(batch_size),
+        window_size=float(window_size),
+        overlap=float(overlap)
     )
     detector = set_DL_detector(args, progress_callback=progress_callback)
     signal = np.asarray(data, dtype=np.float32)
