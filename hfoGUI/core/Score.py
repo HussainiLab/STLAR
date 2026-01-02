@@ -3193,6 +3193,8 @@ def DLDetection(self):
                 model_path=self.dl_model_path,
                 threshold=self.dl_threshold,
                 batch_size=self.dl_batch_size,
+                window_size=getattr(self, 'dl_window_size', 1.0),
+                overlap=getattr(self, 'dl_overlap', 0.5),
                 progress_callback=dl_progress
             )
             if EOIs is None or len(EOIs) == 0:
@@ -4218,10 +4220,14 @@ class DLParametersWindow(QtWidgets.QWidget):
 
         self.threshold_edit = QtWidgets.QLineEdit("0.75")
         self.batch_size_edit = QtWidgets.QLineEdit("32")
+        self.window_size_edit = QtWidgets.QLineEdit("1.0")
+        self.overlap_edit = QtWidgets.QLineEdit("0.5")
 
         layout.addRow("Model Path:", path_layout)
         layout.addRow("Threshold (Prob):", self.threshold_edit)
         layout.addRow("Batch Size:", self.batch_size_edit)
+        layout.addRow("Window Size (s):", self.window_size_edit)
+        layout.addRow("Overlap (0-1):", self.overlap_edit)
 
         self.analyze_btn = QtWidgets.QPushButton("Classify EOIs")
         self.analyze_btn.clicked.connect(self.analyze)
@@ -4246,6 +4252,8 @@ class DLParametersWindow(QtWidgets.QWidget):
             self.scoreWindow.dl_model_path = model_path
             self.scoreWindow.dl_threshold = float(self.threshold_edit.text())
             self.scoreWindow.dl_batch_size = int(self.batch_size_edit.text())
+            self.scoreWindow.dl_window_size = float(self.window_size_edit.text())
+            self.scoreWindow.dl_overlap = float(self.overlap_edit.text())
         except ValueError:
             QtWidgets.QMessageBox.warning(self, "Invalid Input", "Please enter valid numeric values.")
             return
@@ -4253,7 +4261,9 @@ class DLParametersWindow(QtWidgets.QWidget):
         settings = {
             'model_path': self.scoreWindow.dl_model_path,
             'threshold': self.scoreWindow.dl_threshold,
-            'batch_size': self.scoreWindow.dl_batch_size
+            'batch_size': self.scoreWindow.dl_batch_size,
+            'window_size': self.scoreWindow.dl_window_size,
+            'overlap': self.scoreWindow.dl_overlap
         }
         _save_generic_settings(self.scoreWindow, 'DL', settings)
 
