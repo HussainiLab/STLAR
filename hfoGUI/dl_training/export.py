@@ -43,7 +43,7 @@ def main():
         torch.onnx.export(
             model, dummy, args.onnx,
             input_names=['input'], output_names=['logits'],
-            opset_version=14,
+            opset_version=17,
             dynamic_axes={'input': {0: 'batch', 2: 'length'}, 'logits': {0: 'batch'}},
         )
         print(f"✓ Saved ONNX to {args.onnx}")
