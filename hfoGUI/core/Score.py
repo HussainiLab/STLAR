@@ -1353,10 +1353,21 @@ class ScoreWindow(QtWidgets.QWidget):
 
         existing_IDs = self.existingID(source)  # get the IDs with that existing source
 
-        ID_numbers = np.asarray([int(ID[3:]) for ID in existing_IDs]).flatten()
+        # Parse ID numbers, skipping any malformed IDs
+        ID_numbers = []
+        for ID in existing_IDs:
+            try:
+                num_part = ID[3:]
+                if num_part:  # Skip empty strings
+                    ID_numbers.append(int(num_part))
+            except (ValueError, IndexError):
+                # Skip malformed IDs
+                continue
+        
+        ID_numbers = np.asarray(ID_numbers).flatten()
 
         if len(ID_numbers) != 0:
-            return '%s%d' % (self.id_abbreviations[source], np.setdiff1d(np.arange(1, len(existing_IDs)+2), ID_numbers)[0])
+            return '%s%d' % (self.id_abbreviations[source], np.setdiff1d(np.arange(1, len(ID_numbers)+2), ID_numbers)[0])
         else:
             # there are no ID's,
             return '%s%d' % (self.id_abbreviations[source], 1)
