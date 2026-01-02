@@ -2,7 +2,7 @@
 
 ![STLAR Overview Banner](docs/images/banner.png)
 
-STLAR (pronounced **Stellar**) is a comprehensive Spatio-Temporal LFP analysis tool combining temporal HFO detection (hfoGUI), spatial spectral mapping, and deep learning classification capabilities.
+STLAR (or **Stellar**) is a comprehensive Spatio-Temporal LFP analysis tool combining temporal HFO detection (hfoGUI), spatial spectral mapping, and deep learning classification capabilities.
 
 ---
 
