@@ -8,6 +8,9 @@ from .data import SegmentDataset, pad_collate_fn
 from .model import build_model
 import sys
 
+# Fix OpenMP library conflict (multiple libiomp5md.dll instances)
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
+
 
 def parse_args():
     p = argparse.ArgumentParser(description="Train a 1D CNN HFO classifier")
@@ -212,6 +215,31 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     best_ckpt = out_dir / 'best.pt'
     
+    # Save training parameters to JSON for tracking
+    import json
+    import datetime
+    training_params = {
+        'timestamp': datetime.datetime.now().isoformat(),
+        'device': str(device),
+        'train_manifest': str(args.train),
+        'val_manifest': str(args.val),
+        'epochs': args.epochs,
+        'batch_size': args.batch_size,
+        'learning_rate': args.lr,
+        'weight_decay': args.weight_decay,
+        'model_type': args.model_type,
+        'model_type_name': {1: 'SimpleCNN', 2: 'ResNet1D', 3: 'InceptionTime', 4: 'Transformer', 5: '2D_CNN'}.get(args.model_type, 'Unknown'),
+        'num_workers': args.num_workers,
+        'train_samples': len(train_ds),
+        'val_samples': len(val_ds),
+        'output_dir': str(out_dir),
+    }
+    
+    params_file = out_dir / 'training_params.json'
+    with open(params_file, 'w') as f:
+        json.dump(training_params, f, indent=2)
+    print(f"[OK] Saved training parameters to {params_file}\n")
+    
     # Training history tracking
     best_epoch = 0
     epochs_since_improvement = 0
@@ -334,7 +362,14 @@ def main():
     if final_gap > 0.05:
         print("[WARN] OVERFITTING detected")
         print(f"   Val loss > Train loss by {final_gap:.4f}")
-        print("   -> Try: Increase --weight-decay to 1e-3")
+        if args.weight_decay >= 1e-3:
+            print(f"   -> weight_decay already at {args.weight_decay}, try:")
+            print("      • Increase weight_decay further (to 1e-2)")
+            print("      • Add dropout layers to model")
+            print("      • Collect more training data")
+            print("      • Reduce model complexity")
+        else:
+            print(f"   -> Try: Increase --weight-decay (current: {args.weight_decay})")
     else:
         print("[OK] No significant overfitting")
     
@@ -345,7 +380,8 @@ def main():
         if all(abs(imp) < 0.001 for imp in recent_improvements):
             print("[WARN] PLATEAU detected")
             print("   Val loss not improving")
-            print("   -> Try: Reduce --lr by 2-5x")
+            suggested_lr = args.lr / 2
+            print(f"   -> Try: Reduce --lr to {suggested_lr:.2e} (from {args.lr:.2e})")
         else:
             print("[OK] Val loss still improving")
     
@@ -357,13 +393,52 @@ def main():
         if train_std > 0.1:
             print("[WARN] INSTABILITY detected")
             print(f"   High loss variance: {train_std:.4f}")
-            print("   -> Try: Reduce --batch-size to 32")
+            suggested_batch = max(16, args.batch_size // 2)
+            print(f"   -> Try: Reduce --batch-size to {suggested_batch} (from {args.batch_size})")
         else:
             print("[OK] Training is stable")
     
     print("-" * 40)
 
     print("Done. Best val loss: {:.4f}".format(best_val))
+    
+    # Update training parameters file with final results
+    training_params['best_epoch'] = best_epoch
+    training_params['best_val_loss'] = float(best_val)
+    training_params['final_train_loss'] = float(history['train_loss'][-1])
+    training_params['final_val_loss'] = float(history['val_loss'][-1])
+    training_params['total_epochs_run'] = len(history['train_loss'])
+    training_params['overfitting_detected'] = (history['val_loss'][-1] - history['train_loss'][-1]) > 0.05
+    training_params['best_checkpoint'] = str(best_ckpt)
+    
+    # Add tuning recommendations based on diagnostics
+    recommendations = []
+    final_gap = history['val_loss'][-1] - history['train_loss'][-1]
+    if final_gap > 0.05:
+        if args.weight_decay >= 1e-3:
+            recommendations.append(f"Overfitting (gap={final_gap:.4f}): weight_decay already at {args.weight_decay}, try 1e-2 or add dropout")
+        else:
+            recommendations.append(f"Overfitting (gap={final_gap:.4f}): Increase weight_decay to 1e-3 or higher")
+    
+    if len(history['val_loss']) >= 5:
+        recent_improvements = [history['val_loss'][i-1] - history['val_loss'][i] 
+                              for i in range(-4, 0)]
+        if all(abs(imp) < 0.001 for imp in recent_improvements):
+            suggested_lr = args.lr / 2
+            recommendations.append(f"Plateau detected: Reduce learning_rate to {suggested_lr:.2e}")
+    
+    if len(history['train_loss']) >= 3:
+        recent_train = history['train_loss'][-3:]
+        train_std = (sum((x - sum(recent_train)/3)**2 for x in recent_train) / 3)**0.5
+        if train_std > 0.1:
+            suggested_batch = max(16, args.batch_size // 2)
+            recommendations.append(f"Instability (std={train_std:.4f}): Reduce batch_size to {suggested_batch}")
+    
+    training_params['tuning_recommendations'] = recommendations if recommendations else ["Training looks good!"]
+    
+    with open(params_file, 'w') as f:
+        json.dump(training_params, f, indent=2)
+    print(f"[OK] Updated training parameters with final results: {params_file}")
     
     # Keep GUI open if enabled
     if args.gui and gui_app and gui_window:
