@@ -494,6 +494,7 @@ class ScoreWindow(QtWidgets.QWidget):
 
         region_label = QtWidgets.QLabel("Brain Region:")
         self.region_selector = QtWidgets.QComboBox()
+        self.region_selector.addItem("None")
         for region_name in self.region_presets.keys():
             self.region_selector.addItem(region_name)
         self.region_selector.setCurrentText(self.current_region)
@@ -1002,9 +1003,17 @@ class ScoreWindow(QtWidgets.QWidget):
 
     def _on_region_changed(self, region_name):
         self.current_region = region_name
+        # Clear region profile if "None" is selected
+        if region_name == "None":
+            self.region_profile = {}
+        else:
+            self.region_profile = self.region_presets.get(region_name, {}).copy()
 
     def openRegionPresetDialog(self):
         """Open dialog to review and modify region preset before applying."""
+        if self.current_region == "None":
+            QtWidgets.QMessageBox.information(self, "No Preset", "No region preset is active. Select a brain region (LEC, Hippocampus, MEC) to configure presets.")
+            return
         profile = self.region_presets.get(self.current_region, {}).copy()
         if not profile:
             QtWidgets.QMessageBox.warning(self, "Preset Missing", f"No preset found for region: {self.current_region}")
@@ -1312,6 +1321,15 @@ class ScoreWindow(QtWidgets.QWidget):
                 new_item.setText(value, str(self.mainWindow.score_x1))
             elif 'Stop' in key:
                 new_item.setText(value, str(self.mainWindow.score_x2))
+            elif 'Duration' in key:
+                try:
+                    dur_ms = float(self.mainWindow.score_x2) - float(self.mainWindow.score_x1)
+                    if dur_ms > 0:
+                        new_item.setText(value, f"{dur_ms:.3f}")
+                    else:
+                        new_item.setText(value, "")
+                except Exception:
+                    new_item.setText(value, "")
             elif 'Settings File' in key:
                 # there is no settings file involved in manual detection
                 new_item.setText(value, 'N/A')
