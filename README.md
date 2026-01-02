@@ -2,7 +2,33 @@
 
 ![STLAR Overview Banner](docs/images/banner.png)
 
-STLAR (pronounced Stellar) is a Spatio-Temporal LFP analysis tool combining hfoGUI and Spatial Spectral Mapper.
+STLAR (pronounced **Stellar**) is a comprehensive Spatio-Temporal LFP analysis tool combining temporal HFO detection (hfoGUI), spatial spectral mapping, and deep learning classification capabilities.
+
+---
+
+## 📑 Table of Contents
+
+### Getting Started
+- [Features](#features)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+
+### Usage
+- [GUI Workflow](#gui-workflow)
+- [Command-Line Interface (CLI)](#cli-reference)
+- [Deep Learning Training](#complete-deep-learning-training-workflow)
+
+### Advanced
+- [Module Structure](#module-structure)
+- [Technical Reference](docs/TECHNICAL_REFERENCE.md)
+- [API Documentation](#api-documentation)
+
+### Support
+- [Troubleshooting](#troubleshooting-installation)
+- [Getting Help](#getting-help)
+- [Recent Changes](#recent-changes)
+
+---
 
 ## Features
 
@@ -176,72 +202,239 @@ pip install --user -r requirements.txt
 
 ## Quick Start
 
-### 3 Ways to Use STLAR
+### 🎯 Choose Your Path
 
-#### 1️⃣ GUI (Easiest - Point & Click)
+STLAR offers three ways to analyze data. **New users should start with the GUI (option 1).**
+
+#### 1️⃣ **GUI (Easiest - Recommended for Beginners)**
+
+No command-line knowledge needed! Everything is point-and-click.
 
 **Launch the HFO Analysis GUI:**
 ```bash
 python -m stlar gui
 ```
-Then open a data file and adjust detection parameters with sliders.
 
-![HFO GUI Screenshot](docs/images/hfo_gui_annotated.png)
+You'll see a window with buttons to:
+- 📂 **Load** your EEG/EGF file
+- 🔍 **Detect** HFOs with different methods (Hilbert, Consensus, Deep Learning, etc.)
+- 📊 **View** detected events in a table
+- 🏷️ **Score** events (label as ripples, artifacts, etc.)
+- 💾 **Save** results to a text file
+
+**GUI Workflow (step-by-step):**
+
+1. **Load Data:** Click "File" → "Open" → select your `.eeg` or `.egf` file
+2. **Set Parameters:** Adjust sliders for frequency bands, thresholds (don't worry about exact values)
+3. **Detect Events:** Click "Run Detection" (Hilbert is fastest)
+4. **Review Results:** Browse detected events in the **Automatic Detection** tab
+5. **Move to Score Tab:** Select events you want to keep → Click **"Add Selected EOI(s) to Score"**
+6. **Label Events:** In the Score tab, select each event and click score buttons (Ripple, Fast Ripple, Artifact, etc.)
+7. **Save Results:** Click "Save Scores" to export to a text file
+
+**Tip:** Use the **"None"** option in "Brain Region" dropdown if you don't want region-specific filtering.
+
+---
 
 **Launch the Spatial Mapper GUI:**
 ```bash
 python -m stlar spatial-gui
 ```
 
-![Spatial Mapper Screenshot](docs/images/spatial_mapper_annotated.png)
+This shows a heatmap of HFO activity across the recording arena with position tracking overlays.
 
-#### Score window workflow (fast overview)
-- Detect EOIs with Hilbert / STE / MNI / Consensus / Deep Learning in the <b>Automatic Detection</b> tab.
-- Select EOIs and click <b>Add Selected EOI(s) to Score</b> to move them into the <b>Score</b> tab (applies presets if enabled).
-- Refine: add, relabel, hide, or delete scores; save the Score list to the default text file for analysis/spatial mapper.
-- Prep DL data: use <b>Create labels for DL training</b> (Ripple-family=1, Artifact=0) or <b>Export EOIs for DL Training</b> for unlabeled segments + manifest.
-- Split train/val in <b>CSV convert</b>, then train in <b>Train</b>; export TorchScript (.pt) for detection.
-- Run Deep Learning detection from the GUI or CLI. For CLI sanity checks, add <code>--dump-probs</code> to print per-window probability spread and a quick quality assessment.
+---
 
-#### 2️⃣ Command Line (Batch Processing)
+#### 2️⃣ **Command Line (For Batch Processing)**
 
-Process multiple files automatically:
+Process multiple files automatically without the GUI. Good for processing dozens of files consistently.
 
+**Example: Process all files in a folder**
 ```bash
-# Detect HFOs using Hilbert method
-python -m stlar hilbert-batch -f mydata/recording.eeg
-
-# Process entire directory of files
 python -m stlar hilbert-batch -f mydata/
-
-# Use consensus voting (more reliable)
-python -m stlar consensus-batch -f mydata/ --voting-strategy strict
-
-# Spatial spectral mapping
-python -m stlar batch-ssm mydata/ --ppm 595
 ```
 
-![CLI Batch Processing](docs/images/cli_batch_processing.png)
+**What this does:**
+- Finds all `.eeg` and `.egf` files in `mydata/` (including subfolders)
+- Detects ripples using the Hilbert filter method
+- Saves results to `HFOScores/` automatically
+- Shows progress in the terminal
 
-Results save to `HFOScores/` by default. See [CLI Reference](#cli-reference) for all commands and options.
+**More examples:**
 
-![Output Example](docs/images/output_example.png)
+Use consensus voting (more reliable but slower):
+```bash
+python -m stlar consensus-batch -f mydata/ -v
+```
 
-#### 3️⃣ Python API (Advanced)
+Process a single file:
+```bash
+python -m stlar hilbert-batch -f mydata/recording.eeg -o results/
+```
+
+Show detailed progress:
+```bash
+python -m stlar hilbert-batch -f mydata/ -v
+```
+
+**Output:** Detected events saved as `.txt` files in `HFOScores/`
+
+---
+
+#### 3️⃣ **Python API (For Programmers)**
+
+Use STLAR from your own Python scripts:
 
 ```python
 from hfoGUI.core.Detector import Detector
 
+# Load your data
 detector = Detector('mydata.eeg')
+
+# Detect ripples
 ripples = detector.detect_ripples(method='hilbert')
 print(f"Found {len(ripples)} ripples")
+
+# Detect fast ripples
+fast_ripples = detector.detect_ripples(method='hilbert', 
+                                      freq_min=250, freq_max=500)
 ```
+
+---
+
+### GUI Workflow Overview
+
+**The Score window workflow (fast overview):**
+
+1. **Detect EOIs** with Hilbert / STE / MNI / Consensus / Deep Learning in the **Automatic Detection** tab
+2. **Select EOIs** from the detection table and click **"Add Selected EOI(s) to Score"** to move them to the **Score** tab
+   - 💡 The **"None"** brain region option skips filtering if you don't want preset parameters
+3. **Refine scores**: add, relabel, hide, or delete scores manually
+4. **Save results** to a text file for further analysis
+5. *(Optional)* **Export for DL training**: Use **"Export EOIs for DL Training"** to create training data
+6. *(Optional)* **Train custom model**: Train a Deep Learning model on your labeled data
+7. *(Optional)* **Run DL detection**: Use your trained model on new recordings
+
+---
 
 ### File Format Support
 
-- **.eeg** - Tint format (most common)
-- **.egf** - Intan format with embedded tracking
-- **.edf** - Standard EDF format
+- **.eeg** - Tint format (most common for spike sorting)
+- **.egf** - Intan format (includes embedded position tracking)
+- **.edf** - Standard EDF format (medical device recordings)
+
+**Don't have sample data?** STLAR includes test data in `tests/` directory.
+
+---
+
+## GUI Workflow
+
+This section provides a detailed walkthrough of the GUI-based analysis. If you're new to STLAR, **start here**.
+
+### Step 1: Launch the GUI
+
+```bash
+python -m stlar gui
+```
+
+You should see the STLAR window open with several tabs.
+
+### Step 2: Load Your Data
+
+1. Click **"File"** menu → **"Open"**
+2. Navigate to your `.eeg` or `.egf` file
+3. The signal will appear in the graph area
+
+### Step 3: Set Up Detection Parameters
+
+On the left side, you'll see parameter sliders:
+
+- **Freq Min / Freq Max**: Frequency band to search (e.g., 80-250 Hz for ripples)
+- **Threshold (SD)**: Sensitivity (3-4 is typical, lower = more events)
+- **Min/Max Duration (ms)**: How long events must be (15-120 ms for ripples)
+
+**Tip:** Don't overthink these! Start with defaults and adjust based on your results.
+
+### Step 4: Run Detection
+
+Click **"Run Detection"** on your chosen tab:
+
+- **Hilbert** (fastest, good for exploration)
+- **STE** (Stockwell transform, frequency-based)
+- **MNI** (more conservative)
+- **Consensus** (voting between methods - more reliable)
+- **Deep Learning** (requires pre-trained model)
+
+Wait for detection to complete. You'll see events appear in the **Automatic Detection** table.
+
+### Step 5: Review & Filter Results
+
+In the **Automatic Detection** tab:
+
+1. **Sort by Duration**: Click the "Duration" column header to sort by event length
+2. **Preview events**: Click an event to highlight it in the signal graph
+3. **Adjust threshold**: If too many false positives, increase "Threshold (SD)"
+
+### Step 6: Move Events to Score Tab
+
+1. **Select events**: Click one event, then Ctrl+Click to select multiple
+2. Click **"Add Selected EOI(s) to Score"** button
+3. Events move to the **Score** tab for manual labeling
+
+**Important:** Choose a **Brain Region** (LEC, Hippocampus, MEC, or **None**) before adding:
+- If you select a region, STLAR applies preset filters (duration, behavior)
+- If you select **"None"**, events are added without any filtering
+
+### Step 7: Label Events in Score Tab
+
+For each event in the Score tab:
+
+1. Select the event
+2. Choose a label: **Ripple**, **Fast Ripple**, **Sharp Wave Ripple**, or **Artifact**
+3. Set **Scorer name** and **Brain Region** (if not set earlier)
+
+**Keyboard shortcuts:**
+- **R** = Ripple
+- **F** = Fast Ripple
+- **S** = Sharp Wave Ripple
+- **A** = Artifact
+- **Delete** = Remove selected event
+
+### Step 8: Save Your Results
+
+1. Click **"Save Scores"**
+2. Choose a location for the `.txt` file
+3. File is saved and ready for analysis or spatial mapping
+
+---
+
+### Deep Learning Features
+
+**New in STLAR:** Easy-to-use DL training from the GUI!
+
+#### Train a Custom Model
+
+1. Go to **"Deep Learning"** tab → **"Train"**
+2. Select your training and validation manifests (from `prepare-dl` command)
+3. Adjust parameters (epochs, learning rate, batch size) - see defaults first!
+4. Click **"Start Training"**
+5. Watch training progress in real-time (optional GUI monitor)
+
+**Training parameters saved automatically** to `training_params.json` with recommendations for next iteration:
+- If overfitting detected: suggests increasing regularization
+- If loss plateaus: suggests reducing learning rate
+- If training unstable: suggests smaller batch size
+
+#### Export & Use Your Model
+
+1. Go to **"Deep Learning"** tab → **"Export"**
+2. Select your best checkpoint (`best.pt`)
+3. Choose output directory
+4. Click **"Export"** to create TorchScript (.pt) and ONNX formats
+
+Then use the exported model for detection with the CLI or GUI.
+
+---
 
 ### Image Capture Checklist (for README visuals)
 
@@ -1544,18 +1737,137 @@ This project unifies:
 - [Consensus Summary](docs/CONSENSUS_SUMMARY.md)
 
 ### Spatial Spectral Mapper
-- [Spatial Mapper Guide](spatial_mapper/README.md)
+## API Documentation
+
+### Core Detector Class
+
+```python
+from hfoGUI.core.Detector import Detector
+
+# Create detector instance
+detector = Detector('mydata.eeg', fs=1250)  # fs = sampling frequency
+
+# Detect ripples
+ripples = detector.detect_ripples(
+    method='hilbert',           # 'hilbert', 'ste', 'mni', 'consensus', 'dl'
+    freq_min=80,               # Hz
+    freq_max=250,              # Hz
+    threshold_sd=3.5,          # standard deviations
+    min_dur_ms=15,             # minimum duration
+    max_dur_ms=120,            # maximum duration
+)
+
+# Detect fast ripples
+fast_ripples = detector.detect_ripples(
+    method='hilbert',
+    freq_min=250,
+    freq_max=500,
+    threshold_sd=3.5,
+    min_dur_ms=10,
+    max_dur_ms=80,
+)
+
+# Result format: list of dicts
+# [{'start': 1.23, 'end': 1.35}, {'start': 4.56, 'end': 4.62}, ...]
+```
+
+### Dataset Preparation (Deep Learning)
+
+```python
+from hfoGUI.dl_training.data import SegmentDataset
+from torch.utils.data import DataLoader
+
+# Load prepared training data
+dataset = SegmentDataset('manifest.csv')
+
+# Create a DataLoader for batching
+loader = DataLoader(
+    dataset,
+    batch_size=64,
+    shuffle=True,
+    num_workers=2
+)
+
+# Iterate through batches
+for batch_x, batch_y in loader:
+    # batch_x: (batch_size, 1, signal_length)
+    # batch_y: (batch_size,) with values 0 or 1
+    pass
+```
+
+### Model Building
+
+```python
+from hfoGUI.dl_training.model import build_model
+
+# Available architectures: 1, 2, 3, 4, 5
+model = build_model(model_type=2)  # ResNet1D (default)
+model = model.to('cuda' if torch.cuda.is_available() else 'cpu')
+
+# Inference on custom signal
+import torch
+signal = torch.randn(1, 1, 2000)  # (batch, channels, length)
+with torch.no_grad():
+    logit = model(signal)
+    prob = torch.sigmoid(logit).item()
+```
+
+---
 
 ## Getting Help
 
-### Common Issues
+### 📚 Documentation Resources
 
-**Installation problems?**
-- Re-run: `pip install -r requirements.txt --upgrade`
-- Check Python version: `python --version` (should be 3.8+)
-- See Installation > Troubleshooting above
+- **Installation Issues?** → See [Installation > Troubleshooting](#troubleshooting-installation)
+- **How to use the GUI?** → See [GUI Workflow](#gui-workflow)
+- **Command-line options?** → See [CLI Reference](#cli-reference)
+- **Algorithm details?** → See [Technical Reference](docs/TECHNICAL_REFERENCE.md)
+- **Deep Learning training?** → See [Complete Deep Learning Training Workflow](#complete-deep-learning-training-workflow)
 
-**Detection not finding HFOs?**
+### Common Issues & Solutions
+
+#### **GUI won't start**
+```bash
+# Try this:
+python -m stlar gui -v
+
+# If you see "ModuleNotFoundError: No module named 'PyQt5'":
+pip install PyQt5
+```
+
+#### **"Command not found: python"**
+- Windows: Use `python3` instead, or add Python to PATH
+- macOS/Linux: Try `python3 -m stlar gui`
+
+#### **"No such file or directory" when loading data**
+- Make sure the file path is correct (use absolute paths if unsure)
+- File must be `.eeg` or `.egf` format
+- Check file isn't being used by another program
+
+#### **DL detection is very slow**
+- This is normal for the first detection (model loading takes time)
+- For faster results, use GPU: `pip install torch torchvision torchaudio` with CUDA support
+- Or use simpler methods like Hilbert which are very fast
+
+#### **"torch not found" error**
+- Install PyTorch: `pip install torch` (CPU) or follow [Installation > Deep Learning](#deep-learning-optional-dependencies) for GPU
+- STLAR will run without torch, but DL features won't work
+
+#### **"ImportError: No module named 'hfoGUI'"**
+- Make sure you're in the STLAR directory: `cd STLAR/`
+- And virtual environment is activated: `conda activate stlar` or `source stlar/bin/activate`
+
+### Getting Support
+
+**Found a bug?** Report it on [GitHub Issues](https://github.com/HussainiLab/STLAR/issues)
+
+When reporting, include:
+1. Your OS (Windows/macOS/Linux)
+2. Python version: `python --version`
+3. What you were doing when the error occurred
+4. The full error message (copy-paste from terminal)
+
+---**Detection not finding HFOs?**
 - Check you're using correct frequency band for your data
 - Lower the threshold (e.g., `--threshold-sd 2.5`)
 - Try different detection methods (consensus is most reliable)
@@ -1585,33 +1897,66 @@ Include:
 
 ## Recent Changes
 
-### Deep Learning Training GUI (Latest)
+### 🎉 Major Features & Improvements (Latest)
+
+#### Deep Learning Training Parameters Auto-Save
+- ✅ **Auto-saves all training parameters** to `training_params.json` at start and end of training
+- ✅ **Intelligent recommendations** that adapt based on current parameters (not hardcoded)
+- ✅ **Tracks training metrics**: best epoch, final losses, training time
+- ✅ **Automatic diagnostics**: detects overfitting, plateau, instability, suggests next steps
+
+**Example output:**
+```json
+{
+  "timestamp": "2026-01-02T10:30:45.123456",
+  "device": "cuda",
+  "learning_rate": 0.001,
+  "weight_decay": 0.001,
+  "best_epoch": 12,
+  "final_train_loss": 0.2145,
+  "final_val_loss": 0.3421,
+  "overfitting_detected": true,
+  "tuning_recommendations": [
+    "Overfitting (gap=0.1276): weight_decay already at 0.001, try 0.01 or add dropout"
+  ]
+}
+```
+
+#### Enhanced DL Detection Performance
+- ✅ **10-50x faster DL detection** with batch processing (256 windows at a time)
+- ✅ **GPU support** - automatic detection of CUDA availability
+- ✅ **Better memory efficiency** - processes long recordings without OOM
+
+#### Region Preset Improvements  
+- ✅ **"None" option in GUI** - skip region-specific filtering if you want raw detection
+- ✅ **"None" option in CLI** - `--region None` for no preset filtering (new default)
+- ✅ **Smart recommendations** for next training iteration based on diagnostics
+
+#### Score Tab Enhancements
+- ✅ **Duration calculated automatically** when adding EOIs manually
+- ✅ **Robust ID creation** - handles malformed IDs gracefully without crashing
+- ✅ **Flexible brain region selection** - "None" option for users who don't want region filtering
+
+#### ONNX Export Fix
+- ✅ **ONNX opset upgraded to version 17** (was 14) - now supports `stft` operator for more models
+- ✅ **Better error handling** - gracefully falls back to TorchScript if ONNX export fails
+
+---
+
+### Previous Improvements
+
+#### Deep Learning Training GUI (Stable)
 - ✅ **Real-time training monitor** with live loss curves and diagnostics plots
-- ✅ **Fixed QApplication initialization** for PyQt5/pyqtgraph compatibility
 - ✅ **Automatic diagnostics** for overfitting detection, loss plateaus, and training instability  
 - ✅ **Early stopping** (stops after 5 epochs without improvement)
 - ✅ **Static training plots** saved automatically (`training_curves.png`, `training_metrics.json`)
-- ✅ **Better console output** with readable diagnostics (replaced UTF-8 symbols for Windows compatibility)
-- ✅ **Lazy imports** for GUI modules to avoid requiring QApplication before training starts
 
-**Usage:**
-```bash
-python -m stlar train-dl \
-  --train manifest_train.csv \
-  --val manifest_val.csv \
-  --epochs 20 \
-  --gui  # <-- New flag for real-time monitoring
-```
+#### Architecture Improvements
+- Refactored training GUI for better PyQt5 compatibility
+- Lazy imports for GPU/CUDA modules (better for CPU-only installations)
+- Improved cross-platform compatibility (Windows, macOS, Linux)
 
-### Architecture Improvements
-- Refactored `training_gui.py` to defer Qt widget creation until after QApplication initialization
-- Moved Qt-dependent imports (pyqtgraph, FileDialog) to lazy initialization in exporters
-- Removed `exporters` from module-level imports in `stlar/__init__.py` to prevent import errors in non-GUI contexts
-
-### Compatibility
-- Cross-platform support (Windows, macOS, Linux)
-- Works with Conda and venv virtual environments
-- CPU and GPU training supported (auto-detection)
+---
 
 ## License
 
