@@ -291,8 +291,8 @@ class TFPlotWindow(QtWidgets.QWidget):
             if self.source_filename not in self.settingsWindow.loaded_sources:
                 return
 
-            if isinstance(self.raw_data, list) or (hasattr(self.raw_data, 'size') and self.raw_data.size == 0):
-                self.raw_data, self.Fs = self.settingsWindow.loaded_sources[self.source_filename]
+            # Always reload raw data from the original source to prevent incorrect re-filtering on each plot update.
+            self.raw_data, self.Fs = self.settingsWindow.loaded_sources[self.source_filename]
 
             # filter the 60 Hz of the raw data
 
