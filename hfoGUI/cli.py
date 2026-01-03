@@ -427,7 +427,7 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_dl.add_argument('-v', '--verbose', action='store_true', help='Verbose logging')
 
     # --- Train DL Model Parser ---
-    train_dl = sub.add_parser('train-dl', help='Train 1D CNN model on prepared data')
+    train_dl = sub.add_parser('train-dl', help='Train DL model on prepared data')
     train_dl.add_argument('--train', help='Path to train manifest CSV (single-session mode)')
     train_dl.add_argument('--val', help='Path to val manifest CSV (single-session mode)')
     train_dl.add_argument('--batch-dir', help='Directory with subdirectories containing manifest_train.csv and manifest_val.csv (batch mode)')
@@ -437,7 +437,9 @@ def build_parser() -> argparse.ArgumentParser:
     train_dl.add_argument('--weight-decay', type=float, default=1e-4, help='L2 regularization (default: 1e-4)')
     train_dl.add_argument('--out-dir', type=str, default='models', help='Output directory for checkpoints (default: models)')
     train_dl.add_argument('--num-workers', type=int, default=2, help='DataLoader workers (default: 2)')
-    train_dl.add_argument('--model-type', type=int, default=2, help='Model architecture: 1=SimpleCNN, 2=ResNet1D, 3=InceptionTime, 4=Transformer, 5=2D_CNN (default: 2)')
+    train_dl.add_argument('--model-type', type=int, default=2, help='Model architecture: 1=SimpleCNN, 2=ResNet1D, 3=InceptionTime, 4=Transformer, 5=2D_CNN, 6=HFO_2D_CNN (default: 2)')
+    train_dl.add_argument('--use-cwt', action='store_true', help='Use CWT/Scalogram preprocessing for 2D models (types 5, 6)')
+    train_dl.add_argument('--fs', type=float, default=4800.0, help='Sampling frequency in Hz (required for --use-cwt, default: 4800.0)')
     train_dl.add_argument('--no-plot', action='store_true', help='Disable saving training curve plots')
     train_dl.add_argument('--gui', action='store_true', help='Show real-time training GUI with live plots')
     train_dl.add_argument('-v', '--verbose', action='store_true', help='Verbose logging')
@@ -449,7 +451,8 @@ def build_parser() -> argparse.ArgumentParser:
     export_dl.add_argument('--onnx', help='Output path for ONNX model (single-session mode, or suffix for batch mode like "_model.onnx")')
     export_dl.add_argument('--ts', help='Output path for TorchScript model (single-session mode, or suffix for batch mode like "_model.pt")')
     export_dl.add_argument('--example-len', type=int, default=2000, help='Example segment length for tracing (default: 2000)')
-    export_dl.add_argument('--model-type', type=int, default=2, help='Model architecture: 1=SimpleCNN, 2=ResNet1D, 3=InceptionTime, 4=Transformer, 5=2D_CNN (default: 2)')
+    export_dl.add_argument('--model-type', type=int, default=2, help='Model architecture: 1=SimpleCNN, 2=ResNet1D, 3=InceptionTime, 4=Transformer, 5=2D_CNN, 6=HFO_2D_CNN (default: 2)')
+    export_dl.add_argument('--use-cwt', action='store_true', help='Use CWT/Scalogram preprocessing for 2D models (types 5, 6)')
     export_dl.add_argument('-v', '--verbose', action='store_true', help='Verbose logging')
 
     return parser
@@ -1180,6 +1183,9 @@ def run_train_dl(args: argparse.Namespace):
                         '--num-workers', str(args.num_workers),
                         '--model-type', str(args.model_type),
                     ]
+                    if args.use_cwt:
+                        train_argv.append('--use-cwt')
+                        train_argv.extend(['--fs', str(args.fs)])
                     if args.no_plot:
                         train_argv.append('--no-plot')
                     if args.gui:
@@ -1234,6 +1240,9 @@ def run_train_dl(args: argparse.Namespace):
                 '--num-workers', str(args.num_workers),
                 '--model-type', str(args.model_type),
             ]
+            if args.use_cwt:
+                train_argv.append('--use-cwt')
+                train_argv.extend(['--fs', str(args.fs)])
             if args.no_plot:
                 train_argv.append('--no-plot')
             if args.gui:
@@ -1317,6 +1326,8 @@ def run_export_dl(args: argparse.Namespace):
                         '--example-len', str(args.example_len),
                         '--model-type', str(args.model_type),
                     ]
+                    if args.use_cwt:
+                        export_argv.append('--use-cwt')
                     sys.argv = export_argv
                     
                     from .dl_training.export import parse_args, main
@@ -1363,6 +1374,8 @@ def run_export_dl(args: argparse.Namespace):
                 '--example-len', str(args.example_len),
                 '--model-type', str(args.model_type),
             ]
+            if args.use_cwt:
+                export_argv.append('--use-cwt')
             sys.argv = export_argv
             
             from .dl_training.export import parse_args, main

@@ -4,7 +4,7 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from .data import SegmentDataset, pad_collate_fn
+from .data import SegmentDataset, pad_collate_fn, pad_collate_fn_2d
 from .model import build_model
 import sys
 
@@ -23,8 +23,11 @@ def parse_args():
     p.add_argument('--out-dir', type=str, default='models')
     p.add_argument('--num-workers', type=int, default=2)
     p.add_argument('--no-plot', action='store_true', help='Disable training curve plots')
-    p.add_argument('--model-type', type=int, default=2, help='Model architecture: 1=SimpleCNN, 2=ResNet1D, 3=InceptionTime, 4=Transformer, 5=2D_CNN')
+    p.add_argument('--model-type', type=int, default=2, help='Model architecture: 1=SimpleCNN, 2=ResNet1D, 3=InceptionTime, 4=Transformer, 5=2D_CNN, 6=HFO_2D_CNN')
+    p.add_argument('--use-cwt', action='store_true', help='Use CWT/Scalogram preprocessing for 2D models')
+    p.add_argument('--fs', type=float, default=4800.0, help='Sampling frequency, required for CWT')
     p.add_argument('--gui', action='store_true', help='Show real-time training GUI')
+    p.add_argument('--debug-cwt', type=str, default=None, help='(Debug) Directory to save CWT scalogram images for inspection')
     return p.parse_args()
 
 
@@ -59,7 +62,7 @@ def plot_training_curves(history, out_dir):
         recent_train = history['train_loss'][-5:]
         recent_val = history['val_loss'][-5:]
         if sum(recent_val) / 5 > sum(recent_train) / 5 * 1.2:
-            ax1.text(0.5, 0.95, '⚠️ Possible Overfitting Detected', 
+            ax1.text(0.5, 0.95, '[WARN] Possible Overfitting Detected', 
                     transform=ax1.transAxes, ha='center', va='top',
                     bbox=dict(boxstyle='round', facecolor='orange', alpha=0.7))
     
@@ -82,7 +85,7 @@ def plot_training_curves(history, out_dir):
         if len(val_improvements) >= 5:
             recent_improvements = val_improvements[-5:]
             if all(abs(imp) < 0.001 for imp in recent_improvements):
-                ax2.text(0.5, 0.95, '⚠️ Loss Plateau Detected', 
+                ax2.text(0.5, 0.95, '[WARN] Loss Plateau Detected', 
                         transform=ax2.transAxes, ha='center', va='top',
                         bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.7))
     
@@ -125,7 +128,7 @@ def plot_training_curves(history, out_dir):
         
         # Detect instability
         if train_stability and max(train_stability) > 0.1:
-            ax4.text(0.5, 0.95, '⚠️ Training Unstable', 
+            ax4.text(0.5, 0.95, '[WARN] Training Unstable', 
                     transform=ax4.transAxes, ha='center', va='top',
                     bbox=dict(boxstyle='round', facecolor='red', alpha=0.7))
     
@@ -201,11 +204,20 @@ def main():
             print(f"Warning: Could not load GUI: {e}")
             print("Continuing without GUI...")
             args.gui = False
-    train_ds = SegmentDataset(args.train)
-    val_ds = SegmentDataset(args.val)
+    
+    if args.use_cwt:
+        if args.model_type < 5: # Assuming 5 and 6 are 2D models
+            print("Warning: --use-cwt is enabled but a 1D model type is selected. This will likely fail.")
+        train_ds = SegmentDataset(args.train, use_cwt=True, fs=args.fs, debug_cwt_dir=args.debug_cwt)
+        val_ds = SegmentDataset(args.val, use_cwt=True, fs=args.fs, debug_cwt_dir=args.debug_cwt)
+        collate_fn = pad_collate_fn_2d
+    else:
+        train_ds = SegmentDataset(args.train)
+        val_ds = SegmentDataset(args.val)
+        collate_fn = pad_collate_fn
 
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, collate_fn=pad_collate_fn)
-    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers, collate_fn=pad_collate_fn)
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, collate_fn=collate_fn)
+    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers, collate_fn=collate_fn)
 
     model = build_model(args.model_type).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
@@ -228,7 +240,7 @@ def main():
         'learning_rate': args.lr,
         'weight_decay': args.weight_decay,
         'model_type': args.model_type,
-        'model_type_name': {1: 'SimpleCNN', 2: 'ResNet1D', 3: 'InceptionTime', 4: 'Transformer', 5: '2D_CNN'}.get(args.model_type, 'Unknown'),
+        'model_type_name': {1: 'SimpleCNN', 2: 'ResNet1D', 3: 'InceptionTime', 4: 'Transformer', 5: '2D_CNN', 6: 'HFO_2D_CNN'}.get(args.model_type, 'Unknown'),
         'num_workers': args.num_workers,
         'train_samples': len(train_ds),
         'val_samples': len(val_ds),
@@ -321,13 +333,13 @@ def main():
             
             # Check if user requested stop
             if monitor.stop_requested:
-                print(f"\n⏹ Training stopped by user at epoch {epoch}")
+                print(f"\n[STOP] Training stopped by user at epoch {epoch}")
                 diagnostics['early_stop'] = True
                 break
             
         # Early stopping check
         if epochs_since_improvement >= patience:
-            print(f"\n⚠️  Early stopping: No improvement for {patience} epochs")
+            print(f"\n[EARLY STOP] No improvement for {patience} epochs")
             diagnostics['early_stop'] = True
             if args.gui and monitor:
                 monitor.epoch_update.emit(epoch, train_loss, val_loss, diagnostics)
@@ -354,7 +366,7 @@ def main():
         plot_training_curves(history, out_dir)
     
     # Print diagnostic summary
-    print("\n📊 Training Diagnostics:")
+    print("\n[DIAGNOSTICS] Training Summary:")
     print("-" * 40)
     
     # Check for overfitting
@@ -364,10 +376,10 @@ def main():
         print(f"   Val loss > Train loss by {final_gap:.4f}")
         if args.weight_decay >= 1e-3:
             print(f"   -> weight_decay already at {args.weight_decay}, try:")
-            print("      • Increase weight_decay further (to 1e-2)")
-            print("      • Add dropout layers to model")
-            print("      • Collect more training data")
-            print("      • Reduce model complexity")
+            print("      - Increase weight_decay further (to 1e-2)")
+            print("      - Add dropout layers to model")
+            print("      - Collect more training data")
+            print("      - Reduce model complexity")
         else:
             print(f"   -> Try: Increase --weight-decay (current: {args.weight_decay})")
     else:
@@ -442,7 +454,7 @@ def main():
     
     # Keep GUI open if enabled
     if args.gui and gui_app and gui_window:
-        print("\n💡 GUI window is open. Close it to exit.")
+        print("\n[INFO] GUI window is open. Close it to exit.")
         gui_app.exec_()  # Block until GUI is closed    # Update final history
     history['best_epoch'] = best_epoch
     history['best_val_loss'] = best_val
@@ -458,7 +470,7 @@ def main():
         plot_training_curves(history, out_dir)
     
     # Print diagnostic summary
-    print("\n📊 Training Diagnostics:")
+    print("\n[DIAGNOSTICS] Training Summary:")
     print("-" * 40)
     
     # Check for overfitting

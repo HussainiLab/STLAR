@@ -3,6 +3,8 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import pandas as pd
 from pathlib import Path
+from torch.nn.utils.rnn import pad_sequence
+import scipy.signal as signal
 
 
 def pad_collate_fn(batch):
@@ -28,10 +30,44 @@ def pad_collate_fn(batch):
     return xs, ys
 
 
+def pad_collate_fn_2d(batch):
+    """
+    Collate function for 2D CWT tensors with variable time length.
+    Pads the time dimension (width) to the maximum length in the batch.
+    
+    Args:
+        batch: List of tuples (image_tensor, label) or just image_tensor
+               image_tensor shape: (1, Freq, Time)
+    """
+    # Handle both cases: with labels (from SegmentDataset) and without (from CWT_InferenceDataset)
+    if isinstance(batch[0], tuple):
+        images, labels = zip(*batch)
+    else:
+        # No labels provided (inference mode)
+        images = batch
+        labels = None
+    
+    # Transpose to (Time, Freq) for padding (pad_sequence pads dim 0)
+    # image: (1, 64, T) -> squeeze -> (64, T) -> transpose -> (T, 64)
+    images_transposed = [img.squeeze(0).transpose(0, 1) for img in images]
+    
+    # Pad: Result is (Batch, Max_Time, Freq)
+    padded_images = pad_sequence(images_transposed, batch_first=True, padding_value=0)
+    
+    # Restore dimensions: (Batch, Max_Time, Freq) -> (Batch, Freq, Max_Time) -> (Batch, 1, Freq, Max_Time)
+    padded_images = padded_images.transpose(1, 2).unsqueeze(1)
+    
+    if labels is not None:
+        labels = torch.stack(labels)
+        return padded_images, labels
+    else:
+        return padded_images
+
+
 class SegmentDataset(Dataset):
     """Dataset reading 1D waveform segments from .npy paths listed in a CSV manifest."""
 
-    def __init__(self, manifest_csv: str):
+    def __init__(self, manifest_csv: str, use_cwt=False, fs=4800, debug_cwt_dir=None):
         manifest_path = Path(manifest_csv)
         if not manifest_path.exists():
             raise FileNotFoundError(f"Manifest file not found: {manifest_csv}")
@@ -79,6 +115,16 @@ class SegmentDataset(Dataset):
         self.paths = self.manifest['segment_path'].astype(str).tolist()
         # Use float labels; BCEWithLogits expects float targets
         self.labels = self.manifest['label'].astype(float).tolist()
+        
+        self.use_cwt = use_cwt
+        self.fs = fs
+        self.debug_cwt_dir = debug_cwt_dir
+        
+        # Create debug directory if specified
+        if self.debug_cwt_dir:
+            debug_path = Path(self.debug_cwt_dir)
+            debug_path.mkdir(parents=True, exist_ok=True)
+            print(f"[CWT DEBUG] Saving scalogram images to: {debug_path.resolve()}")
         
         # Validate that all paths exist
         self._validate_paths(manifest_csv)
@@ -152,7 +198,179 @@ class SegmentDataset(Dataset):
         # Per-segment z-score
         mu = x.mean() if x.size else 0.0
         sd = x.std() + 1e-8
-        x = (x - mu) / sd
-        x = torch.from_numpy(x).unsqueeze(0)  # (1, L)
+        x_norm = (x - mu) / sd
+        
         y = torch.tensor(self.labels[idx], dtype=torch.float32)
-        return x, y
+
+        if self.use_cwt:
+            import scipy.signal as signal
+            # CWT logic to create a 2D scalogram
+            freqs = np.linspace(80, 500, 64) 
+            w = 6.0
+            widths = w * self.fs / (2 * freqs * np.pi)
+            cwtmatr = signal.cwt(x_norm, signal.morlet2, widths, w=w)
+            cwt_image = np.abs(cwtmatr)**2
+            cwt_image = np.log1p(cwt_image)
+            
+            # Debug: Save scalogram image if debug directory specified
+            if self.debug_cwt_dir:
+                self._save_scalogram_image(cwt_image, idx, y.item())
+            
+            x_tensor = torch.from_numpy(cwt_image).float().unsqueeze(0)
+        else:
+            x_tensor = torch.from_numpy(x_norm).unsqueeze(0)  # (1, L)
+        
+        return x_tensor, y
+    
+    def _save_scalogram_image(self, cwt_matrix, idx, label):
+        """Save CWT scalogram as a PNG image for inspection."""
+        try:
+            import matplotlib.pyplot as plt
+            from matplotlib.colors import LogNorm
+            
+            label_str = "HFO" if label > 0.5 else "NonHFO"
+            filename = f"scalogram_{idx:06d}_{label_str}.png"
+            filepath = Path(self.debug_cwt_dir) / filename
+            
+            # Create figure with proper scaling
+            fig, ax = plt.subplots(figsize=(10, 4), dpi=100)
+            
+            # Display scalogram (frequency on y-axis, time on x-axis)
+            # Use log scale for better visibility of weak features
+            im = ax.imshow(cwt_matrix, aspect='auto', origin='lower', 
+                          cmap='jet', norm=LogNorm(vmin=cwt_matrix.min() + 1e-8, vmax=cwt_matrix.max()))
+            
+            # Set Y-axis to show actual frequencies in Hz
+            # Frequencies are linearly spaced from 80-500 Hz across 64 bins
+            freq_ticks = [0, 10, 20, 25, 30, 40, 50, 63]  # Index positions
+            freq_labels = ['80', '147', '213', '250', '280', '347', '413', '500']  # Hz values
+            ax.set_yticks(freq_ticks)
+            ax.set_yticklabels(freq_labels)
+            ax.set_ylabel('Frequency (Hz)')
+            ax.set_xlabel('Time Samples')
+            ax.set_title(f'CWT Scalogram - {label_str} (Sample {idx})')
+            
+            # Add reference lines for ripple/fast-ripple boundary
+            ax.axhline(y=25, color='white', linestyle='--', linewidth=0.5, alpha=0.5)
+            
+            cbar = plt.colorbar(im, ax=ax, label='Power (log scale)')
+            
+            plt.tight_layout()
+            plt.savefig(filepath, dpi=100, bbox_inches='tight')
+            plt.close(fig)
+            
+            if idx < 3:  # Only print for first few samples
+                print(f"[CWT DEBUG] Saved: {filepath}")
+                
+        except ImportError:
+            if idx == 0:
+                print("[CWT DEBUG] matplotlib not available. Install with: pip install matplotlib")
+        except Exception as e:
+            print(f"[CWT DEBUG] Warning: Could not save scalogram {idx}: {e}")
+
+class CWT_InferenceDataset(Dataset):
+    """
+    Lightweight dataset for CWT inference (no labels required).
+    Used when running detection on raw signal segments without training.
+    Automatically applies CWT scalogram transformation to each segment.
+    """
+    def __init__(self, raw_signals, fs=4800, debug_cwt_dir=None):
+        """
+        Args:
+            raw_signals (list): List of 1D raw EEG signal arrays (numpy or similar).
+            fs (int): Sampling frequency in Hz (default 4800).
+            debug_cwt_dir (str): Optional directory to save scalogram images for inspection.
+        """
+        self.raw_signals = raw_signals
+        self.fs = fs
+        self.debug_cwt_dir = debug_cwt_dir
+        
+        # Create debug directory if specified
+        if self.debug_cwt_dir:
+            debug_path = Path(self.debug_cwt_dir)
+            debug_path.mkdir(parents=True, exist_ok=True)
+            print(f"[CWT DEBUG] Saving inference scalogram images to: {debug_path.resolve()}")
+
+    def __len__(self):
+        return len(self.raw_signals)
+
+    def __getitem__(self, idx):
+        """
+        Return CWT scalogram tensor for a single segment.
+        
+        Returns:
+            image_tensor (torch.Tensor): Shape (1, 64, T) where T is time dimension.
+        """
+        sig = np.array(self.raw_signals[idx], dtype=np.float32).flatten()
+        
+        # Per-segment normalization (z-score)
+        mu = sig.mean() if sig.size else 0.0
+        sd = sig.std() + 1e-8
+        sig_norm = (sig - mu) / sd
+        
+        # Apply CWT with Morlet wavelet
+        # Define frequencies of interest (Ripple & Fast Ripple: 80-500 Hz)
+        freqs = np.linspace(80, 500, 64)
+        w = 6.0  # Standard Morlet parameter balancing time/frequency resolution
+        widths = w * self.fs / (2 * freqs * np.pi)
+        
+        # Compute CWT: Returns complex matrix (64 frequencies, T time points)
+        cwtmatr = signal.cwt(sig_norm, signal.morlet2, widths, w=w)
+        
+        # Convert to power and apply log normalization
+        cwt_power = np.abs(cwtmatr) ** 2
+        cwt_log = np.log1p(cwt_power)  # Log scale is crucial for neural networks
+        
+        # Debug: Save scalogram image if debug directory specified
+        if self.debug_cwt_dir:
+            self._save_scalogram_image(cwt_log, idx)
+        
+        # Convert to tensor: (1, 64, T) - treat as 1-channel grayscale image
+        image_tensor = torch.from_numpy(cwt_log).float().unsqueeze(0)
+        
+        return image_tensor
+    
+    def _save_scalogram_image(self, cwt_matrix, idx):
+        """Save CWT scalogram as a PNG image for inspection."""
+        try:
+            import matplotlib.pyplot as plt
+            from matplotlib.colors import LogNorm
+            
+            filename = f"inference_scalogram_{idx:06d}.png"
+            filepath = Path(self.debug_cwt_dir) / filename
+            
+            # Create figure with proper scaling
+            fig, ax = plt.subplots(figsize=(10, 4), dpi=100)
+            
+            # Display scalogram (frequency on y-axis, time on x-axis)
+            # Use log scale for better visibility of weak features
+            im = ax.imshow(cwt_matrix, aspect='auto', origin='lower', 
+                          cmap='jet', norm=LogNorm(vmin=cwt_matrix.min() + 1e-8, vmax=cwt_matrix.max()))
+            
+            # Set Y-axis to show actual frequencies in Hz
+            # Frequencies are linearly spaced from 80-500 Hz across 64 bins
+            freq_ticks = [0, 10, 20, 25, 30, 40, 50, 63]  # Index positions
+            freq_labels = ['80', '147', '213', '250', '280', '347', '413', '500']  # Hz values
+            ax.set_yticks(freq_ticks)
+            ax.set_yticklabels(freq_labels)
+            ax.set_ylabel('Frequency (Hz)')
+            ax.set_xlabel('Time Samples')
+            ax.set_title(f'CWT Scalogram - Inference (Sample {idx})')
+            
+            # Add reference lines for ripple/fast-ripple boundary
+            ax.axhline(y=25, color='white', linestyle='--', linewidth=0.5, alpha=0.5)
+            
+            cbar = plt.colorbar(im, ax=ax, label='Power (log scale)')
+            
+            plt.tight_layout()
+            plt.savefig(filepath, dpi=100, bbox_inches='tight')
+            plt.close(fig)
+            
+            if idx < 3:  # Only print for first few samples
+                print(f"[CWT DEBUG] Saved: {filepath}")
+                
+        except ImportError:
+            if idx == 0:
+                print("[CWT DEBUG] matplotlib not available. Install with: pip install matplotlib")
+        except Exception as e:
+            print(f"[CWT DEBUG] Warning: Could not save scalogram {idx}: {e}")
