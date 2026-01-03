@@ -1631,7 +1631,6 @@ class frequencyPlotWindow(QWidget):
 
         # Set file dialog options
         options = QFileDialog.Options()
-        options |= QFileDialog.DontUseNativeDialog
         # Open file dialog with file filter (include numbered variants)
         file_filter = (
             "EEG/EGF Files (*.eeg *.eeg2 *.eeg3 *.eeg4 *.egf *.egf2 *.egf3 *.egf4 *.pos);;"
