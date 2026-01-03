@@ -33,20 +33,47 @@ class _LocalDLDetector:
     def __init__(self, params: ParamDL, progress_callback=None):
         self.params = params
         self.model = None
-        self.device = 'cpu'
         self.window_secs = params.window_size
         self.hop_frac = params.overlap
         self.progress_callback = progress_callback
+        # Auto-detect CUDA availability; fall back to CPU if not available
+        self._init_device()
         self._load_model()
+    
+    def _init_device(self):
+        """Initialize device: use CUDA if available, otherwise CPU."""
+        import sys
+        try:
+            import torch
+            print("[DL Detection] Checking CUDA availability...", file=sys.stderr, flush=True)
+            if torch.cuda.is_available():
+                self.device = 'cuda'
+                cuda_device = torch.cuda.current_device()
+                device_name = torch.cuda.get_device_name(cuda_device)
+                msg = f"[DL Detection] CUDA available - using GPU ({device_name})"
+                print(msg, file=sys.stderr, flush=True)
+                self._progress(msg)
+            else:
+                self.device = 'cpu'
+                msg = "[DL Detection] CUDA not available - using CPU"
+                print(msg, file=sys.stderr, flush=True)
+                self._progress(msg)
+        except Exception as e:
+            self.device = 'cpu'
+            msg = f"[DL Detection] Device detection failed: {e} - falling back to CPU"
+            print(msg, file=sys.stderr, flush=True)
+            self._progress(msg)
 
     def _progress(self, msg):
         """Send progress message to callback and print to console."""
-        print(msg)
+        import sys
+        print(msg, flush=True)
+        sys.stdout.flush()
         if self.progress_callback:
             try:
                 self.progress_callback(msg)
             except Exception as e:
-                print(f"Progress callback error: {e}")
+                print(f"Progress callback error: {e}", flush=True)
 
     def _load_model(self):
         path = Path(self.params.model_path)
@@ -89,8 +116,10 @@ class _LocalDLDetector:
                     self._progress(f"[DL Detection] torch.load failed ({type(e2).__name__})")
                     self.model = None
             if self.model is not None:
+                # Move model to the appropriate device
+                self.model = self.model.to(self.device)
                 self.model.eval()
-                self._progress("[DL Detection] Model ready for inference")
+                self._progress(f"[DL Detection] Model ready for inference on {self.device.upper()}")
         except Exception as e:
             self._progress(f"[DL Detection] Unexpected error: {type(e).__name__}")
             self.model = None
@@ -138,8 +167,8 @@ class _LocalDLDetector:
             batch_end = min(len(windows), batch_start + batch_size)
             batch = windows[batch_start:batch_end]
             
-            # Stack into tensor (B, 1, L)
-            batch_tensor = torch.from_numpy(np.stack(batch)).unsqueeze(1)
+            # Stack into tensor (B, 1, L) and move to device
+            batch_tensor = torch.from_numpy(np.stack(batch)).unsqueeze(1).to(self.device)
             
             with torch.no_grad():
                 logits = self.model(batch_tensor)
