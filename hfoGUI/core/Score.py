@@ -3163,6 +3163,12 @@ def DLDetection(self):
             self.progressSignal.progress.emit("DL: 20% - Initializing CWT Model")
             
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
+            if device == 'cuda':
+                cuda_device = torch.cuda.current_device()
+                device_name = torch.cuda.get_device_name(cuda_device)
+                self.progressSignal.progress.emit(f"DL: Using GPU ({device_name})")
+            else:
+                self.progressSignal.progress.emit("DL: Using CPU")
             
             # Instantiate HFO_2D_CNN from consolidated training module
             # Model type 6 = HFO_2D_CNN (2D CNN for scalogram input)
