@@ -3240,9 +3240,16 @@ def DLDetection(self):
             detected_events = []
             threshold = getattr(self, 'dl_threshold', 0.75)
             
+            # Timing for progress estimation
+            import time
+            inference_start_time = time.time()
+            batch_times = []
+            
             global_idx = 0
             with torch.no_grad():
                 for batch_idx, batch_data in enumerate(loader):
+                    batch_start_time = time.time()
+                    
                     # CWT_InferenceDataset returns only tensors (no labels for inference)
                     # pad_collate_fn_2d returns either tensors or (tensors, labels)
                     if isinstance(batch_data, tuple):
@@ -3275,11 +3282,87 @@ def DLDetection(self):
                             detected_events.append([t_start * 1000.0, t_stop * 1000.0])
                         global_idx += 1
                     
+                    # Track batch processing time
+                    batch_time = time.time() - batch_start_time
+                    batch_times.append(batch_time)
+                    
                     if batch_idx % 10 == 0:
                         progress = 40 + int(50 * (global_idx / len(segments)))
-                        self.progressSignal.progress.emit(f"DL: {progress}% - Inferencing...")
+                        elapsed_time = time.time() - inference_start_time
+                        
+                        # Calculate ETA based on average batch time
+                        if len(batch_times) > 10:  # Need at least 10 batches for reliable estimate
+                            avg_batch_time = sum(batch_times[-10:]) / min(len(batch_times), 10)  # Use last 10 batches
+                            total_batches = len(loader)
+                            remaining_batches = total_batches - (batch_idx + 1)
+                            eta_seconds = remaining_batches * avg_batch_time
+                            
+                            # Format elapsed and ETA
+                            elapsed_str = f"{int(elapsed_time // 60)}m {int(elapsed_time % 60)}s"
+                            if eta_seconds < 60:
+                                eta_str = f"{int(eta_seconds)}s"
+                            elif eta_seconds < 3600:
+                                eta_str = f"{int(eta_seconds // 60)}m {int(eta_seconds % 60)}s"
+                            else:
+                                eta_str = f"{int(eta_seconds // 3600)}h {int((eta_seconds % 3600) // 60)}m"
+                            
+                            self.progressSignal.progress.emit(
+                                f"DL: {progress}% - Inferencing ({elapsed_str} elapsed, ~{eta_str} remaining)..."
+                            )
+                        else:
+                            elapsed_str = f"{int(elapsed_time // 60)}m {int(elapsed_time % 60)}s"
+                            self.progressSignal.progress.emit(f"DL: {progress}% - Inferencing ({elapsed_str} elapsed)...")
 
-            self.progressSignal.progress.emit(f"DL: 90% - Found {len(detected_events)} events")
+            # Merge overlapping/contiguous detected windows into events with variable duration
+            # This prevents all EOIs from being exactly window_size duration
+            if detected_events:
+                detected_events = np.array(detected_events)
+                # Sort by start time
+                detected_events = detected_events[detected_events[:, 0].argsort()]
+                
+                merged = []
+                current_start = detected_events[0][0]
+                current_stop = detected_events[0][1]
+                
+                for i in range(1, len(detected_events)):
+                    next_start = detected_events[i][0]
+                    next_stop = detected_events[i][1]
+                    
+                    # If windows overlap or are adjacent (within small gap), merge them
+                    gap_ms = next_start - current_stop
+                    merge_threshold_ms = window_size * 1000.0 * (1 - overlap) * 1.5  # 1.5x step size
+                    
+                    if gap_ms <= merge_threshold_ms:
+                        # Merge: extend current event
+                        current_stop = max(current_stop, next_stop)
+                    else:
+                        # Gap too large: save current event and start new one
+                        merged.append([current_start, current_stop])
+                        current_start = next_start
+                        current_stop = next_stop
+                
+                # Don't forget the last event
+                merged.append([current_start, current_stop])
+                
+                # Apply minimum duration threshold (default 50ms for HFO events)
+                min_duration_ms = 50.0  # Minimum HFO duration
+                filtered = []
+                for event_start, event_stop in merged:
+                    duration = event_stop - event_start
+                    if duration < min_duration_ms:
+                        # Extend short events to minimum duration (centered)
+                        deficit = min_duration_ms - duration
+                        event_start -= deficit / 2.0
+                        event_stop += deficit / 2.0
+                        # Ensure non-negative times
+                        if event_start < 0:
+                            event_stop += abs(event_start)
+                            event_start = 0
+                    filtered.append([event_start, event_stop])
+                
+                detected_events = filtered
+            
+            self.progressSignal.progress.emit(f"DL: 90% - Found {len(detected_events)} events (after merging)")
             
             # Populate Tree
             if detected_events:
