@@ -70,7 +70,7 @@ class _LocalDLDetector:
                 # Fallback to regular torch.load (state_dict or full model)
                 self._progress(f"[DL Detection] TorchScript failed ({type(e).__name__}), trying torch.load...")
                 try:
-                    obj = torch.load(str(path), map_location=self.device)
+                    obj = torch.load(str(path), map_location=self.device, weights_only=True)
                     if hasattr(obj, 'state_dict'):
                         # Attempt to rebuild simple model if state_dict
                         self._progress("[DL Detection] Loading state_dict...")
@@ -585,7 +585,7 @@ def dl_classify_segments(data, fs, segments_ms, model_path, threshold=0.5, batch
             # Try regular torch.load
             try:
                 _progress(f"[DL] Attempting torch.load...")
-                mdl = torch.load(model_path, map_location='cpu')
+                mdl = torch.load(model_path, map_location='cpu', weights_only=True)
                 _progress(f"[DL] Successfully loaded with torch.load")
             except Exception as e2:
                 _progress(f"[DL] torch.load failed: {type(e2).__name__}")

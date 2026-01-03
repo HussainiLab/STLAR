@@ -416,9 +416,16 @@ For each event in the Score tab:
 
 1. Go to **"Deep Learning"** tab → **"Train"**
 2. Select your training and validation manifests (from `prepare-dl` command)
-3. Adjust parameters (epochs, learning rate, batch size) - see defaults first!
-4. Click **"Start Training"**
-5. Watch training progress in real-time (optional GUI monitor)
+3. Select a model architecture:
+   - **1D Models** (1-4): Simple CNN, ResNet1D (default), InceptionTime, Transformer
+   - **2D Models** (5-6): Spectrogram CNN, CWT CNN (Scalogram-based)
+4. *(Optional)* Enable **"Use CWT (Scalogram) Preprocessing"** checkbox:
+   - Converts 1D raw segments to 2D CWT scalograms
+   - Typically used with 2D model types (5-6) for best results
+   - Not compatible with 1D model types (1-4)
+5. Adjust parameters (epochs, learning rate, batch size) - see defaults first!
+6. Click **"Start Training"**
+7. Watch training progress in real-time (optional GUI monitor)
 
 **Training parameters saved automatically** to `training_params.json` with recommendations for next iteration:
 - If overfitting detected: suggests increasing regularization
@@ -433,6 +440,24 @@ For each event in the Score tab:
 4. Click **"Export"** to create TorchScript (.pt) and ONNX formats
 
 Then use the exported model for detection with the CLI or GUI.
+
+#### Debug CWT Scalograms in GUI
+
+To verify CWT preprocessing during GUI-based detection, set an environment variable before launching:
+
+**Windows (PowerShell):**
+```powershell
+$env:STLAR_DEBUG_CWT = "debug_scalograms"
+python -m stlar gui
+```
+
+**Linux/macOS:**
+```bash
+export STLAR_DEBUG_CWT="debug_scalograms"
+python -m stlar gui
+```
+
+When you run DL detection with a CWT model, scalogram images will be saved to the specified directory for inspection. Leave the environment variable unset for normal operation (no images saved).
 
 ---
 
@@ -1242,6 +1267,18 @@ python -m stlar train-dl \
   --out-dir models
 ```
 
+**With CWT preprocessing (for 2D CNN models):**
+```bash
+python -m stlar train-dl \
+  --train training_data/manifest_train.csv \
+  --val training_data/manifest_val.csv \
+  --model-type 6 \
+  --use-cwt \
+  --fs 4800 \
+  --epochs 15 \
+  --out-dir models
+```
+
 **Batch mode** (train multiple sessions):
 ```bash
 # Directory structure:
@@ -1276,9 +1313,31 @@ python -m stlar train-dl \
 | `--weight-decay` | float | 1e-4 | L2 regularization coefficient |
 | `--out-dir` | str | models | Output directory for checkpoints (single-session only) |
 | `--num-workers` | int | 2 | DataLoader worker processes |
+| `--model-type` | int | 2 | Model architecture: 1=SimpleCNN, 2=ResNet1D (default), 3=InceptionTime, 4=Transformer, 5=2D_CNN, 6=HFO_2D_CNN |
+| `--use-cwt` | flag | off | Enable CWT/Scalogram preprocessing for 2D models (types 5, 6) |
+| `--fs` | float | 4800 | Sampling frequency in Hz (required when `--use-cwt` is enabled) |
+| `--debug-cwt` | str | - | Save CWT scalogram images to specified directory for inspection (optional) |
 | `--gui` | flag | off | Enable real-time training GUI with live loss curves and diagnostics |
 | `--no-plot` | flag | off | Disable static training curve plot (GUI takes precedence) |
 | `-v, --verbose` | flag | off | Verbose training progress |
+
+**CWT Debug Mode:**
+To verify CWT preprocessing is working correctly, you can save scalogram images for visual inspection:
+
+```bash
+python -m stlar train-dl \
+  --train-manifest path/to/train.csv \
+  --val-manifest path/to/val.csv \
+  --use-cwt \
+  --fs 4800 \
+  --model-type 6 \
+  --debug-cwt debug_scalograms/
+```
+
+This will save PNG images of the scalogram transformations with:
+- Y-axis showing actual frequencies in Hz (80-500 Hz range)
+- White dashed line at 250 Hz marking ripple/fast-ripple boundary
+- Files named `scalogram_XXXXXX_HFO.png` or `scalogram_XXXXXX_NonHFO.png`
 
 **Output:**
 - `models/best.pt` - Best model checkpoint (saved by validation loss)
@@ -1305,6 +1364,16 @@ python -m stlar export-dl \
   --example-len 2000
 ```
 
+**Export CWT model (if trained with `--use-cwt`):**
+```bash
+python -m stlar export-dl \
+  --ckpt models/best.pt \
+  --onnx models/model.onnx \
+  --ts models/model.pt \
+  --model-type 6 \
+  --use-cwt
+```
+
 **Batch mode** (export multiple trained models):
 ```bash
 # Automatically finds best.pt in each session's models/ subdirectory
@@ -1325,6 +1394,8 @@ python -m stlar export-dl \
 | `--onnx` | str | - | Output path for ONNX model (single-session) or suffix (batch) |
 | `--ts` | str | - | Output path for TorchScript model (single-session) or suffix (batch) |
 | `--example-len` | int | 2000 | Example segment length for tracing |
+| `--model-type` | int | 2 | Model architecture (must match training model type) |
+| `--use-cwt` | flag | off | Enable CWT/Scalogram preprocessing (must match training setting) |
 | `-v, --verbose` | flag | off | Verbose logging |
 
 **Output:**
