@@ -5,6 +5,7 @@ import pandas as pd
 from pathlib import Path
 from torch.nn.utils.rnn import pad_sequence
 import scipy.signal as signal
+from .cwt_utils import compute_cwt_scalogram, save_scalogram_image
 
 
 def pad_collate_fn(batch):
@@ -203,70 +204,19 @@ class SegmentDataset(Dataset):
         y = torch.tensor(self.labels[idx], dtype=torch.float32)
 
         if self.use_cwt:
-            import scipy.signal as signal
-            # CWT logic to create a 2D scalogram
-            freqs = np.linspace(80, 500, 64) 
-            w = 6.0
-            widths = w * self.fs / (2 * freqs * np.pi)
-            cwtmatr = signal.cwt(x_norm, signal.morlet2, widths, w=w)
-            cwt_image = np.abs(cwtmatr)**2
-            cwt_image = np.log1p(cwt_image)
+            # Compute CWT scalogram from normalized signal
+            cwt_image = compute_cwt_scalogram(x_norm, fs=self.fs)
             
             # Debug: Save scalogram image if debug directory specified
             if self.debug_cwt_dir:
-                self._save_scalogram_image(cwt_image, idx, y.item())
+                save_scalogram_image(cwt_image, self.debug_cwt_dir, 
+                                    label=y.item(), sample_idx=idx, fs=self.fs)
             
             x_tensor = torch.from_numpy(cwt_image).float().unsqueeze(0)
         else:
             x_tensor = torch.from_numpy(x_norm).unsqueeze(0)  # (1, L)
         
         return x_tensor, y
-    
-    def _save_scalogram_image(self, cwt_matrix, idx, label):
-        """Save CWT scalogram as a PNG image for inspection."""
-        try:
-            import matplotlib.pyplot as plt
-            from matplotlib.colors import LogNorm
-            
-            label_str = "HFO" if label > 0.5 else "NonHFO"
-            filename = f"scalogram_{idx:06d}_{label_str}.png"
-            filepath = Path(self.debug_cwt_dir) / filename
-            
-            # Create figure with proper scaling
-            fig, ax = plt.subplots(figsize=(10, 4), dpi=100)
-            
-            # Display scalogram (frequency on y-axis, time on x-axis)
-            # Use log scale for better visibility of weak features
-            im = ax.imshow(cwt_matrix, aspect='auto', origin='lower', 
-                          cmap='jet', norm=LogNorm(vmin=cwt_matrix.min() + 1e-8, vmax=cwt_matrix.max()))
-            
-            # Set Y-axis to show actual frequencies in Hz
-            # Frequencies are linearly spaced from 80-500 Hz across 64 bins
-            freq_ticks = [0, 10, 20, 25, 30, 40, 50, 63]  # Index positions
-            freq_labels = ['80', '147', '213', '250', '280', '347', '413', '500']  # Hz values
-            ax.set_yticks(freq_ticks)
-            ax.set_yticklabels(freq_labels)
-            ax.set_ylabel('Frequency (Hz)')
-            ax.set_xlabel('Time Samples')
-            ax.set_title(f'CWT Scalogram - {label_str} (Sample {idx})')
-            
-            # Add reference lines for ripple/fast-ripple boundary
-            ax.axhline(y=25, color='white', linestyle='--', linewidth=0.5, alpha=0.5)
-            
-            cbar = plt.colorbar(im, ax=ax, label='Power (log scale)')
-            
-            plt.tight_layout()
-            plt.savefig(filepath, dpi=100, bbox_inches='tight')
-            plt.close(fig)
-            
-            if idx < 3:  # Only print for first few samples
-                print(f"[CWT DEBUG] Saved: {filepath}")
-                
-        except ImportError:
-            if idx == 0:
-                print("[CWT DEBUG] matplotlib not available. Install with: pip install matplotlib")
-        except Exception as e:
-            print(f"[CWT DEBUG] Warning: Could not save scalogram {idx}: {e}")
 
 class CWT_InferenceDataset(Dataset):
     """
@@ -308,69 +258,15 @@ class CWT_InferenceDataset(Dataset):
         sd = sig.std() + 1e-8
         sig_norm = (sig - mu) / sd
         
-        # Apply CWT with Morlet wavelet
-        # Define frequencies of interest (Ripple & Fast Ripple: 80-500 Hz)
-        freqs = np.linspace(80, 500, 64)
-        w = 6.0  # Standard Morlet parameter balancing time/frequency resolution
-        widths = w * self.fs / (2 * freqs * np.pi)
-        
-        # Compute CWT: Returns complex matrix (64 frequencies, T time points)
-        cwtmatr = signal.cwt(sig_norm, signal.morlet2, widths, w=w)
-        
-        # Convert to power and apply log normalization
-        cwt_power = np.abs(cwtmatr) ** 2
-        cwt_log = np.log1p(cwt_power)  # Log scale is crucial for neural networks
+        # Compute CWT scalogram from normalized signal
+        cwt_log = compute_cwt_scalogram(sig_norm, fs=self.fs)
         
         # Debug: Save scalogram image if debug directory specified
         if self.debug_cwt_dir:
-            self._save_scalogram_image(cwt_log, idx)
+            save_scalogram_image(cwt_log, self.debug_cwt_dir, 
+                               label=None, sample_idx=idx, fs=self.fs)
         
         # Convert to tensor: (1, 64, T) - treat as 1-channel grayscale image
         image_tensor = torch.from_numpy(cwt_log).float().unsqueeze(0)
         
         return image_tensor
-    
-    def _save_scalogram_image(self, cwt_matrix, idx):
-        """Save CWT scalogram as a PNG image for inspection."""
-        try:
-            import matplotlib.pyplot as plt
-            from matplotlib.colors import LogNorm
-            
-            filename = f"inference_scalogram_{idx:06d}.png"
-            filepath = Path(self.debug_cwt_dir) / filename
-            
-            # Create figure with proper scaling
-            fig, ax = plt.subplots(figsize=(10, 4), dpi=100)
-            
-            # Display scalogram (frequency on y-axis, time on x-axis)
-            # Use log scale for better visibility of weak features
-            im = ax.imshow(cwt_matrix, aspect='auto', origin='lower', 
-                          cmap='jet', norm=LogNorm(vmin=cwt_matrix.min() + 1e-8, vmax=cwt_matrix.max()))
-            
-            # Set Y-axis to show actual frequencies in Hz
-            # Frequencies are linearly spaced from 80-500 Hz across 64 bins
-            freq_ticks = [0, 10, 20, 25, 30, 40, 50, 63]  # Index positions
-            freq_labels = ['80', '147', '213', '250', '280', '347', '413', '500']  # Hz values
-            ax.set_yticks(freq_ticks)
-            ax.set_yticklabels(freq_labels)
-            ax.set_ylabel('Frequency (Hz)')
-            ax.set_xlabel('Time Samples')
-            ax.set_title(f'CWT Scalogram - Inference (Sample {idx})')
-            
-            # Add reference lines for ripple/fast-ripple boundary
-            ax.axhline(y=25, color='white', linestyle='--', linewidth=0.5, alpha=0.5)
-            
-            cbar = plt.colorbar(im, ax=ax, label='Power (log scale)')
-            
-            plt.tight_layout()
-            plt.savefig(filepath, dpi=100, bbox_inches='tight')
-            plt.close(fig)
-            
-            if idx < 3:  # Only print for first few samples
-                print(f"[CWT DEBUG] Saved: {filepath}")
-                
-        except ImportError:
-            if idx == 0:
-                print("[CWT DEBUG] matplotlib not available. Install with: pip install matplotlib")
-        except Exception as e:
-            print(f"[CWT DEBUG] Warning: Could not save scalogram {idx}: {e}")
