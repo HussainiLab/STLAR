@@ -72,7 +72,7 @@ class ResNet1D(nn.Module):
 class Simple1DCNN(nn.Module):
     """A small 1D CNN for binary classification on waveform segments."""
 
-    def __init__(self, n_channels: int = 1):
+    def __init__(self, n_channels: int = 1, num_classes: int = 1):
         super().__init__()
         self.net = nn.Sequential(
             nn.Conv1d(n_channels, 16, kernel_size=7, stride=2, padding=3),
@@ -86,7 +86,7 @@ class Simple1DCNN(nn.Module):
             nn.ReLU(inplace=True),
             nn.AdaptiveAvgPool1d(1),
         )
-        self.head = nn.Linear(64, 1)
+        self.head = nn.Linear(64, num_classes)
 
     def forward(self, x):
         # x: (N, C, L)
@@ -229,17 +229,60 @@ class Spectrogram2DCNN(nn.Module):
         return self.fc(feat)
 
 
-def build_model(model_type=2):
+class HFO_2D_CNN(nn.Module):
+    """
+    A 2D CNN architecture compatible with the CWT Scalogram inputs.
+    Matches the architecture in hfo_detection.py.
+    """
+    def __init__(self, n_channels=1, num_classes=1):
+        super(HFO_2D_CNN, self).__init__()
+        
+        # Input: 1 channel (grayscale), 64 Frequency bins, Time T
+        self.features = nn.Sequential(
+            nn.Conv2d(1, 16, kernel_size=3, padding=1),
+            nn.BatchNorm2d(16),
+            nn.ReLU(),
+            nn.MaxPool2d(2, 2), # Downsamples Freq to 32
+            
+            nn.Conv2d(16, 32, kernel_size=3, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.MaxPool2d(2, 2), # Downsamples Freq to 16
+            
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            # Adaptive pool ensures output size is fixed regardless of input time length
+            nn.AdaptiveAvgPool2d((4, 4)) 
+        )
+        
+        self.classifier = nn.Sequential(
+            nn.Linear(64 * 4 * 4, 128),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(128, num_classes)
+        )
+
+    def forward(self, x):
+        x = self.features(x)
+        x = torch.flatten(x, 1)
+        x = self.classifier(x)
+        return x
+
+
+def build_model(model_type=2, num_classes=1):
     """Factory function to build model based on ID."""
     if model_type == 1:
-        return Simple1DCNN(n_channels=1)
+        return Simple1DCNN(n_channels=1, num_classes=num_classes)
     elif model_type == 2:
-        return ResNet1D(n_channels=1)
+        return ResNet1D(n_channels=1, num_classes=num_classes)
     elif model_type == 3:
-        return InceptionTime(n_channels=1)
+        return InceptionTime(n_channels=1, num_classes=num_classes)
     elif model_type == 4:
-        return HFOTransformer(n_channels=1)
+        return HFOTransformer(n_channels=1, num_classes=num_classes)
     elif model_type == 5:
-        return Spectrogram2DCNN(n_channels=1)
+        return Spectrogram2DCNN(n_channels=1, num_classes=num_classes)
+    elif model_type == 6:
+        return HFO_2D_CNN(n_channels=1, num_classes=num_classes)
     else:
-        raise ValueError(f"Unknown model type: {model_type}. Options: 1=SimpleCNN, 2=ResNet1D, 3=InceptionTime, 4=Transformer, 5=2D_CNN")
+        raise ValueError(f"Unknown model type: {model_type}. Options: 1=SimpleCNN, 2=ResNet1D, 3=InceptionTime, 4=Transformer, 5=2D_CNN, 6=HFO_2D_CNN")

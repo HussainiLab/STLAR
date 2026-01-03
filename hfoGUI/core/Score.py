@@ -19,6 +19,26 @@ import pandas as pd
 import core.filtering as filt
 from core.Detector import ste_detect_events, mni_detect_events, dl_detect_events
 
+# Try to import torch and hfo_detection for DL features
+try:
+    import torch
+    from torch.utils.data import DataLoader
+except ImportError:
+    torch = None
+
+try:
+    # Import CWT inference dataset and model building from consolidated training module
+    from hfoGUI.dl_training.data import CWT_InferenceDataset
+    from hfoGUI.dl_training.model import build_model
+except ImportError:
+    CWT_InferenceDataset = None
+    build_model = None
+
+try:
+    # Legacy fallback for hfo_detection (deprecated)
+    import hfo_detection
+except ImportError:
+    hfo_detection = None
 
 class TreeWidgetItem(QtWidgets.QTreeWidgetItem):
     """This subclass was created so that the __lt__ method could be overwritten so that the numerical data values
@@ -695,6 +715,7 @@ class ScoreWindow(QtWidgets.QWidget):
         self.model_type_combo.addItem("InceptionTime", 3)
         self.model_type_combo.addItem("1D Transformer", 4)
         self.model_type_combo.addItem("2D Spectrogram CNN", 5)
+        self.model_type_combo.addItem("2D CWT CNN (Scalogram)", 6)
         self.model_type_combo.setCurrentIndex(1)
         train_form.addRow("Model Architecture:", self.model_type_combo)
 
@@ -722,6 +743,10 @@ class ScoreWindow(QtWidgets.QWidget):
         self.weight_decay_spin.setValue(1e-4)
         self.weight_decay_spin.setToolTip("L2 regularization strength (typical: 1e-4). Increase to 1e-3 or 1e-2 to reduce overfitting.")
         train_form.addRow("Weight decay:", self.weight_decay_spin)
+
+        self.train_cwt_check = QtWidgets.QCheckBox("Use CWT (Scalogram) Preprocessing")
+        self.train_cwt_check.setToolTip("Convert 1D EEG segments to 2D CWT Scalograms before training (requires 2D CNN model).")
+        train_form.addRow("", self.train_cwt_check)
 
         self.train_out_dir_edit = QtWidgets.QLineEdit()
         train_out_btn = QtWidgets.QPushButton("Browse…")
@@ -2500,6 +2525,9 @@ class ScoreWindow(QtWidgets.QWidget):
             "--model-type", str(self.model_type_combo.currentData()),
         ]
         
+        if self.train_cwt_check.isChecked():
+            args.append("--use-cwt")
+
         # Add GUI flag if checkbox is checked
         if self.train_gui_check.isChecked():
             args.append("--gui")
@@ -2550,6 +2578,9 @@ class ScoreWindow(QtWidgets.QWidget):
             "--ts", ts_path,
             "--model-type", str(self.model_type_combo.currentData()),
         ]
+
+        if self.train_cwt_check.isChecked():
+            args.append("--use-cwt")
 
         # Prevent overlapping runs
         if self.export_process and self.export_process.state() == QtCore.QProcess.Running:
@@ -3117,6 +3148,132 @@ def DLDetection(self):
         self.progressSignal.progress.emit("DL: 10% - Loading data")
         raw_data, Fs = self.settingsWindow.loaded_sources[self.source_filename]
 
+        # --- CWT / Scalogram Detection Path ---
+        if getattr(self, 'dl_use_cwt', False):
+            if CWT_InferenceDataset is None or torch is None or build_model is None:
+                self.progressSignal.progress.emit("DL: Error - CWT inference module or torch not available")
+                return
+
+            self.progressSignal.progress.emit("DL: 20% - Initializing CWT Model")
+            
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+            
+            # Instantiate HFO_2D_CNN from consolidated training module
+            # Model type 6 = HFO_2D_CNN (2D CNN for scalogram input)
+            model = build_model(model_type=6, num_classes=1).to(device)
+            
+            # Load weights
+            if not hasattr(self, 'dl_model_path') or not os.path.exists(self.dl_model_path):
+                self.progressSignal.progress.emit("DL: Error - Invalid model path")
+                return
+                
+            try:
+                # Try loading as TorchScript first (most efficient for inference)
+                try:
+                    model = torch.jit.load(self.dl_model_path, map_location=device)
+                except Exception:
+                    # Fallback: try loading as state dict
+                    state_dict = torch.load(self.dl_model_path, map_location=device, weights_only=True)
+                    model.load_state_dict(state_dict)
+            except Exception as e:
+                self.progressSignal.progress.emit(f"DL: Error loading weights - {e}")
+                return
+            
+            model.eval()
+            
+            # Prepare sliding windows
+            self.progressSignal.progress.emit("DL: 30% - Preparing Data segments")
+            window_size = getattr(self, 'dl_window_size', 1.0) # seconds
+            overlap = getattr(self, 'dl_overlap', 0.5)
+            
+            win_samp = int(window_size * Fs)
+            step_samp = int(win_samp * (1 - overlap))
+            
+            if step_samp < 1: step_samp = 1
+            
+            segments = []
+            start_times = []
+            
+            # Extract segments
+            # Ensure raw_data is 1D
+            sig = np.array(raw_data).flatten()
+            
+            for i in range(0, len(sig) - win_samp, step_samp):
+                segments.append(sig[i : i + win_samp])
+                start_times.append(i / Fs)
+            
+            if not segments:
+                self.progressSignal.progress.emit("DL: Complete - Signal too short")
+                return
+
+            # Create Dataset and Loader
+            # CWT_InferenceDataset handles the CWT scalogram conversion automatically
+            # Optional: Enable debug mode by setting environment variable STLAR_DEBUG_CWT
+            debug_cwt_dir = None
+            if os.environ.get('STLAR_DEBUG_CWT'):
+                debug_cwt_dir = os.environ.get('STLAR_DEBUG_CWT')
+            
+            dataset = CWT_InferenceDataset(segments, fs=Fs, debug_cwt_dir=debug_cwt_dir)
+            batch_size = getattr(self, 'dl_batch_size', 32)
+            
+            # Use pad_collate_fn_2d for proper batching of 2D tensors with variable time length
+            from hfoGUI.dl_training.data import pad_collate_fn_2d
+            loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, collate_fn=pad_collate_fn_2d)
+            
+            self.progressSignal.progress.emit(f"DL: 40% - Running Inference on {len(segments)} segments")
+            
+            detected_events = []
+            threshold = getattr(self, 'dl_threshold', 0.75)
+            
+            global_idx = 0
+            with torch.no_grad():
+                for batch_idx, batch_data in enumerate(loader):
+                    # CWT_InferenceDataset returns only tensors (no labels for inference)
+                    # pad_collate_fn_2d returns either tensors or (tensors, labels)
+                    if isinstance(batch_data, tuple):
+                        inputs, _ = batch_data
+                    else:
+                        inputs = batch_data
+                    
+                    inputs = inputs.to(device)
+                    try:
+                        outputs = model(inputs)
+                    except RuntimeError as e:
+                        if "shape" in str(e) and "invalid for input" in str(e):
+                            raise RuntimeError(
+                                f"Model input shape mismatch: {e}\n"
+                                "You have 'Use CWT (Scalogram)' enabled, which feeds 2D images to the model.\n"
+                                "If your model expects raw 1D signals (e.g. trained via train-dl), please UNCHECK 'Use CWT' in settings."
+                            ) from e
+                        raise e
+
+                    if outputs.shape[1] > 1:
+                        probs = torch.softmax(outputs, dim=1)[:, 1].cpu().numpy()
+                    else:
+                        probs = torch.sigmoid(outputs).squeeze(1).cpu().numpy()
+                    
+                    for p in probs:
+                        if p >= threshold:
+                            t_start = start_times[global_idx]
+                            t_stop = t_start + window_size
+                            # Convert to ms for ScoreWindow
+                            detected_events.append([t_start * 1000.0, t_stop * 1000.0])
+                        global_idx += 1
+                    
+                    if batch_idx % 10 == 0:
+                        progress = 40 + int(50 * (global_idx / len(segments)))
+                        self.progressSignal.progress.emit(f"DL: {progress}% - Inferencing...")
+
+            self.progressSignal.progress.emit(f"DL: 90% - Found {len(detected_events)} events")
+            
+            # Populate Tree
+            if detected_events:
+                _process_detection_results(self, np.array(detected_events))
+            
+            self.progressSignal.progress.emit("DL: 100% - Complete")
+            return
+
+        # --- Existing DL Detection Path (Raw/1D) ---
         # If EOIs already exist, perform classification of those EOIs; otherwise run DL detection.
         existing_eois = []
         try:
@@ -4251,12 +4408,16 @@ class DLParametersWindow(QtWidgets.QWidget):
         self.batch_size_edit = QtWidgets.QLineEdit("32")
         self.window_size_edit = QtWidgets.QLineEdit("1.0")
         self.overlap_edit = QtWidgets.QLineEdit("0.5")
+        
+        self.cwt_check = QtWidgets.QCheckBox("Use CWT (Scalogram) Preprocessing")
+        self.cwt_check.setToolTip("Enable if using the 2D CNN model trained on CWT Scalograms (model type: HFO_2D_CNN)")
 
         layout.addRow("Model Path:", path_layout)
         layout.addRow("Threshold (Prob):", self.threshold_edit)
         layout.addRow("Batch Size:", self.batch_size_edit)
         layout.addRow("Window Size (s):", self.window_size_edit)
         layout.addRow("Overlap (0-1):", self.overlap_edit)
+        layout.addRow("", self.cwt_check)
 
         self.analyze_btn = QtWidgets.QPushButton("Classify EOIs")
         self.analyze_btn.clicked.connect(self.analyze)
@@ -4283,6 +4444,7 @@ class DLParametersWindow(QtWidgets.QWidget):
             self.scoreWindow.dl_batch_size = int(self.batch_size_edit.text())
             self.scoreWindow.dl_window_size = float(self.window_size_edit.text())
             self.scoreWindow.dl_overlap = float(self.overlap_edit.text())
+            self.scoreWindow.dl_use_cwt = self.cwt_check.isChecked()
         except ValueError:
             QtWidgets.QMessageBox.warning(self, "Invalid Input", "Please enter valid numeric values.")
             return
@@ -4292,7 +4454,8 @@ class DLParametersWindow(QtWidgets.QWidget):
             'threshold': self.scoreWindow.dl_threshold,
             'batch_size': self.scoreWindow.dl_batch_size,
             'window_size': self.scoreWindow.dl_window_size,
-            'overlap': self.scoreWindow.dl_overlap
+            'overlap': self.scoreWindow.dl_overlap,
+            'use_cwt': self.scoreWindow.dl_use_cwt
         }
         _save_generic_settings(self.scoreWindow, 'DL', settings)
 
