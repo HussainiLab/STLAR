@@ -74,7 +74,10 @@ class _LocalDLDetector:
                     if hasattr(obj, 'state_dict'):
                         # Attempt to rebuild simple model if state_dict
                         self._progress("[DL Detection] Loading state_dict...")
-                        from hfoGUI.dl_training.model import build_model  # local import
+                        try:
+                            from dl_training.model import build_model
+                        except ImportError:
+                            from ..dl_training.model import build_model
                         mdl = build_model()
                         mdl.load_state_dict(obj['model_state'] if isinstance(obj, dict) and 'model_state' in obj else obj)
                         self.model = mdl
