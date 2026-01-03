@@ -1,1 +1,1 @@
-{"Epoch(s):": "300.0", "Threshold(SD):": "3.5", "Minimum Time(ms):": "15.0", "Min Frequency(Hz):": "80.0", "Max Frequency(Hz):": "250.0", "Required Peaks:": "6", "Required Peak Threshold(SD):": "2", "Boundary Threshold(Percent)": "30"}
+{"Epoch(s):": "300.0", "Threshold(SD):": "4.0", "Minimum Time(ms):": "15.0", "Min Frequency(Hz):": "80.0", "Max Frequency(Hz):": "250.0", "Required Peaks:": "6", "Required Peak Threshold(SD):": "2", "Boundary Threshold(Percent)": "30"}
