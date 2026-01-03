@@ -28,11 +28,17 @@ except ImportError:
 
 try:
     # Import CWT inference dataset and model building from consolidated training module
-    from hfoGUI.dl_training.data import CWT_InferenceDataset
-    from hfoGUI.dl_training.model import build_model
+    # Use sibling import pattern consistent with other core imports (e.g., "from core.GUI_Utils")
+    from dl_training.data import CWT_InferenceDataset
+    from dl_training.model import build_model
 except ImportError:
-    CWT_InferenceDataset = None
-    build_model = None
+    # Fallback for when package is installed or run as module
+    try:
+        from ..dl_training.data import CWT_InferenceDataset
+        from ..dl_training.model import build_model
+    except ImportError:
+        CWT_InferenceDataset = None
+        build_model = None
 
 try:
     # Legacy fallback for hfo_detection (deprecated)
@@ -3217,7 +3223,10 @@ def DLDetection(self):
             batch_size = getattr(self, 'dl_batch_size', 32)
             
             # Use pad_collate_fn_2d for proper batching of 2D tensors with variable time length
-            from hfoGUI.dl_training.data import pad_collate_fn_2d
+            try:
+                from dl_training.data import pad_collate_fn_2d
+            except ImportError:
+                from ..dl_training.data import pad_collate_fn_2d
             loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, collate_fn=pad_collate_fn_2d)
             
             self.progressSignal.progress.emit(f"DL: 40% - Running Inference on {len(segments)} segments")
