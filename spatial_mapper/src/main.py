@@ -1354,7 +1354,8 @@ class frequencyPlotWindow(QWidget):
         chunkSizeTextBox = QLineEdit(self)
         speedTextBox = QLineEdit()
         quit_button = QPushButton('Quit', self)
-        browse_button = QPushButton('Browse file', self)
+        self.browse_button = QPushButton('Browse file', self)
+        self.browse_button_default_style = self.browse_button.styleSheet()
         browse_folder_button = QPushButton('Browse folder', self)
         self.binned_analysis_btn = QPushButton('Binned Analysis Studio', self)
         self.graph_mode_button = QPushButton('Graph mode', self)
@@ -1391,7 +1392,8 @@ class frequencyPlotWindow(QWidget):
         self.graph_Label.setText("Power spectrum graph")
         self.tracking_Label.setText("Animal tracking")
         self.bar.setOrientation(Qt.Vertical)
-        self.render_button.setStyleSheet("background-color : light gray")
+        # Start in green to signal no data rendered yet
+        self.render_button.setStyleSheet("background-color : rgb(0, 180,0)")
         windowTypeBox.addItem("hann")
         windowTypeBox.addItem("hamming")
         windowTypeBox.addItem("blackmanharris")
@@ -1416,7 +1418,7 @@ class frequencyPlotWindow(QWidget):
         
         # Resize widgets to fixed width
         resizeWidgets = [windowTypeBox, chunkSizeTextBox, speedTextBox, self.ppmTextBox, 
-                         browse_button, browse_folder_button]
+                         self.browse_button, browse_folder_button]
         for widget in resizeWidgets:
             widget.setFixedWidth(300)
         
@@ -1427,15 +1429,19 @@ class frequencyPlotWindow(QWidget):
         self.load_eoi_btn.setFixedWidth(150)
 
         # Placing widgets
-        # Swap positions: Browse file (left), Browse folder (right)
-        self.layout.addWidget(browse_button, 0, 0)
+        # Top row buttons in order: Browse files, Browse folder, Load EOIs, Re-Render, Save data, Quit
+        self.layout.addWidget(self.browse_button, 0, 0)
         self.layout.addWidget(browse_folder_button, 0, 1)
-        self.layout.addWidget(quit_button, 0, 2, alignment=Qt.AlignRight)
+        self.layout.addWidget(self.load_eoi_btn, 0, 2)
+        self.layout.addWidget(self.render_button, 0, 3)
+        self.layout.addWidget(save_button, 0, 4)
+        self.layout.addWidget(quit_button, 0, 5)
+        
+        # Second row
         self.layout.addWidget(session_Label, 1, 0)
-        self.layout.addWidget(self.session_Text, 1, 1)
-        self.layout.addWidget(self.load_eoi_btn, 1, 2, alignment=Qt.AlignLeft) # Add Load EOI button
-        self.layout.addWidget(self.render_button, 1, 2, alignment=Qt.AlignRight)
-        self.layout.addWidget(save_button, 2, 2, alignment=Qt.AlignRight)
+        self.layout.addWidget(self.session_Text, 1, 1, 1, 2)  # Span 2 columns
+        
+        # Settings rows
         self.layout.addWidget(window_Label, 2, 0)
         self.layout.addWidget(windowTypeBox, 2, 1)
         self.layout.addWidget(ppm_Label, 3, 0)
@@ -1447,28 +1453,32 @@ class frequencyPlotWindow(QWidget):
         self.layout.addWidget(self.graph_mode_button, 6, 0)
         self.layout.addWidget(self.frequencyViewer_Label, 6, 1)
         self.layout.addWidget(self.graph_Label, 6, 1)
-        self.layout.addWidget(self.tracking_Label, 6, 2)
+        self.layout.addWidget(self.tracking_Label, 6, 3)
         self.layout.addWidget(self.power_Label, 7, 0)
-        self.layout.addWidget(self.view, 7, 1)
-        self.layout.addWidget(self.graph_canvas, 7, 1)
-        self.layout.addWidget(self.tracking_canvas, 7, 2)
-        self.layout.addWidget(self.bar, 7, 3)
+        # Span frequency map/graph across columns 1-2 and tracking across columns 3-4
+        self.layout.addWidget(self.view, 7, 1, 1, 2)
+        self.layout.addWidget(self.graph_canvas, 7, 1, 1, 2)
+        self.layout.addWidget(self.tracking_canvas, 7, 3, 1, 2)
+        self.layout.addWidget(self.bar, 7, 5)
         # Place binned analysis button near the bottom-right
-        self.layout.addWidget(self.binned_analysis_btn, 9, 2, alignment=Qt.AlignRight)
+        self.layout.addWidget(self.binned_analysis_btn, 9, 4, alignment=Qt.AlignRight)
         self.layout.addWidget(timeSlider_Label, 8, 0)
         
         slider_layout = QHBoxLayout()
         slider_layout.addWidget(self.slider)
         slider_layout.addWidget(self.full_duration_btn)
-        self.layout.addLayout(slider_layout, 8, 1)
+        self.layout.addLayout(slider_layout, 8, 1, 1, 2)
         
-        self.layout.addWidget(self.timeInterval_Label, 8, 2)
-        self.layout.addWidget(self.progressBar_Label, 9, 3)
+        self.layout.addWidget(self.timeInterval_Label, 8, 3, 1, 2)
+        self.layout.addWidget(self.progressBar_Label, 9, 5)
         self.layout.setSpacing(10)
         
         # Set column stretch to ensure frequency map and tracking plots resize equally
+        # Frequency map spans columns 1-2, tracking spans columns 3-4
         self.layout.setColumnStretch(1, 1)
         self.layout.setColumnStretch(2, 1)
+        self.layout.setColumnStretch(3, 1)
+        self.layout.setColumnStretch(4, 1)
         
         # Hiding the canvas and graph label widget on startup 
         self.graph_canvas.close()
@@ -1479,7 +1489,7 @@ class frequencyPlotWindow(QWidget):
         chunkSizeTextBox.textChanged[str].connect(partial(self.textBoxChanged, 'chunk_size'))
         speedTextBox.textChanged[str].connect(partial(self.textBoxChanged, 'speed'))
         quit_button.clicked.connect(self.quitClicked)
-        browse_button.clicked.connect(self.runSession)
+        self.browse_button.clicked.connect(self.runSession)
         browse_folder_button.clicked.connect(self.browseFolderClicked)
         self.graph_mode_button.clicked.connect(self.switch_graph)
         save_button.clicked.connect(self.saveClicked)
@@ -1488,6 +1498,9 @@ class frequencyPlotWindow(QWidget):
         self.binned_analysis_btn.clicked.connect(self.openBinnedAnalysisWindow)
         self.slider.valueChanged[int].connect(self.sliderChanged)
         windowTypeBox.activated[str].connect(self.windowChanged)
+
+        # Color the Browse button red if no EEG/EGF is loaded yet
+        self.updateBrowseButtonStyle()
         
         # Auto-load EEG file if passed from command line
         if self.eeg_file_arg:
@@ -1535,22 +1548,23 @@ class frequencyPlotWindow(QWidget):
             # If we have both files, set session text
             if self.files[1] and self.files[0]:
                 self.session_Text.setText(str(self.files[1]))
+                self.updateBrowseButtonStyle()
             
             # Set PPM if provided
             if self.ppm_arg is not None:
                 try:
                     ppm_value = float(self.ppm_arg)
                     self.ppm = ppm_value
-                    # Update the PPM text box
+                    # Update the PPM text box (block signals to avoid triggering textBoxChanged)
+                    self.ppmTextBox.blockSignals(True)
                     self.ppmTextBox.setText(str(int(ppm_value)))
+                    self.ppmTextBox.blockSignals(False)
                 except (ValueError, TypeError):
                     pass
-            
-            # Auto-run if files are loaded via argument
-            if self.files[0] and self.files[1]:
-                self.runSession()
         except Exception as e:
+            import traceback
             print(f"Error loading file from argument: {e}")
+            traceback.print_exc()
     
     # ------------------------------------------- #  
     
@@ -1569,6 +1583,9 @@ class frequencyPlotWindow(QWidget):
         '''
 
         cbutton = self.sender()
+        # Safety check: ensure sender has text() method
+        if not hasattr(cbutton, 'text'):
+            return
         # If any parameter is changed, will highlight
         # the re-render button to signal a re-rendering is needed
         curr_string = str(cbutton.text()).split(',')
@@ -1670,6 +1687,7 @@ class frequencyPlotWindow(QWidget):
 
         # Reflect session name using the electrophysiology file
         self.session_Text.setText(str(self.files[1]))
+        self.updateBrowseButtonStyle()
         return True
     # ------------------------------------------- #
     
@@ -1706,6 +1724,19 @@ class frequencyPlotWindow(QWidget):
             self.power_Label.setHtml(display_text)
         else:
             self.power_Label.setPlainText("No data available")
+
+    # ------------------------------------------- #
+
+    def updateBrowseButtonStyle(self):
+        '''Set Browse button red when no EEG/EGF is selected.'''
+        if getattr(self, 'browse_button', None) is None:
+            return
+        if self.files[1]:
+            # Restore default look when session has EEG/EGF
+            self.browse_button.setStyleSheet(self.browse_button_default_style)
+        else:
+            # Red background to signal missing electrophysiology file
+            self.browse_button.setStyleSheet("background-color : rgb(200, 0, 0); color: white")
     
     # ------------------------------------------- #
     
@@ -1769,6 +1800,7 @@ class frequencyPlotWindow(QWidget):
         
         # Update session label
         self.session_Text.setText(f"Batch: {folder_path}")
+        self.updateBrowseButtonStyle()
         
         # Disable buttons during processing
         self.setButtonsEnabled(False)
@@ -2023,14 +2055,103 @@ class frequencyPlotWindow(QWidget):
             for row in data_rows:
                 ws.append(row)
             wb.save(out_file)
-            QMessageBox.information(self, "Save Complete", f"Data saved to:\n{out_file}\n\nFormat: Excel")
         else:
             with open(out_file, "w", newline="") as f:
                 writer = csv.writer(f)
                 writer.writerow(header)
                 for row in data_rows:
                     writer.writerow(row)
-            QMessageBox.information(self, "Save Complete", f"Data saved to:\n{out_file}\n\nFormat: CSV (openpyxl not installed)")
+        
+        # Save frequency map for entire duration (if available)
+        saved_files = [out_file]
+        if self.images is not None and len(self.images) > 0:
+            try:
+                freq_map_path = os.path.join(out_dir, f"{base_name}_FrequencyMap_FullDuration.png")
+                avg_pixmap = self._calculate_average_pixmap(self.images)
+                
+                # Convert QPixmap to QImage and scale to double size for better quality
+                qimage = avg_pixmap.toImage()
+                original_width = qimage.width()
+                original_height = qimage.height()
+                scaled_image = qimage.scaled(original_width * 2, original_height * 2, 
+                                             Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                scaled_pixmap = QPixmap.fromImage(scaled_image)
+                scaled_pixmap.save(freq_map_path)
+                saved_files.append(freq_map_path)
+            except Exception as e:
+                print(f"Could not save frequency map: {e}")
+        
+        # Save animal tracking for entire duration (if available)
+        if self.tracking_data is not None:
+            try:
+                import matplotlib.pyplot as plt
+                from matplotlib.figure import Figure
+                
+                tracking_path = os.path.join(out_dir, f"{base_name}_AnimalTracking_FullDuration.png")
+                
+                # Create a new figure for saving (larger size for better quality)
+                fig = Figure(figsize=(12, 12), dpi=200)
+                ax = fig.add_subplot(111)
+                ax.set_xlabel('X - coordinates', fontsize=12)
+                ax.set_ylabel('Y - coordinates', fontsize=12)
+                ax.set_title('Animal Tracking - Full Duration', fontsize=14, fontweight='bold')
+                
+                # Set fixed limits and aspect ratio
+                if hasattr(self, 'track_xlim'):
+                    ax.set_xlim(self.track_xlim)
+                    ax.set_ylim(self.track_ylim)
+                    ax.set_aspect('equal', adjustable='box')
+                    
+                    # Draw bins (same as GUI)
+                    self._draw_tracking_bins(ax)
+                
+                # Plot all position data (entire duration)
+                x_all = [item for sublist in self.tracking_data[0] for item in sublist]
+                y_all = [item for sublist in self.tracking_data[1] for item in sublist]
+                ax.plot(x_all, y_all, linewidth=0.8, color='#D3D3D3', alpha=0.6, label='Path')
+                
+                # Plot all EOIs if available
+                if hasattr(self, 'eoi_segments') and self.eoi_segments:
+                    eoi_count = 0
+                    for chunk_idx, segments in self.eoi_segments.items():
+                        for seg_x, seg_y in segments:
+                            if eoi_count == 0:
+                                ax.plot(seg_x, seg_y, color='red', linewidth=2, alpha=0.8, label='EOIs')
+                            else:
+                                ax.plot(seg_x, seg_y, color='red', linewidth=2, alpha=0.8)
+                            eoi_count += 1
+                    ax.legend(loc='upper right', fontsize=10)
+                
+                # Add occupancy labels (same as GUI)
+                occ_info = self._compute_tracking_occupancy(is_full=True, chunk_idx=0)
+                if occ_info:
+                    # Show occupancy if no EOIs or EOIs sum to zero
+                    show_occ = True
+                    if hasattr(self, 'eoi_segments') and self.eoi_segments:
+                        eoi_info = self._compute_tracking_eoi_counts(is_full=True, chunk_idx=0)
+                        if eoi_info:
+                            vals = eoi_info.get('values')
+                            try:
+                                show_occ = (vals is None) or (np.sum(vals) <= 0)
+                            except Exception:
+                                show_occ = True
+                    
+                    if show_occ:
+                        self._add_tracking_occupancy_labels(ax, occ_info)
+                
+                fig.savefig(tracking_path, format='png', dpi=200, bbox_inches='tight')
+                plt.close(fig)
+                saved_files.append(tracking_path)
+            except Exception as e:
+                print(f"Could not save animal tracking: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        # Show success message with all saved files
+        files_list = "\n".join([os.path.basename(f) for f in saved_files])
+        format_str = "Excel" if use_excel else "CSV (openpyxl not installed)"
+        QMessageBox.information(self, "Save Complete", 
+            f"Saved files:\n\n{files_list}\n\nLocation: {out_dir}\nFormat: {format_str}")
             
     # ------------------------------------------- #
     
@@ -2676,7 +2797,7 @@ class frequencyPlotWindow(QWidget):
         is_rerender_or_auto = False
         if cbutton is None:
             is_rerender_or_auto = True
-        elif cbutton.text() == 'Re-Render':
+        elif hasattr(cbutton, 'text') and cbutton.text() == 'Re-Render':
             is_rerender_or_auto = True
         
         # Prepare error dialog window 
@@ -2731,6 +2852,8 @@ class frequencyPlotWindow(QWidget):
                 else: 
                     # Set re-render button back to default once files have been chosen
                     self.render_button.setStyleSheet("background-color : light gray")
+                    # Browse button should stay neutral when EEG/EGF is available
+                    self.updateBrowseButtonStyle()
                     # Launch worker thread
                     self.worker = Worker(initialize_fMap, self.files, self.ppm, self.chunk_size, self.window_type, 
                                 self.speed_lowerbound, self.speed_upperbound)

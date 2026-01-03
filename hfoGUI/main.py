@@ -365,14 +365,6 @@ class Window(QtWidgets.QWidget):  # defines the window class (main window)
                     print(f"Could not save temporary EOI file: {e}")
                     eoi_temp_file = None
             
-            # If no EOIs were found/saved, warn the user but allow them to proceed
-            if not eoi_temp_file:
-                QtWidgets.QMessageBox.information(self, "Spatial Mapper Info", 
-                    "No EOIs (Events of Interest) found in the Score Window.\n\n"
-                    "To visualize events on the spatial map, please run detection or load scores "
-                    "in the Score Window FIRST, then click Spatial Map.\n\n"
-                    "Opening Spatial Mapper without EOIs...")
-
             # Build command to run spatial mapper.
             cmd = [sys.executable, spatial_mapper_path]
             if eeg_file is not None:
