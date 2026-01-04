@@ -2014,6 +2014,91 @@ Include:
 
 ---
 
+## Recent Changes (January 2026)
+
+### 🎯 Major GUI & Workflow Improvements
+
+#### Score Tab Reorganization & Enhanced Help
+- ✅ **Tab order reorganized:** "Automatic Detection" is now first tab, "Score" is second (more intuitive workflow)
+- ✅ **Comprehensive Help (How to Score tab):** 
+  - Interactive table of contents with section links
+  - HTML-styled documentation with detailed explanations
+  - Detection parameter table with literature justifications
+  - Step-by-step workflows for HFO metrics analysis and DL training
+  - Hyperparameter guidance with practical recommendations
+  - Score column descriptions and usage examples
+
+#### Data Import & Source Management
+- ✅ **Auto-load .pos files:** When importing a set file, if a .pos file exists in the same directory, it's automatically added as a "Speed" source
+- ✅ **Source labeling on graphs:** Y-axis shows meaningful labels:
+  - For .egf/.eeg files: Filter cutoff range (e.g., "4-12" Hz)
+  - For .pos files: "Speed"
+  - For other files: Source file extension
+
+#### Behavioral State Tracking & Updates
+- ✅ **Behavioral State column:** Added to Score tab to show "rest" vs "active" state during each HFO
+  - Automatically computed from .pos speed data when EOIs imported
+  - Updated when region preset applied (only for "unknown" states)
+  - Shows "unknown" for manual scores without speed data
+- ✅ **Speed threshold re-computation:** When preset applied, behavioral states recalculated for previously "unknown" entries using new speed thresholds
+
+#### Region Preset Auto-Labeling
+- ✅ **Score label updates on preset apply:** When a region preset is applied, all existing Score items re-labeled based on duration thresholds:
+  - **Ripple:** Event duration within ripple_min_ms to ripple_max_ms
+  - **Fast Ripple:** Event duration within fast_ripple_min_ms to fast_ripple_max_ms
+  - **None:** Event duration outside both ranges (ambiguous)
+- ✅ **No "Sharp Wave Ripple" labels:** Ambiguous events labeled as "None" for clarity
+- ✅ **Threshold (SD) refers to Hilbert:** Clarified in region preset that "Threshold" controls Hilbert detector sensitivity
+
+#### Scorer Default Improvements
+- ✅ **"Auto" as default scorer:** Changed from generic "Scorer 1" to "Auto" (indicates automated detection or automated processing)
+- ✅ **Applied consistently:** Default "Auto" across addScore, addEOI, and loadScores functions
+
+#### Export Enhancements  
+- ✅ **Two distinct export buttons:**
+  - **Export HFO Metrics (CSV):** Exports quantitative metrics (ripple rates, pathology scores, rest/active breakdown) for Ripple-family events only
+  - **Export for DL Training:** Exports labeled segments (30ms windows), manifest CSV, and metrics summary for model training
+- ✅ **Behavioral state preservation:** Both export paths preserve computed behavioral_state metadata
+- ✅ **Co-occurrence detection integration:** Detects ripple+fast_ripple overlaps, marks as "co-occurrence" for analysis
+
+#### Bug Fixes & Robustness
+- ✅ **Fixed loadScores crash:** UnboundLocalError when loading saved scores (variables now properly initialized)
+- ✅ **Case-insensitive behavioral state check:** Re-computation checks work with "unknown", "Unknown", "UNKNOWN", etc.
+- ✅ **Filter cutoff label extraction:** Safely handles missing or malformed cutoff values in source labels
+
+#### CLI Updates
+- ✅ **25ms event merging:** All detection methods (Hilbert, STE, MNI, Consensus, DL) apply post-detection 25ms merge window to reduce over-fragmentation
+- ✅ **Behavioral state computation in exports:** Behavioral state computed and stored in manifest for all exported segments
+- ✅ **Region preset support:** CLI respects region-specific duration and behavior thresholds when exporting
+
+### 📊 Parameter Standardization
+
+All detection parameters standardized to epilepsy literature best practices:
+
+| Detector | Parameter | Value | Justification |
+|----------|-----------|-------|---------------|
+| **Hilbert** | Threshold (SD) | 3.5 | 3.5σ above baseline; literature standard |
+| | Cycles | 4 | ≥4 cycles @ 80-250 Hz confirms oscillatory content |
+| | Min Duration | 10 ms | Shortest physiological HFO duration |
+| | Merge Window | 25 ms | Post-detection merging for robustness |
+| **STE** | Threshold (RMS) | 2.5 | 2.5× baseline RMS energy |
+| **MNI** | Threshold (Percentile) | 98% | Top 2% of energy distribution |
+| **Region Presets** | Ripple Duration | 10-150 ms | Ripple-specific range |
+| | Fast Ripple Duration | 10-50 ms | Faster, pathological oscillations |
+
+### 🔧 Settings & Configuration Files
+
+Updated JSON configuration files in `settings/` directory:
+- `hilbert_params.json` - Hilbert detection parameters
+- `ste_params.json` - STE detection parameters  
+- `mni_params.json` - MNI detection parameters
+- `consensus_params.json` - Consensus voting parameters
+- `profiles.json` - Region presets (LEC, Hippocampus, MEC)
+
+All parameters now include 25ms merge window and standardized thresholds.
+
+---
+
 ### Previous Improvements
 
 #### Deep Learning Training GUI (Stable)

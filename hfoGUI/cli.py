@@ -11,6 +11,43 @@ from .core.Detector import ste_detect_events, mni_detect_events, dl_detect_event
 from .core.Tint_Matlab import ReadEEG, bits2uV, TintException
 
 
+def _merge_events_25ms(events):
+    """
+    Merge consecutive events within 25ms temporal proximity per literature standard.
+    
+    Parameters
+    ----------
+    events : array-like of shape (N, 2)
+        Array of [start_ms, end_ms] event times
+    
+    Returns
+    -------
+    merged : ndarray of shape (M, 2)
+        Merged events with 25ms merge window
+    """
+    if len(events) == 0:
+        return np.empty((0, 2))
+    
+    events = np.asarray(events, dtype=float)
+    events = events[events[:, 0].argsort()]  # Sort by start time
+    
+    merged = []
+    current_start, current_end = events[0]
+    
+    for i in range(1, len(events)):
+        next_start, next_end = events[i]
+        gap_ms = next_start - current_end
+        
+        if gap_ms <= 25.0:  # 25ms literature standard
+            current_end = max(current_end, next_end)
+        else:
+            merged.append([current_start, current_end])
+            current_start, current_end = next_start, next_end
+    
+    merged.append([current_start, current_end])
+    return np.array(merged)
+
+
 def _print_prob_summary(probs):
     probs = np.asarray(probs, dtype=float)
     if probs.size == 0:
@@ -246,7 +283,7 @@ def _process_consensus_file(data_path: Path, set_path: Optional[Path], args: arg
     }
 
     mni_params = {
-        'baseline_window': 10.0,
+        'baseline_window': float(args.baseline_window),
         'threshold_percentile': float(args.mni_percentile),
         'min_freq': float(args.min_freq) if args.min_freq else min_freq_default,
         'max_freq': float(args.max_freq) if args.max_freq else max_freq_default,
@@ -279,6 +316,13 @@ def _save_results(events, params, data_path, set_path, args, method_tag):
     events = np.asarray(events)
     if events.ndim == 1 and len(events) == 0:
         events = np.empty((0, 2))
+
+    # Apply 25ms merge standard per literature definition
+    if len(events) > 0:
+        events_before_merge = len(events)
+        events = _merge_events_25ms(events)
+        if args.verbose and len(events) < events_before_merge:
+            print(f'  [Post-processing] Merged {events_before_merge} → {len(events)} events (25ms threshold)')
 
     out_path = Path(args.output).expanduser() if args.output else None
     scores_path, settings_path = _build_output_paths(
@@ -335,13 +379,13 @@ def build_parser() -> argparse.ArgumentParser:
     hilbert.add_argument('-s', '--set-file', help='Optional .set file or directory; defaults to sibling of the data file')
     hilbert.add_argument('-o', '--output', help='Output directory; scores saved as <session>.txt, defaults to HFOScores/<session>/<session>_HIL.txt')
     hilbert.add_argument('--epoch-sec', type=float, default=5 * 60, help='Epoch length in seconds (default: 300)')
-    hilbert.add_argument('--threshold-sd', type=float, default=3.0,
-                         help='Envelope threshold in SD above mean (default: 3)')
+    hilbert.add_argument('--threshold-sd', type=float, default=4.0,
+                         help='Envelope threshold in SD above mean (default: 4)')
     hilbert.add_argument('--min-duration-ms', type=float, default=10.0, help='Minimum event duration in ms (default: 10)')
     hilbert.add_argument('--min-freq', type=float, help='Minimum bandpass frequency (Hz). Default 80 Hz')
     hilbert.add_argument('--max-freq', type=float, help='Maximum bandpass frequency (Hz). Default 125 Hz for EEG, 500 Hz for EGF')
-    hilbert.add_argument('--required-peaks', type=int, default=6,
-                         help='Minimum peak count inside rectified signal (default: 6)')
+    hilbert.add_argument('--required-peaks', type=int, default=4,
+                         help='Minimum peak count inside rectified signal (default: 4)')
     hilbert.add_argument('--required-peak-threshold-sd', type=float, default=2.0,
                          help='Peak threshold in SD above mean (default: 2). Use --no-required-peak-threshold to disable')
     hilbert.add_argument('--no-required-peak-threshold', action='store_true',
@@ -357,7 +401,7 @@ def build_parser() -> argparse.ArgumentParser:
     ste.add_argument('-f', '--file', required=True, help='Path to .eeg/.egf file or directory')
     ste.add_argument('-s', '--set-file', help='Optional .set file')
     ste.add_argument('-o', '--output', help='Output directory')
-    ste.add_argument('--threshold', type=float, default=3.0, help='RMS threshold (SD or absolute)')
+    ste.add_argument('--threshold', type=float, default=5.0, help='RMS threshold (SD or absolute)')
     ste.add_argument('--window-size', type=float, default=0.01, help='Window size in seconds')
     ste.add_argument('--overlap', type=float, default=0.5, help='Window overlap fraction')
     ste.add_argument('--min-freq', type=float, help='Min frequency (Hz)')
@@ -370,8 +414,8 @@ def build_parser() -> argparse.ArgumentParser:
     mni.add_argument('-f', '--file', required=True, help='Path to .eeg/.egf file or directory')
     mni.add_argument('-s', '--set-file', help='Optional .set file')
     mni.add_argument('-o', '--output', help='Output directory')
-    mni.add_argument('--baseline-window', type=float, default=10.0, help='Baseline window in seconds')
-    mni.add_argument('--threshold-percentile', type=float, default=99.0, help='Threshold percentile')
+    mni.add_argument('--baseline-window', type=float, default=2.0, help='Baseline window in seconds')
+    mni.add_argument('--threshold-percentile', type=float, default=95.0, help='Threshold percentile')
     mni.add_argument('--min-freq', type=float, help='Min frequency (Hz)')
     mni.add_argument('--skip-bits2uv', action='store_true', help='Skip bits-to-uV conversion')
     mni.add_argument('-v', '--verbose', action='store_true', help='Verbose logging')
@@ -382,13 +426,14 @@ def build_parser() -> argparse.ArgumentParser:
     consensus.add_argument('-s', '--set-file', help='Optional .set file or directory')
     consensus.add_argument('-o', '--output', help='Output directory')
     consensus.add_argument('--epoch-sec', type=float, default=5 * 60, help='Hilbert epoch length in seconds (default: 300)')
-    consensus.add_argument('--hilbert-threshold-sd', type=float, default=3.5, help='Hilbert threshold in SD (default: 3.5)')
-    consensus.add_argument('--ste-threshold', type=float, default=2.5, help='STE threshold in RMS (default: 2.5)')
-    consensus.add_argument('--mni-percentile', type=float, default=98.0, help='MNI threshold percentile (default: 98)')
+    consensus.add_argument('--hilbert-threshold-sd', type=float, default=4.0, help='Hilbert threshold in SD (default: 4.0)')
+    consensus.add_argument('--ste-threshold', type=float, default=5.0, help='STE threshold in RMS (default: 5.0)')
+    consensus.add_argument('--mni-percentile', type=float, default=95.0, help='MNI threshold percentile (default: 95)')
+    consensus.add_argument('--baseline-window', type=float, default=2.0, help='MNI baseline window in seconds (default: 2.0)')
     consensus.add_argument('--min-duration-ms', type=float, default=10.0, help='Minimum event duration in ms (default: 10)')
     consensus.add_argument('--min-freq', type=float, help='Minimum bandpass frequency (Hz). Default 80 Hz')
     consensus.add_argument('--max-freq', type=float, help='Maximum bandpass frequency (Hz). Default 125 Hz for EEG, 500 Hz for EGF')
-    consensus.add_argument('--required-peaks', type=int, default=6, help='Hilbert minimum peak count (default: 6)')
+    consensus.add_argument('--required-peaks', type=int, default=4, help='Hilbert minimum peak count (default: 4)')
     consensus.add_argument('--required-peak-sd', type=float, default=2.0, help='Hilbert peak threshold in SD (default: 2.0)')
     consensus.add_argument('--voting-strategy', choices=['strict', 'majority', 'any'], default='majority', 
                           help='Voting rule: strict=3/3, majority=2/3, any=1/3 (default: majority)')
