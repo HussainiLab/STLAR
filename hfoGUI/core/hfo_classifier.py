@@ -10,10 +10,11 @@ from collections import Counter
 class HFO_Classifier:
     """
     Classify HFO events including ripple-fast ripple co-occurrences.
-    Follows epilepsy literature standards with 50ms co-occurrence window.
+    Follows epilepsy literature standards: at least 4 consecutive cycles,
+    events within 25ms merged into single detection.
     """
     
-    def __init__(self, fs=4800, cooccurrence_window_ms=50):
+    def __init__(self, fs=4800, cooccurrence_window_ms=25):
         self.fs = fs
         self.cooccurrence_window_ms = cooccurrence_window_ms
         self.window_samples = int(cooccurrence_window_ms / 1000 * fs)
