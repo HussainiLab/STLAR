@@ -10,7 +10,7 @@ except ImportError:
         from PySide6.QtCore import Signal as pyqtSignal, Slot as pyqtSlot, QObject
 
 from core.GUI_Utils import background, center, find_consec
-import os, time, json, functools, sys
+import os, time, json, functools, sys, csv
 from scipy.signal import hilbert, welch
 import numpy as np
 from core.Tint_Matlab import detect_peaks
@@ -358,13 +358,6 @@ class ScoreWindow(QtWidgets.QWidget):
         scorer_layout.addWidget(scorer_filename_label)
         scorer_layout.addWidget(self.scorer)
 
-        brain_region_label = QtWidgets.QLabel('Brain Region:')
-        self.brain_region = QtWidgets.QLineEdit()
-
-        brain_region_layout = QtWidgets.QHBoxLayout()
-        brain_region_layout.addWidget(brain_region_label)
-        brain_region_layout.addWidget(self.brain_region)
-
         source_label = QtWidgets.QLabel('Source:')
         self.source = QtWidgets.QComboBox()
         self.source.setEditable(True)
@@ -395,8 +388,7 @@ class ScoreWindow(QtWidgets.QWidget):
             'Stop Time(ms):': 3,
             'Duration(ms):': 4,
             'Scorer:': 5,
-            'Brain Region:': 6,
-            'Settings File:': 7,
+            'Settings File:': 6,
         }
 
         for key, value in self.score_headers.items():
@@ -454,8 +446,8 @@ class ScoreWindow(QtWidgets.QWidget):
             btn_layout.addWidget(button)
         # ------------------ layout ------------------------------
 
-        layout_order = [score_filename_btn_layout, score_filename_layout, scorer_layout, brain_region_layout, self.scores, score_layout,
-                        btn_layout]
+        layout_order = [score_filename_btn_layout, score_filename_layout, scorer_layout, self.scores, score_layout,
+                btn_layout]
 
         layout_score = QtWidgets.QVBoxLayout()
         for order in layout_order:
@@ -518,7 +510,7 @@ class ScoreWindow(QtWidgets.QWidget):
         for method in methods:
             self.eoi_method.addItem(method)
 
-        region_label = QtWidgets.QLabel("Brain Region:")
+        region_label = QtWidgets.QLabel("Region Preset:")
         self.region_selector = QtWidgets.QComboBox()
         self.region_selector.addItem("None")
         for region_name in self.region_presets.keys():
@@ -526,7 +518,7 @@ class ScoreWindow(QtWidgets.QWidget):
         self.region_selector.setCurrentText(self.current_region)
         self.region_selector.currentTextChanged.connect(self._on_region_changed)
 
-        self.apply_region_btn = QtWidgets.QPushButton("Region Preset")
+        self.apply_region_btn = QtWidgets.QPushButton("Configure Preset")
         self.apply_region_btn.setToolTip("Configure region-specific defaults (bands, durations, behavioral gating, DL export filters).")
         self.apply_region_btn.clicked.connect(self.openRegionPresetDialog)
 
@@ -1366,9 +1358,6 @@ class ScoreWindow(QtWidgets.QWidget):
                 new_item.setText(value, 'N/A')
             elif 'Scorer' in key:
                 new_item.setText(value, scorer_name)
-            elif 'Brain Region' in key:
-                brain_region = self.brain_region.text().strip()
-                new_item.setText(value, brain_region if brain_region else 'Unknown')
 
         self.scores.addTopLevelItem(new_item)
 
@@ -1846,10 +1835,8 @@ class ScoreWindow(QtWidgets.QWidget):
             scorer_name = 'Scorer 1'
             self.scorer.setText(scorer_name)
         
-        # Get default brain region from text field (can be overridden by metadata)
-        default_brain_region = self.brain_region.text().strip()
-        if default_brain_region == '':
-            default_brain_region = 'Unknown'
+        # Default brain region comes from current preset selection
+        default_brain_region = getattr(self, 'current_region', None) or 'Unknown'
 
         # Get all selected items (supports multi-select) - make a copy to avoid modification during iteration
         selected_items = list(self.EOI.selectedItems())
@@ -1911,11 +1898,61 @@ class ScoreWindow(QtWidgets.QWidget):
                 indices_to_remove.append(index)
 
         # Process each EOI (filtered if profile active)
+        duplicates_skipped = 0
         for idx, (s_ms, e_ms) in enumerate(eoi_times):
+            # Check for duplicates: skip if event with same start/stop already exists in scores
+            is_duplicate = False
+            for i in range(self.scores.topLevelItemCount()):
+                existing_item = self.scores.topLevelItem(i)
+                try:
+                    for score_key, score_value in self.score_headers.items():
+                        if 'Start' in score_key:
+                            existing_start = float(existing_item.data(score_value, 0))
+                        elif 'Stop' in score_key:
+                            existing_stop = float(existing_item.data(score_value, 0))
+                    # Allow small tolerance for floating point comparison (0.1 ms)
+                    if abs(existing_start - s_ms) < 0.1 and abs(existing_stop - e_ms) < 0.1:
+                        is_duplicate = True
+                        break
+                except Exception:
+                    continue
+            
+            if is_duplicate:
+                duplicates_skipped += 1
+                continue  # Skip this duplicate event
+
             new_item = TreeWidgetItem()
 
             # Get metadata for this EOI if available
             metadata = metadata_rows[idx] if metadata_rows else None
+            
+            # Extract or compute behavior state
+            behavioral_state = 'unknown'
+            mean_speed = None
+            if metadata and 'state' in metadata:
+                behavioral_state = metadata['state']
+                mean_speed = metadata.get('mean_speed_cm_s')
+            else:
+                # Recalculate behavior state from speed signal if available
+                try:
+                    speed_signal = self._get_speed_signal()
+                    if speed_signal is not None:
+                        speed_trace, fs_speed = speed_signal
+                        speed_min = self.region_profile.get('speed_threshold_min_cm_s', 0.0) if hasattr(self, 'region_profile') else 0.0
+                        speed_max = self.region_profile.get('speed_threshold_max_cm_s', 5.0) if hasattr(self, 'region_profile') else 5.0
+                        
+                        s_idx = int(max(0, np.floor(s_ms / 1000 * fs_speed)))
+                        e_idx = int(min(len(speed_trace), np.ceil(e_ms / 1000 * fs_speed)))
+                        if e_idx > s_idx:
+                            seg_speed = speed_trace[s_idx:e_idx]
+                            if seg_speed.size > 0:
+                                mean_speed = float(np.nanmean(seg_speed))
+                                behavioral_state = 'rest' if (speed_min <= mean_speed <= speed_max) else 'active'
+                except Exception:
+                    pass
+            
+            # Store behavior state in item as custom data
+            new_item.setData(0, QtCore.Qt.UserRole, behavioral_state)  # Use role to store behavior state
             
             # Determine score label based on band_label from metadata
             score_label = self.EOI_score.currentText()
@@ -1974,17 +2011,24 @@ class ScoreWindow(QtWidgets.QWidget):
         # Update events detected count
         self.events_detected.setText(str(self.EOI.topLevelItemCount()))
         
-        # Notify user if filtering was applied
+        # Notify user if filtering was applied and/or duplicates were skipped
+        messages = []
         if metadata_rows:
-            added = len(eoi_times)
+            added = len(eoi_times) - duplicates_skipped
             selected = len(selected_items)
             if added < selected:
-                QtWidgets.QMessageBox.information(
-                    self, "Region Preset Applied",
-                    f"Added {added} of {selected} selected EOIs to Score tab.\n\n"
-                    f"{selected - added} EOIs were filtered out by region preset criteria "
-                    "(duration/behavior/speed thresholds)."
-                )
+                messages.append(f"Added {added} of {selected} selected EOIs to Score tab.\n"
+                               f"{selected - added} EOIs were filtered out by region preset criteria "
+                               "(duration/behavior/speed thresholds).")
+        
+        if duplicates_skipped > 0:
+            messages.append(f"Skipped {duplicates_skipped} duplicate event(s) already in Score tab.")
+        
+        if messages:
+            QtWidgets.QMessageBox.information(
+                self, "EOIs Added to Score",
+                "\n\n".join(messages)
+            )
 
     def deleteEOI(self):
         '''Delete selected EOIs (supports multiple selections)'''
@@ -2320,6 +2364,8 @@ class ScoreWindow(QtWidgets.QWidget):
 
             eois = []
             labels = []
+            band_labels = []  # keep raw label text for metrics (ripple vs fast ripple)
+            behavior_states = []  # track behavioral state for each event
             metadata_rows = []
             for item_count in range(self.scores.topLevelItemCount()):
                 item = self.scores.topLevelItem(item_count)
@@ -2335,19 +2381,18 @@ class ScoreWindow(QtWidgets.QWidget):
                     e_ms = float(item.data(stop_col, 0))
                     eois.append([s_ms, e_ms])
                     labels.append(lbl)
+                    band_labels.append(lbl_txt)
+                    
+                    # Extract behavioral state from item (stored as custom data)
+                    behavior_state = item.data(0, QtCore.Qt.UserRole) or 'unknown'
+                    behavior_states.append(behavior_state)
                     
                     # Collect metadata (optional fields)
-                    metadata = {}
+                    metadata = {'behavioral_state': behavior_state}
                     try:
                         scorer = str(item.data(scorer_col, 0)).strip()
                         if scorer and scorer != 'Unknown':
                             metadata['scorer'] = scorer
-                    except:
-                        pass
-                    try:
-                        brain_region = str(item.data(brain_region_col, 0)).strip()
-                        if brain_region and brain_region != 'Unknown':
-                            metadata['brain_region'] = brain_region
                     except:
                         pass
                     metadata_rows.append(metadata if metadata else None)
@@ -2364,9 +2409,106 @@ class ScoreWindow(QtWidgets.QWidget):
             from core.eoi_exporter import export_labeled_eois_for_training
             manifest_path = export_labeled_eois_for_training(raw_data, Fs, np.asarray(eois), labels, out_dir, metadata=metadata_rows)
 
+            # ----------------------------
+            # Lightweight metrics summary with co-occurrence detection & behavioral state breakdown
+            # ----------------------------
+            try:
+                from core.hfo_classifier import HFO_Classifier
+                
+                recording_minutes = (len(raw_data) / float(Fs)) / 60.0 if Fs else 0
+                durations_ms = [(stop - start) for start, stop in eois]
+                ripple_mask = [lbl in {'ripple', 'sharp wave ripple'} for lbl in band_labels]
+                fr_mask = [lbl == 'fast ripple' for lbl in band_labels]
+
+                ripple_list = []
+                fr_list = []
+                
+                # Build event lists for classifier
+                for i, (start, stop, lbl) in enumerate(zip([e[0] for e in eois], [e[1] for e in eois], band_labels)):
+                    if lbl in {'ripple', 'sharp wave ripple'}:
+                        ripple_list.append({'start_ms': start, 'end_ms': stop, 'peak_freq': 150})  # placeholder freq
+                    elif lbl == 'fast ripple':
+                        fr_list.append({'start_ms': start, 'end_ms': stop, 'peak_freq': 350})  # placeholder freq
+                
+                # Classify events including co-occurrences
+                classifier = HFO_Classifier(fs=Fs)
+                classified_events = classifier.classify_events(ripple_list, fr_list)
+                summary_stats = classifier.compute_summary(classified_events)
+                
+                ripple_durs = [d for d, m in zip(durations_ms, ripple_mask) if m]
+                fr_durs = [d for d, m in zip(durations_ms, fr_mask) if m]
+
+                ripple_count = len(ripple_durs)
+                fr_count = len(fr_durs)
+                total_count = len(eois)
+
+                ripple_rate = (ripple_count / recording_minutes) if recording_minutes else 0
+                fr_rate = (fr_count / recording_minutes) if recording_minutes else 0
+                fr_over_ripple = (fr_count / ripple_count) if ripple_count else 0
+
+                long_thresh = 100.0  # ms
+                long_ripple_count = len([d for d in ripple_durs if d > long_thresh])
+                long_ripple_pct = (long_ripple_count / ripple_count * 100.0) if ripple_count else 0
+
+                mean_ripple_dur = float(np.mean(ripple_durs)) if ripple_durs else 0
+                mean_fr_dur = float(np.mean(fr_durs)) if fr_durs else 0
+                
+                # Behavioral state breakdown
+                rest_mask = [st == 'rest' for st in behavior_states]
+                active_mask = [st == 'active' for st in behavior_states]
+                
+                rest_ripple_rate = (sum([m1 and m2 for m1, m2 in zip(rest_mask, ripple_mask)]) / recording_minutes) if recording_minutes else 0
+                active_ripple_rate = (sum([m1 and m2 for m1, m2 in zip(active_mask, ripple_mask)]) / recording_minutes) if recording_minutes else 0
+                rest_fr_rate = (sum([m1 and m2 for m1, m2 in zip(rest_mask, fr_mask)]) / recording_minutes) if recording_minutes else 0
+                active_fr_rate = (sum([m1 and m2 for m1, m2 in zip(active_mask, fr_mask)]) / recording_minutes) if recording_minutes else 0
+                
+                # Cooccurrence by state
+                cooccur_rest = sum([m1 and m2 for m1, m2 in zip(rest_mask, [e['is_cooccurrence'] for e in classified_events] if classified_events else [])])
+                cooccur_active = sum([m1 and m2 for m1, m2 in zip(active_mask, [e['is_cooccurrence'] for e in classified_events] if classified_events else [])])
+                rest_events = sum(rest_mask)
+                active_events = sum(active_mask)
+
+                summary_rows = [
+                    ("total_events", total_count),
+                    ("ripple_count", ripple_count),
+                    ("fast_ripple_count", fr_count),
+                    ("ripple_rate_per_min", ripple_rate),
+                    ("fast_ripple_rate_per_min", fr_rate),
+                    ("fr_to_ripple_ratio", fr_over_ripple),
+                    ("long_duration_ripple_count_gt100ms", long_ripple_count),
+                    ("long_duration_ripple_pct_gt100ms", long_ripple_pct),
+                    ("mean_ripple_duration_ms", mean_ripple_dur),
+                    ("mean_fast_ripple_duration_ms", mean_fr_dur),
+                    ("ripple_fast_ripple_cooccurrence_count", summary_stats['ripple_fast_ripple_cooccurrence']),
+                    ("cooccurrence_rate_pct", summary_stats['cooccurrence_rate'] * 100.0),
+                    ("mean_pathology_score", summary_stats['mean_pathology_score']),
+                    ("", ""),  # Blank separator
+                    ("behavioral_state_breakdown", ""),
+                    ("rest_events_count", rest_events),
+                    ("active_events_count", active_events),
+                    ("ripple_rate_rest_per_min", rest_ripple_rate),
+                    ("ripple_rate_active_per_min", active_ripple_rate),
+                    ("fast_ripple_rate_rest_per_min", rest_fr_rate),
+                    ("fast_ripple_rate_active_per_min", active_fr_rate),
+                    ("cooccurrence_rest_count", cooccur_rest),
+                    ("cooccurrence_active_count", cooccur_active),
+                    ("cooccurrence_rate_rest_pct", (cooccur_rest / rest_events * 100.0) if rest_events else 0),
+                    ("cooccurrence_rate_active_pct", (cooccur_active / active_events * 100.0) if active_events else 0),
+                ]
+
+                summary_path = os.path.join(out_dir, "hfo_metrics_summary.csv")
+                with open(summary_path, "w", newline="") as csvfile:
+                    writer = csv.writer(csvfile)
+                    writer.writerow(["metric", "value"])
+                    writer.writerows(summary_rows)
+            except Exception as metric_err:
+                print(f"Warning: could not write metrics summary: {metric_err}")
+                import traceback
+                traceback.print_exc()
+
             QtWidgets.QMessageBox.information(
                 self, "Export Complete",
-                f"Exported {len(eois)} labeled segments to:\n{out_dir}\n\nManifest: {manifest_path}"
+                f"Exported {len(eois)} labeled segments to:\n{out_dir}\n\nManifest: {manifest_path}\nMetrics: hfo_metrics_summary.csv"
             )
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Export Error", f"Error exporting labeled scores: {e}")
