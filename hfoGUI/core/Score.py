@@ -312,7 +312,7 @@ class ScoreWindow(QtWidgets.QWidget):
 
         # Region-specific analysis presets (Phase 1)
         self.region_presets = self._build_region_presets()
-        self.current_region = 'LEC'
+        self.current_region = 'None'
         self.region_profile = self.region_presets.get(self.current_region, {}).copy()
 
         background(self)
@@ -387,8 +387,9 @@ class ScoreWindow(QtWidgets.QWidget):
             'Start Time(ms):': 2,
             'Stop Time(ms):': 3,
             'Duration(ms):': 4,
-            'Scorer:': 5,
-            'Settings File:': 6,
+            'Behavioral State:': 5,
+            'Scorer:': 6,
+            'Settings File:': 7,
         }
 
         for key, value in self.score_headers.items():
@@ -428,6 +429,24 @@ class ScoreWindow(QtWidgets.QWidget):
         score_layout.addWidget(score_label)
         score_layout.addWidget(self.score)
 
+        # -------- Region Preset for Score exports --------
+        region_label = QtWidgets.QLabel("Region Preset:")
+        self.score_region_selector = QtWidgets.QComboBox()
+        self.score_region_selector.addItem("None")
+        for region_name in self.region_presets.keys():
+            self.score_region_selector.addItem(region_name)
+        self.score_region_selector.setCurrentText(self.current_region)
+        self.score_region_selector.currentTextChanged.connect(self._on_region_changed)
+
+        self.score_apply_region_btn = QtWidgets.QPushButton("Configure Preset")
+        self.score_apply_region_btn.setToolTip("Configure region-specific defaults for export filtering and metrics.")
+        self.score_apply_region_btn.clicked.connect(self.openRegionPresetDialog)
+
+        region_layout = QtWidgets.QHBoxLayout()
+        region_layout.addWidget(region_label)
+        region_layout.addWidget(self.score_region_selector)
+        region_layout.addWidget(self.score_apply_region_btn)
+
         # ------------------------------button layout --------------------------------------
         self.hide_btn = QtWidgets.QPushButton('Hide', self)
         self.add_btn = QtWidgets.QPushButton('Add Score', self)
@@ -436,17 +455,19 @@ class ScoreWindow(QtWidgets.QWidget):
         self.update_btn.clicked.connect(self.updateScores)
         self.delete_btn = QtWidgets.QPushButton('Delete Selected Scores', self)
         self.delete_btn.clicked.connect(self.deleteScores)
-        self.export_scores_btn = QtWidgets.QPushButton('Create labels for DL training', self)
-        self.export_scores_btn.clicked.connect(self.exportScoresForTraining)
+        self.export_metrics_btn = QtWidgets.QPushButton('Export HFO Metrics (CSV)', self)
+        self.export_metrics_btn.clicked.connect(self.exportHFOMetrics)
+        self.export_dl_btn = QtWidgets.QPushButton('Export for DL Training', self)
+        self.export_dl_btn.clicked.connect(self.exportForDLTraining)
 
         btn_layout = QtWidgets.QHBoxLayout()
 
-        # Keep Hide at the end, after export
-        for button in [self.add_btn, self.update_btn, self.delete_btn, self.export_scores_btn, self.hide_btn]:
+        # Keep Hide at the end, after exports
+        for button in [self.add_btn, self.update_btn, self.delete_btn, self.export_metrics_btn, self.export_dl_btn, self.hide_btn]:
             btn_layout.addWidget(button)
         # ------------------ layout ------------------------------
 
-        layout_order = [score_filename_btn_layout, score_filename_layout, scorer_layout, self.scores, score_layout,
+        layout_order = [score_filename_btn_layout, score_filename_layout, scorer_layout, region_layout, self.scores, score_layout,
                 btn_layout]
 
         layout_score = QtWidgets.QVBoxLayout()
@@ -510,29 +531,11 @@ class ScoreWindow(QtWidgets.QWidget):
         for method in methods:
             self.eoi_method.addItem(method)
 
-        region_label = QtWidgets.QLabel("Region Preset:")
-        self.region_selector = QtWidgets.QComboBox()
-        self.region_selector.addItem("None")
-        for region_name in self.region_presets.keys():
-            self.region_selector.addItem(region_name)
-        self.region_selector.setCurrentText(self.current_region)
-        self.region_selector.currentTextChanged.connect(self._on_region_changed)
-
-        self.apply_region_btn = QtWidgets.QPushButton("Configure Preset")
-        self.apply_region_btn.setToolTip("Configure region-specific defaults (bands, durations, behavioral gating, DL export filters).")
-        self.apply_region_btn.clicked.connect(self.openRegionPresetDialog)
-
-        region_layout = QtWidgets.QHBoxLayout()
-        region_layout.addWidget(region_label)
-        region_layout.addWidget(self.region_selector)
-        region_layout.addWidget(self.apply_region_btn)
-
         eoi_method_layout = QtWidgets.QHBoxLayout()
         eoi_method_layout.addWidget(eoi_method_label)
         eoi_method_layout.addWidget(self.eoi_method)
 
         eoi_parameter_layout = QtWidgets.QHBoxLayout()
-        eoi_parameter_layout.addLayout(region_layout)
         eoi_parameter_layout.addLayout(eoi_method_layout)
         eoi_parameter_layout.addLayout(events_detected_layout)
 
@@ -570,11 +573,8 @@ class ScoreWindow(QtWidgets.QWidget):
         self.add_eoi_btn = QtWidgets.QPushButton("Add Selected EOI(s) to Score")
         self.add_eoi_btn.clicked.connect(self.addEOI)
 
-        self.export_eoi_btn = QtWidgets.QPushButton("Export EOIs for DL Training")
-        self.export_eoi_btn.clicked.connect(self.exportEOIsForTraining)
-
         btn_layout = QtWidgets.QHBoxLayout()
-        for btn in [self.find_eoi_btn, self.add_eoi_btn, self.update_eoi_region, self.delete_eoi_btn, self.export_eoi_btn, self.eoi_hide]:
+        for btn in [self.find_eoi_btn, self.add_eoi_btn, self.update_eoi_region, self.delete_eoi_btn, self.eoi_hide]:
             btn_layout.addWidget(btn)
 
         layout_eoi = QtWidgets.QVBoxLayout()
@@ -818,88 +818,280 @@ class ScoreWindow(QtWidgets.QWidget):
         self.help_text.setHtml(
                         """
                         <h2>Score Window Help</h2>
-                        <p>The Score window provides a complete workflow to:
-                        <ol>
-                            <li>Detect EOIs (events of interest),</li>
-                            <li>Label them (Ripple-family vs Artifact),</li>
-                            <li>Prepare train/val datasets, and</li>
-                            <li>Train + export a Deep Learning classifier for detection.</li>
-                        </ol>
-                        All start/stop times are shown and saved in <b>milliseconds (ms)</b>.</p>
-
-                        <h3>1) Score</h3>
+                        <p><b>The Score window provides a complete workflow for HFO detection, labeling, and Deep Learning training:</b></p>
+                        
+                        <h3>📋 Table of Contents</h3>
                         <ul>
-                            <li><b>Add Score</b>: Adds a row using the current graph selection (times in ms).</li>
-                            <li><b>Update Selected Scores</b>: Updates the label only; does not change times.</li>
-                            <li><b>Delete Selected Scores</b>: Removes selected rows.</li>
-                            <li><b>Create labels for DL training</b>: Exports labeled segments (Ripple-family=1, Artifact=0) and a manifest CSV.</li>
-                            <li><b>Hide</b>: Hides selected entries from view (non-destructive).</li>
+                            <li><a href="#overview">Overview</a></li>
+                            <li><a href="#automdetect">Automatic Detection Tab</a></li>
+                            <li><a href="#score">Score Tab</a></li>
+                            <li><a href="#csvconvert">CSV Convert Tab</a></li>
+                            <li><a href="#train">Train Tab</a></li>
+                            <li><a href="#workflow-metrics">Workflow: HFO Metrics (Analysis)</a></li>
+                            <li><a href="#workflow-dl">Workflow: Deep Learning Training</a></li>
+                            <li><a href="#parameters">Detection Parameters & Defaults</a></li>
                         </ul>
 
-                        <h3>2) Automatic Detection</h3>
+                        <h3 id="overview">📌 Overview</h3>
+                        <p>All start/stop times are shown and saved in <b>milliseconds (ms)</b>. The workflow consists of:</p>
+                        <ol>
+                            <li><b>Detection:</b> Run automated algorithms (Hilbert/STE/MNI/Consensus) to find candidate HFOs</li>
+                            <li><b>Filtering & Labeling:</b> Apply region presets to filter by duration/behavior and classify as Ripple/Fast Ripple/Artifact</li>
+                            <li><b>Export:</b> Export either HFO metrics (CSV) for analysis, or labeled segments for DL training</li>
+                            <li><b>Training (optional):</b> Train a Deep Learning model on labeled data and deploy for future detection</li>
+                        </ol>
+
+                        <h3 id="automdetect">🔍 Automatic Detection Tab (First Tab)</h3>
+                        <p><b>Detects candidate High-Frequency Oscillations (HFOs) using automated algorithms.</b></p>
+                        
+                        <h4>Detection Methods:</h4>
                         <ul>
-                            <li><b>Hilbert</b>: Bandpass + Hilbert envelope; thresholds via SD and peak counts.</li>
-                            <li><b>STE</b>: Local RMS-based detector (windowed energy thresholding).</li>
-                            <li><b>MNI</b>: Percentile/energy-based baseline detector.</li>
-                            <li><b>Consensus</b>: Voting of Hilbert + STE + MNI (strict/majority/any).</li>
-                            <li><b>Deep Learning</b>: Requires an exported TorchScript model (Train tab).</li>
-                            <li><b>Add Selected EOI(s) to Score</b>: Moves EOIs into the Score tab for labeling. 
-                                <br><i>If a brain region preset is active, automatically applies:</i>
+                            <li><b>Hilbert:</b> Bandpass + Hilbert envelope analysis; detects via SD threshold and peak count. Best for ripples (80–250 Hz).</li>
+                            <li><b>STE:</b> Short-Time Energy detector using windowed RMS thresholding. Detects broadband HFO energy.</li>
+                            <li><b>MNI:</b> Percentile-based energy detector; compares baseline to current activity. Robust to slow variations.</li>
+                            <li><b>Consensus:</b> Voting across Hilbert + STE + MNI. Choose voting mode:
                                 <ul style="margin-left: 20px; margin-top: 5px;">
-                                    <li>Duration filtering (ripple vs fast ripple ranges)</li>
-                                    <li>Behavioral gating (speed thresholds if .pos file loaded)</li>
-                                    <li>Automatic band labeling via PSD analysis</li>
+                                    <li><i>Strict:</i> All three detectors agree (highest specificity)</li>
+                                    <li><i>Majority:</i> ≥2 detectors agree (balanced)</li>
+                                    <li><i>Any:</i> ≥1 detector fires (highest sensitivity)</li>
                                 </ul>
                             </li>
-                            <li><b>Update EOI Region</b>: Updates EOI start/stop (ms) from current graph selection.</li>
-                            <li><b>Export EOIs for DL Training</b>: Exports unlabeled segments + manifest CSV (applies region preset if active).</li>
+                            <li><b>Deep Learning:</b> Uses a pre-trained TorchScript model (.pt file) exported from the Train tab. Requires prior model training.</li>
                         </ul>
 
-                        <h3>Recommended Workflow for DL Training:</h3>
-                        <ol style="margin-left: 20px; background-color: #f0f0f0; padding: 10px; border-radius: 5px;">
-                            <li>Run automated detection (Hilbert/STE/MNI)</li>
-                            <li>Apply brain region preset if desired (see Settings)</li>
-                            <li>Select EOIs → <b>"Add Selected EOI(s) to Score"</b> (applies preset filters + auto-labels)</li>
-                            <li>Manually add artifact examples or other scores as needed</li>
-                            <li>Use <b>"Create labels for DL training"</b> to export (Ripple-family=1, Artifact=0)</li>
+                        <h4>Key Actions:</h4>
+                        <ul>
+                            <li><b>Run Detection:</b> Click on a detection method and choose band (Ripple/Fast Ripple) or consensus voting strategy.</li>
+                            <li><b>Add Selected EOI(s) to Score:</b> Transfers selected EOIs to the Score tab with automatic:
+                                <ul style="margin-left: 20px; margin-top: 5px;">
+                                    <li>Duration filtering (Ripple vs Fast Ripple classification)</li>
+                                    <li>Behavioral gating (marks as 'rest' or 'active' if .pos speed data loaded)</li>
+                                    <li>PSD-based band labeling (ripple-power vs fast-ripple-power comparison)</li>
+                                </ul>
+                            </li>
+                            <li><b>Update EOI Region:</b> Modify an EOI's start/stop times using the current graph selection window (useful for refinement).</li>
+                        </ul>
+
+                        <h3 id="score">✏️ Score Tab (Second Tab)</h3>
+                        <p><b>Manage detected and manually-scored HFOs. Apply region presets, label events, and export results.</b></p>
+                        
+                        <h4>Main Controls:</h4>
+                        <ul>
+                            <li><b>Region Preset:</b> Choose a brain region (LEC, Hippocampus, MEC) or None.
+                                <ul style="margin-left: 20px; margin-top: 5px;">
+                                    <li>Presets define: frequency bands, duration thresholds (ripple vs fast ripple ranges), behavioral gating (speed thresholds)</li>
+                                    <li>When applied, automatically re-labels existing scores based on duration and recalculates behavioral states (rest/active) if missing</li>
+                                </ul>
+                            </li>
+                            <li><b>Configure Preset:</b> Customize preset parameters (frequency ranges, duration thresholds, speed gates). Updates are applied when you click "Apply".</li>
+                            <li><b>Add Score:</b> Manually add a single event using current graph selection times. Auto-filled with 'Auto' scorer and 'unknown' behavioral state.</li>
+                            <li><b>Update Selected Scores:</b> Change label (Score, Scorer) of selected rows without modifying times.</li>
+                            <li><b>Delete Selected Scores:</b> Remove selected rows permanently.</li>
+                        </ul>
+
+                        <h4>Score Columns:</h4>
+                        <table border="1" cellpadding="8" style="margin: 10px 0;">
+                            <tr style="background-color: #e0e0e0;">
+                                <th>Column</th>
+                                <th>Description</th>
+                                <th>Editable</th>
+                            </tr>
+                            <tr>
+                                <td><b>ID#</b></td>
+                                <td>Unique identifier (e.g., 'M1', 'A2'). 'M'=Manual, 'A'=Auto-detected.</td>
+                                <td>No</td>
+                            </tr>
+                            <tr>
+                                <td><b>Score</b></td>
+                                <td>Label: 'Ripple', 'Fast Ripple', 'None' (ambiguous), or custom. Auto-populated when preset applied.</td>
+                                <td>Yes</td>
+                            </tr>
+                            <tr>
+                                <td><b>Start Time (ms)</b></td>
+                                <td>Event start in milliseconds.</td>
+                                <td>No</td>
+                            </tr>
+                            <tr>
+                                <td><b>Stop Time (ms)</b></td>
+                                <td>Event stop in milliseconds.</td>
+                                <td>No</td>
+                            </tr>
+                            <tr>
+                                <td><b>Duration (ms)</b></td>
+                                <td>Computed as (Stop - Start). Used for ripple vs fast ripple classification.</td>
+                                <td>No</td>
+                            </tr>
+                            <tr>
+                                <td><b>Behavioral State</b></td>
+                                <td>'rest' (low speed), 'active' (high speed), or 'unknown' (no speed data). Auto-computed from .pos file if available.</td>
+                                <td>No</td>
+                            </tr>
+                            <tr>
+                                <td><b>Scorer</b></td>
+                                <td>'Auto' (automated detection) or user name (manual scoring).</td>
+                                <td>Yes</td>
+                            </tr>
+                            <tr>
+                                <td><b>Settings File</b></td>
+                                <td>Path to detection parameters file (JSON) used to detect this event.</td>
+                                <td>No</td>
+                            </tr>
+                        </table>
+
+                        <h4>Export Options:</h4>
+                        <ul>
+                            <li><b>Export HFO Metrics (CSV):</b> 
+                                <ul style="margin-left: 20px; margin-top: 5px;">
+                                    <li>Exports quantitative metrics for <b>Ripple-family events only</b> (Ripple + Fast Ripple)</li>
+                                    <li>Includes: ripple rates (per minute), pathology scores, behavioral breakdown (% rest vs active)</li>
+                                    <li>Output: Single CSV with one row per region/subject</li>
+                                    <li>Use this for papers, statistics, and clinical analysis</li>
+                                </ul>
+                            </li>
+                            <li><b>Export for DL Training:</b>
+                                <ul style="margin-left: 20px; margin-top: 5px;">
+                                    <li>Exports labeled <b>segments</b> (30 ms windows, overlapping) with labels: Ripple-family=1, Artifact=0</li>
+                                    <li>Output: (1) Segment files in HDF5 format, (2) manifest.csv linking files to labels, (3) metrics summary</li>
+                                    <li>Use this to prepare datasets for Deep Learning model training</li>
+                                </ul>
+                            </li>
+                        </ul>
+
+                        <h3 id="csvconvert">📊 CSV Convert Tab</h3>
+                        <p><b>Create train/validation splits from manifests exported by "Export for DL Training".</b></p>
+                        
+                        <h4>Controls:</h4>
+                        <ul>
+                            <li><b>Validation Fraction:</b> Percentage of data reserved for validation (e.g., 0.20 = 20%). Rest goes to training.</li>
+                            <li><b>Random Seed:</b> Ensures reproducible splits. Same seed always produces the same train/val split.</li>
+                            <li><b>Stratified split:</b> When enabled, balances class distribution (Ripple vs Artifact counts) and avoids subject leakage (each subject appears in only one split).</li>
+                            <li><b>Output Directory:</b> Folder where train.csv and val.csv are saved.</li>
+                            <li><b>Status Panel:</b> Shows sample counts, class breakdown, and subject statistics for each split.</li>
+                        </ul>
+
+                        <h3 id="train">🎓 Train Tab</h3>
+                        <p><b>Train a Convolutional Neural Network (CNN) on labeled segments to automatically detect HFOs.</b></p>
+                        
+                        <h4>Input Files:</h4>
+                        <ul>
+                            <li><b>Train manifest (CSV):</b> Path to train.csv from CSV Convert tab. Lists segment paths and labels.</li>
+                            <li><b>Val manifest (CSV):</b> Path to val.csv from CSV Convert tab. Used to monitor validation performance.</li>
+                        </ul>
+
+                        <h4>Hyperparameters:</h4>
+                        <ul>
+                            <li><b>Epochs:</b> Full passes over the training set. Typical: 15–50. More epochs = slower but potentially better accuracy (watch for overfitting).</li>
+                            <li><b>Batch size:</b> Segments processed per gradient update. Typical: 32–128.
+                                <ul style="margin-left: 20px; margin-top: 5px;">
+                                    <li>Larger batches: faster training, smoother loss curves</li>
+                                    <li>Smaller batches: noisier updates, may escape local minima</li>
+                                </ul>
+                            </li>
+                            <li><b>Learning rate:</b> Optimizer step size. Typical: 1e-3 to 5e-3.
+                                <ul style="margin-left: 20px; margin-top: 5px;">
+                                    <li>Start low (5e-4) for stability, increase if training is too slow</li>
+                                    <li>If loss oscillates wildly, reduce learning rate</li>
+                                </ul>
+                            </li>
+                            <li><b>Weight decay:</b> L2 regularization (penalty for large weights). Typical: 1e-4. Increase to 1e-3 or 1e-2 to reduce overfitting.</li>
+                        </ul>
+
+                        <h4>Training Controls:</h4>
+                        <ul>
+                            <li><b>Output dir:</b> Folder to save checkpoints. Best validation model is saved as best.pt.</li>
+                            <li><b>Show training visualization:</b> Opens a real-time GUI showing training/validation loss curves and metrics.</li>
+                            <li><b>Start Training:</b> Begins training. Logs appear in the text area below.</li>
+                            <li><b>Export Model:</b> Select best.pt and export as TorchScript (.pt, required) and optionally ONNX (.onnx). TorchScript is used by the Deep Learning detector.</li>
+                        </ul>
+
+                        <h3 id="workflow-metrics">⚙️ Recommended Workflow: HFO Metrics (Analysis)</h3>
+                        <p>Use this workflow to analyze HFO properties (rates, pathology, behavior) without training a Deep Learning model.</p>
+                        <ol style="margin-left: 20px; background-color: #f0f0f0; padding: 10px; border-radius: 5px; line-height: 1.8;">
+                            <li><b>Automatic Detection:</b> Run Consensus detection (Hilbert + STE + MNI with Majority voting recommended)</li>
+                            <li><b>Review:</b> In Automatic Detection tab, review detected EOIs visually on the graph</li>
+                            <li><b>Move to Score:</b> Select EOIs → click <b>"Add Selected EOI(s) to Score"</b> to transfer to Score tab</li>
+                            <li><b>Manual Refinement (optional):</b> In Score tab, manually update labels or delete false positives</li>
+                            <li><b>Select Region:</b> Choose a brain region preset (LEC, Hippocampus, MEC) in Score tab. This filters by duration and applies behavioral gating.</li>
+                            <li><b>Export Metrics:</b> Click <b>"Export HFO Metrics (CSV)"</b> to get quantitative metrics (ripple rates, pathology scores, rest/active breakdown)</li>
+                            <li><b>Analyze:</b> Use the exported CSV in your analysis pipeline (R, Python, GraphPad, etc.)</li>
                         </ol>
 
-                        <h3>3) CSV convert (Train/Val split)</h3>
-                        <ul>
-                            <li><b>Validation Fraction</b>: Fraction of subjects reserved for validation (e.g., 0.20 = 20%).</li>
-                            <li><b>Random Seed</b>: Ensures reproducible splits (same seed → same split).</li>
-                            <li><b>Stratified split</b>: Balances label distribution across train/val while avoiding subject leakage.</li>
-                            <li><b>Output Directory</b>: Saves train.csv, val.csv, and optional metadata.</li>
-                            <li><b>Status panel</b>: Shows class counts and subject statistics for each split.</li>
-                        </ul>
+                        <h3 id="workflow-dl">⚙️ Recommended Workflow: Deep Learning Training & Deployment</h3>
+                        <p>Use this workflow to train a custom detection model on your data.</p>
+                        <ol style="margin-left: 20px; background-color: #f0f0f0; padding: 10px; border-radius: 5px; line-height: 1.8;">
+                            <li><b>Automatic Detection:</b> Run detection and collect candidate EOIs</li>
+                            <li><b>Move to Score:</b> Click <b>"Add Selected EOI(s) to Score"</b></li>
+                            <li><b>Manual Labeling:</b> Manually label EOIs as Ripple/Fast Ripple/Artifact in Score tab. Add false positives manually if needed.</li>
+                            <li><b>Select Region Preset:</b> Choose a brain region (or None if multi-region) in Score tab</li>
+                            <li><b>Export for DL:</b> Click <b>"Export for DL Training"</b>. This creates segment files + manifest + metrics summary.</li>
+                            <li><b>Create Splits:</b> Go to CSV Convert tab. Load the manifest, set validation fraction (0.20 typical), and click "Generate". Creates train.csv and val.csv.</li>
+                            <li><b>Train Model:</b> Go to Train tab. Load train.csv and val.csv, set hyperparameters, and click "Start Training".</li>
+                            <li><b>Monitor:</b> Watch the training visualization to check for overfitting (if val loss > train loss, consider more regularization).</li>
+                            <li><b>Export Model:</b> After training, click "Export Model" and select best.pt to save as TorchScript (.pt).</li>
+                            <li><b>Deploy:</b> In Settings, set the model path to your .pt file. Future detections will use this model.</li>
+                        </ol>
 
-                        <h3>4) Train</h3>
-                        <ul>
-                            <li><b>Train manifest (CSV)</b>: Path to train.csv from CSV convert.</li>
-                            <li><b>Val manifest (CSV)</b>: Path to val.csv from CSV convert.</li>
-                            <li><b>Epochs</b>: Full passes over the training set (typical: 15–50).</li>
-                            <li><b>Batch size</b>: Segments per step (typical: 32–128). Larger batches train faster but may overfit.</li>
-                            <li><b>Learning rate</b>: Optimizer step size (typical: 1e-3). Lower (5e-4) for stability; higher (5e-3) for speed.</li>
-                            <li><b>Weight decay</b>: L2 regularization strength (typical: 1e-4). Increase to 1e-3 or 1e-2 to reduce overfitting.</li>
-                            <li><b>Output dir</b>: Folder for checkpoints; saves best.pt when validation loss improves.</li>
-                            <li><b>Show training visualization GUI</b>: Opens a real-time window with loss curves and metrics during training.</li>
-                            <li><b>Start Training</b>: Launches training and streams logs here.</li>
-                            <li><b>Export Model</b>: Select best.pt → export TorchScript (always) and ONNX (optional). TorchScript (.pt) is used for DL detection.</li>
-                        </ul>
-
-                        <h3>Deep Learning Detection</h3>
-                        <ul>
-                            <li>After export, set model path (TorchScript .pt) in Settings.</li>
-                            <li>In Automatic Detection, choose Deep Learning → Find EOIs to classify segments.</li>
-                            <li>If ONNX is not installed, export still succeeds with TorchScript.</li>
-                        </ul>
+                        <h3 id="parameters">⚙️ Detection Parameters & Literature Defaults</h3>
+                        <p>Default parameters align with epilepsy literature standards for robust HFO detection:</p>
+                        <table border="1" cellpadding="8" style="margin: 10px 0;">
+                            <tr style="background-color: #e0e0e0;">
+                                <th>Method</th>
+                                <th>Parameter</th>
+                                <th>Default</th>
+                                <th>Justification</th>
+                            </tr>
+                            <tr>
+                                <td rowspan="4"><b>Hilbert</b></td>
+                                <td>Threshold (SD)</td>
+                                <td>3.5</td>
+                                <td>Detects 3.5σ above baseline envelope; balances sensitivity & specificity</td>
+                            </tr>
+                            <tr>
+                                <td>Cycles (Ripple)</td>
+                                <td>4</td>
+                                <td>≥4 cycles @ 80–250 Hz confirms oscillatory content</td>
+                            </tr>
+                            <tr>
+                                <td>Min Duration</td>
+                                <td>10 ms</td>
+                                <td>Shortest physiological HFO (~1 cycle @ 100 Hz)</td>
+                            </tr>
+                            <tr>
+                                <td>Merge Window</td>
+                                <td>25 ms</td>
+                                <td>Post-detection merging to avoid over-fragmentation</td>
+                            </tr>
+                            <tr>
+                                <td><b>STE</b></td>
+                                <td>Threshold (RMS)</td>
+                                <td>2.5</td>
+                                <td>2.5× baseline RMS energy; robust to amplitude variations</td>
+                            </tr>
+                            <tr>
+                                <td><b>MNI</b></td>
+                                <td>Threshold (Percentile)</td>
+                                <td>98th</td>
+                                <td>Top 2% of energy distribution; reduces false detections</td>
+                            </tr>
+                            <tr>
+                                <td rowspan="2"><b>Region Presets</b></td>
+                                <td>Ripple Duration Range</td>
+                                <td>10–150 ms</td>
+                                <td>Ripple-specific temporal range; filters out faster oscillations</td>
+                            </tr>
+                            <tr>
+                                <td>Fast Ripple Duration Range</td>
+                                <td>10–50 ms</td>
+                                <td>Shorter, faster oscillations typical of pathological activity</td>
+                            </tr>
+                        </table>
                         """
                 )
         help_layout.addWidget(self.help_text)
         help_tab.setLayout(help_layout)
 
-        tabs.addTab(score_tab, 'Score')
         tabs.addTab(eoi_tab, 'Automatic Detection')
+        tabs.addTab(score_tab, 'Score')
         tabs.addTab(convert_tab, 'CSV convert')
         tabs.addTab(train_tab, 'Train')
         tabs.addTab(help_tab, 'How to Score')
@@ -1054,6 +1246,7 @@ class ScoreWindow(QtWidgets.QWidget):
         self._update_ste_params_from_profile(profile)
         self._update_mni_params_from_profile(profile)
         self._update_consensus_params_from_profile(profile)
+        self._update_score_labels_from_profile(profile)  # Re-label existing scores
         QtWidgets.QMessageBox.information(
             self,
             "Region Preset Applied",
@@ -1138,6 +1331,71 @@ class ScoreWindow(QtWidgets.QWidget):
             }
             with open(settings_file, 'w') as f:
                 json.dump(params, f)
+        except Exception:
+            pass
+
+    def _update_score_labels_from_profile(self, profile):
+        """Re-evaluate Score labels and behavioral state for all existing Score items based on new duration and speed thresholds."""
+        try:
+            durations = profile.get('durations', {})
+            r_min = durations.get('ripple_min_ms', 10)
+            r_max = durations.get('ripple_max_ms', 150)
+            fr_min = durations.get('fast_ripple_min_ms', 10)
+            fr_max = durations.get('fast_ripple_max_ms', 50)
+            
+            # Get speed thresholds for behavioral gating
+            speed_min = profile.get('speed_threshold_min_cm_s', 0.0)
+            speed_max = profile.get('speed_threshold_max_cm_s', 5.0)
+            
+            score_col = self.score_headers.get('Score:', 1)
+            duration_col = self.score_headers.get('Duration(ms):', 4)
+            behavior_col = self.score_headers.get('Behavioral State:', 5)
+            start_col = self.score_headers.get('Start Time(ms):', 2)
+            stop_col = self.score_headers.get('Stop Time(ms):', 3)
+            
+            # Get speed signal for behavioral state re-computation
+            speed_signal = self._get_speed_signal()
+            
+            # Iterate through all Score items and re-label based on duration and behavior
+            for i in range(self.scores.topLevelItemCount()):
+                item = self.scores.topLevelItem(i)
+                if item:
+                    try:
+                        # Update Score label based on duration
+                        duration_text = item.text(duration_col)
+                        if duration_text:
+                            duration = float(duration_text)
+                            # Classify based on duration thresholds
+                            if r_min <= duration <= r_max:
+                                new_label = 'Ripple'
+                            elif fr_min <= duration <= fr_max:
+                                new_label = 'Fast Ripple'
+                            else:
+                                new_label = 'None'  # ambiguous
+                            
+                            item.setText(score_col, new_label)
+                        
+                        # Re-compute behavioral state only if currently "unknown" or empty
+                        current_behavior = item.text(behavior_col) if behavior_col is not None else 'unknown'
+                        if (current_behavior.lower() == 'unknown' or current_behavior.strip() == '') and speed_signal is not None:
+                            try:
+                                speed_trace, fs_speed = speed_signal
+                                s_ms = float(item.text(start_col))
+                                e_ms = float(item.text(stop_col))
+                                
+                                s_idx = int(max(0, np.floor(s_ms / 1000 * fs_speed)))
+                                e_idx = int(min(len(speed_trace), np.ceil(e_ms / 1000 * fs_speed)))
+                                
+                                if e_idx > s_idx:
+                                    seg_speed = speed_trace[s_idx:e_idx]
+                                    if seg_speed.size > 0:
+                                        mean_speed = float(np.nanmean(seg_speed))
+                                        new_behavior = 'rest' if (speed_min <= mean_speed <= speed_max) else 'active'
+                                        item.setText(behavior_col, new_behavior)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
         except Exception:
             pass
 
@@ -1327,7 +1585,7 @@ class ScoreWindow(QtWidgets.QWidget):
         # Auto-fill Scorer field if empty
         scorer_name = self.scorer.text().strip()
         if scorer_name == '':
-            scorer_name = 'Scorer 1'
+            scorer_name = 'Auto'
             self.scorer.setText(scorer_name)
 
         # new_item = QtWidgets.QTreeWidgetItem()
@@ -1353,6 +1611,8 @@ class ScoreWindow(QtWidgets.QWidget):
                         new_item.setText(value, "")
                 except Exception:
                     new_item.setText(value, "")
+            elif 'Behavioral State' in key:
+                new_item.setText(value, 'unknown')
             elif 'Settings File' in key:
                 # there is no settings file involved in manual detection
                 new_item.setText(value, 'N/A')
@@ -1548,6 +1808,15 @@ class ScoreWindow(QtWidgets.QWidget):
         duration_exists = any('Duration' in column for column in df.columns)
         brain_region_exists = any('Brain Region' in column for column in df.columns)
 
+        id_value = None
+        scorer_value = None
+        brain_region_value = None
+        settings_value = None
+        start_value = None
+        stop_value = None
+        duration_value = None
+        score_value = None
+
         for key, value in self.score_headers.items():
             if 'ID' in key:
                 id_value = value
@@ -1577,18 +1846,18 @@ class ScoreWindow(QtWidgets.QWidget):
             # item = QtWidgets.QTreeWidgetItem()
             item = TreeWidgetItem()
 
-            if not ids_exist:
+            if not ids_exist and id_value is not None:
                 ID = self.createID('Unknown')
                 self.IDs.append(ID)
                 item.setText(id_value, ID)
 
-            if not scorer_exists:
-                item.setText(scorer_value, 'Scorer 1')
+            if not scorer_exists and scorer_value is not None:
+                item.setText(scorer_value, 'Auto')
 
-            if not brain_region_exists:
+            if not brain_region_exists and brain_region_value is not None:
                 item.setText(brain_region_value, 'Unknown')
 
-            if not score_settings_file_exists:
+            if not score_settings_file_exists and settings_value is not None:
                 item.setText(settings_value, 'N/A')
 
             for column in df.columns:
@@ -1832,7 +2101,7 @@ class ScoreWindow(QtWidgets.QWidget):
         # Auto-fill Scorer field if empty
         scorer_name = self.scorer.text().strip()
         if scorer_name == '':
-            scorer_name = 'Scorer 1'
+            scorer_name = 'Auto'
             self.scorer.setText(scorer_name)
         
         # Default brain region comes from current preset selection
@@ -1963,7 +2232,7 @@ class ScoreWindow(QtWidgets.QWidget):
                 elif band == 'fast_ripple':
                     score_label = 'Fast Ripple'
                 elif band == 'ripple_fast_ripple':
-                    score_label = 'Sharp Wave Ripple'  # ambiguous → SWR
+                    score_label = 'None'  # ambiguous
             
             # Get brain region from metadata (preset) or use default
             brain_region = metadata.get('brain_region', default_brain_region) if metadata else default_brain_region
@@ -1993,6 +2262,8 @@ class ScoreWindow(QtWidgets.QWidget):
                             new_item.setText(score_value, "")
                     except Exception:
                         new_item.setText(score_value, "")
+                elif 'Behavioral State' in score_key:
+                    new_item.setText(score_value, behavioral_state)
                 elif 'Settings File' in score_key:
                     # Try to copy from original EOI item if available
                     if idx < len(selected_items):
@@ -2325,7 +2596,368 @@ class ScoreWindow(QtWidgets.QWidget):
             traceback.print_exc()
 
 
+    def exportHFOMetrics(self):
+        """Export HFO metrics CSV with pathology scores and behavioral breakdown."""
+        if not hasattr(self, 'source_filename') or not os.path.exists(self.source_filename):
+            QtWidgets.QMessageBox.warning(self, "No Source", "Please load a data file first.")
+            return
+
+        if self.scores.topLevelItemCount() == 0:
+            QtWidgets.QMessageBox.warning(self, "No Scores", "Please add scores first.")
+            return
+
+        out_dir = QtWidgets.QFileDialog.getExistingDirectory(self, "Select output directory for HFO metrics")
+        if not out_dir:
+            return
+
+        # Map score labels to event type
+        pos_labels = {'ripple', 'fast ripple', 'sharp wave ripple'}
+
+        try:
+            score_col = None
+            start_col = None
+            stop_col = None
+            scorer_col = None
+            brain_region_col = None
+            
+            for key, value in self.score_headers.items():
+                if 'Score:' in key:
+                    score_col = value
+                elif 'Start' in key:
+                    start_col = value
+                elif 'Stop' in key:
+                    stop_col = value
+                elif 'Scorer:' in key:
+                    scorer_col = value
+                elif 'Brain Region:' in key:
+                    brain_region_col = value
+
+            eois = []
+            band_labels = []
+            behavior_states = []
+            scorers = []
+            
+            for item_count in range(self.scores.topLevelItemCount()):
+                item = self.scores.topLevelItem(item_count)
+                try:
+                    lbl_txt = str(item.data(score_col, 0)).strip().lower()
+                    if lbl_txt not in pos_labels:
+                        continue  # skip non-HFO labels for metrics export
+                    s_ms = float(item.data(start_col, 0))
+                    e_ms = float(item.data(stop_col, 0))
+                    eois.append([s_ms, e_ms])
+                    band_labels.append(lbl_txt)
+                    
+                    # Extract behavioral state from item (stored as custom data)
+                    behavior_state = item.data(0, QtCore.Qt.UserRole) or 'unknown'
+                    behavior_states.append(behavior_state)
+                    
+                    try:
+                        scorer = str(item.data(scorer_col, 0)).strip()
+                        scorers.append(scorer if scorer else 'Unknown')
+                    except:
+                        scorers.append('Unknown')
+                except Exception:
+                    continue
+
+            if not eois:
+                QtWidgets.QMessageBox.warning(self, "No HFO Scores", "No Ripple/Fast Ripple/SWR events found to export.")
+                return
+
+            raw_data, Fs = self.settingsWindow.loaded_sources[self.source_filename]
+            raw_data = np.asarray(raw_data, dtype=np.float32)
+            recording_minutes = (len(raw_data) / float(Fs)) / 60.0 if Fs else 0
+
+            # Compute HFO metrics with co-occurrence detection
+            from core.hfo_classifier import HFO_Classifier
+            
+            durations_ms = [(stop - start) for start, stop in eois]
+            ripple_mask = [lbl in {'ripple', 'sharp wave ripple'} for lbl in band_labels]
+            fr_mask = [lbl == 'fast ripple' for lbl in band_labels]
+
+            ripple_list = []
+            fr_list = []
+            
+            for i, (start, stop, lbl) in enumerate(zip([e[0] for e in eois], [e[1] for e in eois], band_labels)):
+                if lbl in {'ripple', 'sharp wave ripple'}:
+                    ripple_list.append({'start_ms': start, 'end_ms': stop, 'peak_freq': 150})
+                elif lbl == 'fast ripple':
+                    fr_list.append({'start_ms': start, 'end_ms': stop, 'peak_freq': 350})
+            
+            classifier = HFO_Classifier(fs=Fs)
+            classified_events = classifier.classify_events(ripple_list, fr_list)
+            summary_stats = classifier.compute_summary(classified_events)
+            
+            ripple_durs = [d for d, m in zip(durations_ms, ripple_mask) if m]
+            fr_durs = [d for d, m in zip(durations_ms, fr_mask) if m]
+
+            ripple_count = len(ripple_durs)
+            fr_count = len(fr_durs)
+            total_count = len(eois)
+
+            ripple_rate = (ripple_count / recording_minutes) if recording_minutes else 0
+            fr_rate = (fr_count / recording_minutes) if recording_minutes else 0
+            fr_over_ripple = (fr_count / ripple_count) if ripple_count else 0
+
+            long_thresh = 100.0  # ms
+            long_ripple_count = len([d for d in ripple_durs if d > long_thresh])
+            long_ripple_pct = (long_ripple_count / ripple_count * 100.0) if ripple_count else 0
+
+            mean_ripple_dur = float(np.mean(ripple_durs)) if ripple_durs else 0
+            mean_fr_dur = float(np.mean(fr_durs)) if fr_durs else 0
+            
+            # Behavioral state breakdown
+            rest_mask = [st == 'rest' for st in behavior_states]
+            active_mask = [st == 'active' for st in behavior_states]
+            
+            rest_ripple_rate = (sum([m1 and m2 for m1, m2 in zip(rest_mask, ripple_mask)]) / recording_minutes) if recording_minutes else 0
+            active_ripple_rate = (sum([m1 and m2 for m1, m2 in zip(active_mask, ripple_mask)]) / recording_minutes) if recording_minutes else 0
+            rest_fr_rate = (sum([m1 and m2 for m1, m2 in zip(rest_mask, fr_mask)]) / recording_minutes) if recording_minutes else 0
+            active_fr_rate = (sum([m1 and m2 for m1, m2 in zip(active_mask, fr_mask)]) / recording_minutes) if recording_minutes else 0
+            
+            # Cooccurrence by state
+            cooccur_rest = sum([m1 and m2 for m1, m2 in zip(rest_mask, [e['is_cooccurrence'] for e in classified_events] if classified_events else [])])
+            cooccur_active = sum([m1 and m2 for m1, m2 in zip(active_mask, [e['is_cooccurrence'] for e in classified_events] if classified_events else [])])
+            rest_events = sum(rest_mask)
+            active_events = sum(active_mask)
+
+            summary_rows = [
+                ("total_hfo_events", total_count),
+                ("ripple_count", ripple_count),
+                ("fast_ripple_count", fr_count),
+                ("recording_duration_minutes", recording_minutes),
+                ("ripple_rate_per_min", ripple_rate),
+                ("fast_ripple_rate_per_min", fr_rate),
+                ("fr_to_ripple_ratio", fr_over_ripple),
+                ("long_duration_ripple_count_gt100ms", long_ripple_count),
+                ("long_duration_ripple_pct_gt100ms", long_ripple_pct),
+                ("mean_ripple_duration_ms", mean_ripple_dur),
+                ("mean_fast_ripple_duration_ms", mean_fr_dur),
+                ("ripple_fast_ripple_cooccurrence_count", summary_stats['ripple_fast_ripple_cooccurrence']),
+                ("cooccurrence_rate_pct", summary_stats['cooccurrence_rate'] * 100.0),
+                ("mean_pathology_score", summary_stats['mean_pathology_score']),
+                ("", ""),  # Blank separator
+                ("behavioral_state_breakdown", ""),
+                ("rest_events_count", rest_events),
+                ("active_events_count", active_events),
+                ("ripple_rate_rest_per_min", rest_ripple_rate),
+                ("ripple_rate_active_per_min", active_ripple_rate),
+                ("fast_ripple_rate_rest_per_min", rest_fr_rate),
+                ("fast_ripple_rate_active_per_min", active_fr_rate),
+                ("cooccurrence_rest_count", cooccur_rest),
+                ("cooccurrence_active_count", cooccur_active),
+                ("cooccurrence_rate_rest_pct", (cooccur_rest / rest_events * 100.0) if rest_events else 0),
+                ("cooccurrence_rate_active_pct", (cooccur_active / active_events * 100.0) if active_events else 0),
+            ]
+
+            metrics_path = os.path.join(out_dir, "hfo_metrics.csv")
+            with open(metrics_path, "w", newline="") as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(["metric", "value"])
+                writer.writerows(summary_rows)
+
+            QtWidgets.QMessageBox.information(
+                self, "Export Complete",
+                f"Exported HFO metrics for {total_count} events to:\n{metrics_path}"
+            )
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Export Error", f"Error exporting HFO metrics: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def exportForDLTraining(self):
+        """Export scored events (Score tab) to labeled segments and manifest for DL training."""
+        if not hasattr(self, 'source_filename') or not os.path.exists(self.source_filename):
+            QtWidgets.QMessageBox.warning(self, "No Source", "Please load a data file first.")
+            return
+
+        if self.scores.topLevelItemCount() == 0:
+            QtWidgets.QMessageBox.warning(self, "No Scores", "Please add scores first (e.g., Ripple vs Artifact).")
+            return
+
+        out_dir = QtWidgets.QFileDialog.getExistingDirectory(self, "Select output directory for DL training data")
+        if not out_dir:
+            return
+
+        # Map score labels to binary classes
+        pos_labels = {'ripple', 'fast ripple', 'sharp wave ripple'}
+        neg_labels = {'artifact'}
+
+        try:
+            score_col = None
+            start_col = None
+            stop_col = None
+            scorer_col = None
+            brain_region_col = None
+            
+            for key, value in self.score_headers.items():
+                if 'Score:' in key:
+                    score_col = value
+                elif 'Start' in key:
+                    start_col = value
+                elif 'Stop' in key:
+                    stop_col = value
+                elif 'Scorer:' in key:
+                    scorer_col = value
+                elif 'Brain Region:' in key:
+                    brain_region_col = value
+
+            eois = []
+            labels = []
+            band_labels = []  # keep raw label text for metrics (ripple vs fast ripple)
+            behavior_states = []  # track behavioral state for each event
+            metadata_rows = []
+            for item_count in range(self.scores.topLevelItemCount()):
+                item = self.scores.topLevelItem(item_count)
+                try:
+                    lbl_txt = str(item.data(score_col, 0)).strip().lower()
+                    if lbl_txt in pos_labels:
+                        lbl = 1
+                    elif lbl_txt in neg_labels:
+                        lbl = 0
+                    else:
+                        continue  # skip unlabeled/other
+                    s_ms = float(item.data(start_col, 0))
+                    e_ms = float(item.data(stop_col, 0))
+                    eois.append([s_ms, e_ms])
+                    labels.append(lbl)
+                    band_labels.append(lbl_txt)
+                    
+                    # Extract behavioral state from item (stored as custom data)
+                    behavior_state = item.data(0, QtCore.Qt.UserRole) or 'unknown'
+                    behavior_states.append(behavior_state)
+                    
+                    # Collect metadata (optional fields)
+                    metadata = {'behavioral_state': behavior_state}
+                    try:
+                        scorer = str(item.data(scorer_col, 0)).strip()
+                        if scorer and scorer != 'Unknown':
+                            metadata['scorer'] = scorer
+                    except:
+                        pass
+                    metadata_rows.append(metadata if metadata else None)
+                except Exception:
+                    continue
+
+            if not eois:
+                QtWidgets.QMessageBox.warning(self, "No Labeled Scores", "Only Ripple/Fast Ripple/SWR (label=1) or Artifact (label=0) are exported.")
+                return
+
+            raw_data, Fs = self.settingsWindow.loaded_sources[self.source_filename]
+            raw_data = np.asarray(raw_data, dtype=np.float32)
+
+            from core.eoi_exporter import export_labeled_eois_for_training
+            manifest_path = export_labeled_eois_for_training(raw_data, Fs, np.asarray(eois), labels, out_dir, metadata=metadata_rows)
+
+            # ----------------------------
+            # Lightweight metrics summary with co-occurrence detection & behavioral state breakdown
+            # ----------------------------
+            try:
+                from core.hfo_classifier import HFO_Classifier
+                
+                recording_minutes = (len(raw_data) / float(Fs)) / 60.0 if Fs else 0
+                durations_ms = [(stop - start) for start, stop in eois]
+                ripple_mask = [lbl in {'ripple', 'sharp wave ripple'} for lbl in band_labels]
+                fr_mask = [lbl == 'fast ripple' for lbl in band_labels]
+
+                ripple_list = []
+                fr_list = []
+                
+                # Build event lists for classifier
+                for i, (start, stop, lbl) in enumerate(zip([e[0] for e in eois], [e[1] for e in eois], band_labels)):
+                    if lbl in {'ripple', 'sharp wave ripple'}:
+                        ripple_list.append({'start_ms': start, 'end_ms': stop, 'peak_freq': 150})  # placeholder freq
+                    elif lbl == 'fast ripple':
+                        fr_list.append({'start_ms': start, 'end_ms': stop, 'peak_freq': 350})  # placeholder freq
+                
+                # Classify events including co-occurrences
+                classifier = HFO_Classifier(fs=Fs)
+                classified_events = classifier.classify_events(ripple_list, fr_list)
+                summary_stats = classifier.compute_summary(classified_events)
+                
+                ripple_durs = [d for d, m in zip(durations_ms, ripple_mask) if m]
+                fr_durs = [d for d, m in zip(durations_ms, fr_mask) if m]
+
+                ripple_count = len(ripple_durs)
+                fr_count = len(fr_durs)
+                total_count = len(eois)
+
+                ripple_rate = (ripple_count / recording_minutes) if recording_minutes else 0
+                fr_rate = (fr_count / recording_minutes) if recording_minutes else 0
+                fr_over_ripple = (fr_count / ripple_count) if ripple_count else 0
+
+                long_thresh = 100.0  # ms
+                long_ripple_count = len([d for d in ripple_durs if d > long_thresh])
+                long_ripple_pct = (long_ripple_count / ripple_count * 100.0) if ripple_count else 0
+
+                mean_ripple_dur = float(np.mean(ripple_durs)) if ripple_durs else 0
+                mean_fr_dur = float(np.mean(fr_durs)) if fr_durs else 0
+                
+                # Behavioral state breakdown
+                rest_mask = [st == 'rest' for st in behavior_states]
+                active_mask = [st == 'active' for st in behavior_states]
+                
+                rest_ripple_rate = (sum([m1 and m2 for m1, m2 in zip(rest_mask, ripple_mask)]) / recording_minutes) if recording_minutes else 0
+                active_ripple_rate = (sum([m1 and m2 for m1, m2 in zip(active_mask, ripple_mask)]) / recording_minutes) if recording_minutes else 0
+                rest_fr_rate = (sum([m1 and m2 for m1, m2 in zip(rest_mask, fr_mask)]) / recording_minutes) if recording_minutes else 0
+                active_fr_rate = (sum([m1 and m2 for m1, m2 in zip(active_mask, fr_mask)]) / recording_minutes) if recording_minutes else 0
+                
+                # Cooccurrence by state
+                cooccur_rest = sum([m1 and m2 for m1, m2 in zip(rest_mask, [e['is_cooccurrence'] for e in classified_events] if classified_events else [])])
+                cooccur_active = sum([m1 and m2 for m1, m2 in zip(active_mask, [e['is_cooccurrence'] for e in classified_events] if classified_events else [])])
+                rest_events = sum(rest_mask)
+                active_events = sum(active_mask)
+
+                summary_rows = [
+                    ("total_events", total_count),
+                    ("ripple_count", ripple_count),
+                    ("fast_ripple_count", fr_count),
+                    ("ripple_rate_per_min", ripple_rate),
+                    ("fast_ripple_rate_per_min", fr_rate),
+                    ("fr_to_ripple_ratio", fr_over_ripple),
+                    ("long_duration_ripple_count_gt100ms", long_ripple_count),
+                    ("long_duration_ripple_pct_gt100ms", long_ripple_pct),
+                    ("mean_ripple_duration_ms", mean_ripple_dur),
+                    ("mean_fast_ripple_duration_ms", mean_fr_dur),
+                    ("ripple_fast_ripple_cooccurrence_count", summary_stats['ripple_fast_ripple_cooccurrence']),
+                    ("cooccurrence_rate_pct", summary_stats['cooccurrence_rate'] * 100.0),
+                    ("mean_pathology_score", summary_stats['mean_pathology_score']),
+                    ("", ""),  # Blank separator
+                    ("behavioral_state_breakdown", ""),
+                    ("rest_events_count", rest_events),
+                    ("active_events_count", active_events),
+                    ("ripple_rate_rest_per_min", rest_ripple_rate),
+                    ("ripple_rate_active_per_min", active_ripple_rate),
+                    ("fast_ripple_rate_rest_per_min", rest_fr_rate),
+                    ("fast_ripple_rate_active_per_min", active_fr_rate),
+                    ("cooccurrence_rest_count", cooccur_rest),
+                    ("cooccurrence_active_count", cooccur_active),
+                    ("cooccurrence_rate_rest_pct", (cooccur_rest / rest_events * 100.0) if rest_events else 0),
+                    ("cooccurrence_rate_active_pct", (cooccur_active / active_events * 100.0) if active_events else 0),
+                ]
+
+                summary_path = os.path.join(out_dir, "hfo_metrics_summary.csv")
+                with open(summary_path, "w", newline="") as csvfile:
+                    writer = csv.writer(csvfile)
+                    writer.writerow(["metric", "value"])
+                    writer.writerows(summary_rows)
+            except Exception as metric_err:
+                print(f"Warning: could not write metrics summary: {metric_err}")
+                import traceback
+                traceback.print_exc()
+
+            QtWidgets.QMessageBox.information(
+                self, "Export Complete",
+                f"Exported {len(eois)} labeled segments to:\n{out_dir}\n\nManifest: {manifest_path}\nMetrics: hfo_metrics_summary.csv"
+            )
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Export Error", f"Error exporting labeled scores: {e}")
+            import traceback
+            traceback.print_exc()
+
     def exportScoresForTraining(self):
+        """Deprecated: Use exportForDLTraining() instead. Kept for backward compatibility."""
+        self.exportForDLTraining()
         """Export scored events (Score tab) to labeled segments and manifest for DL training."""
         if not hasattr(self, 'source_filename') or not os.path.exists(self.source_filename):
             QtWidgets.QMessageBox.warning(self, "No Source", "Please load a data file first.")

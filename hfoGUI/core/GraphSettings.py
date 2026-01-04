@@ -555,6 +555,15 @@ class GraphSettingsWindows(QtWidgets.QWidget):
             if hasattr(self.mainWindow, 'graph_max'):
                 self.mainWindow.Graph_axis.setYRange(0, self.mainWindow.graph_max, padding=0)
 
+        elif source == 'AddText':
+            # x is the text item, y is the y-position
+            text_item = x
+            y_pos = y
+            # Position text at a fixed x position (e.g., current window start + small offset)
+            x_pos = self.mainWindow.current_time / 1000 + 0.1  # 100ms from left edge
+            text_item.setPos(x_pos, y_pos)
+            self.mainWindow.Graph_axis.addItem(text_item)
+            
         elif source == 'MarkPeaks':
             vlines = custom_vlines(x/1000, y[0], y[1], **kwargs)
             self.mainWindow.Graph_axis.addItem(vlines)
@@ -882,6 +891,8 @@ class GraphSettingsWindows(QtWidgets.QWidget):
 
         self.mark_source = []
         self.source_values = []
+        self.source_names = []  # Track source names for y-axis labels
+        self.source_cutoffs = []  # Track filter cutoffs for .egf/.eeg labels
         self.hilbert_sources = []
         self.gain_sources = []
 
@@ -913,6 +924,12 @@ class GraphSettingsWindows(QtWidgets.QWidget):
             for option, option_index in option_tree_locations.items():
                 if 'Source' in option:
                     graph_source = graph_item.data(option_index, 0)
+                    
+                    # Store source name for y-axis labeling
+                    if 'Speed' in graph_source:
+                        self.source_names.append('Speed')
+                    else:
+                        self.source_names.append(graph_source)
 
                     if 'Speed' not in graph_source:
                         source_filename = os.path.join(session_path, '%s%s' % (session, graph_source))
@@ -978,6 +995,16 @@ class GraphSettingsWindows(QtWidgets.QWidget):
 
                     if gain != 'N/A':
                         self.gain_sources.append(float(gain))
+
+            # Store cutoff values for .egf/.eeg sources
+            if graph_source and ('.egf' in graph_source.lower() or '.eeg' in graph_source.lower()):
+                try:
+                    cutoff_label = f"{float(lower_cutoff):.0f}-{float(upper_cutoff):.0f}"
+                except (ValueError, TypeError):
+                    cutoff_label = None
+                self.source_cutoffs.append(cutoff_label)
+            else:
+                self.source_cutoffs.append(None)
 
             if not os.path.exists(source_filename):
                 self.mainWindow.choice = ''
@@ -1279,12 +1306,17 @@ class GraphSettingsWindows(QtWidgets.QWidget):
 
         # plotting the data
         self.source_lengths = []
+        source_positions = []  # Track (source_name, center_y_position) for y-axis labels
+        
         for i, source in enumerate(self.source_values):
             data = np.multiply(source[0], self.gain_sources[i])
             self.source_lengths.append(len(data))
             Fs = source[1]
             data_times = 1000 * np.linspace(0, len(data) / Fs, num=len(data), endpoint=False)
             shift_amount = - np.nanmin(data) + previous_source_max  # calculating shift
+            
+            # Track the minimum position before plotting
+            source_min = shift_amount
 
             envelope = None
             if self.hilbert_sources[i]:
@@ -1301,11 +1333,28 @@ class GraphSettingsWindows(QtWidgets.QWidget):
                 if np.amax(envelope) > previous_source_max:
                     previous_source_max = np.amax(envelope)
 
+            # Calculate center position for this source trace and get source name
+            source_center = (source_min + previous_source_max) / 2
+            # Get source name from tracked list, or use cutoff label if available
+            source_name = self.source_names[i] if i < len(self.source_names) else f"Ch{i+1}"
+            cutoff_label = self.source_cutoffs[i] if i < len(self.source_cutoffs) else None
+            
+            # For .egf/.eeg, use cutoff label; otherwise use source name
+            display_label = cutoff_label if cutoff_label else source_name
+            source_positions.append((source_center, display_label))
+
             self.mainWindow.graph_max = previous_source_max
             self.newData.mysignal.emit('Main', data_times, data.flatten(), {'pen': (0, 0, 255)})
 
             self.progress_value += 25 / len(self.source_values)
             self.progress_signal.mysignal.emit('setValue', {'value': self.progress_value})
+
+        # Add text labels directly on the plot for each source
+        if source_positions:
+            for pos, name in source_positions:
+                # Add text label at the right side of the plot
+                text_item = pg.TextItem(text=name, anchor=(0, 0.5), color=(255, 255, 255), fill=(0, 0, 0, 150))
+                self.newData.mysignal.emit('AddText', text_item, pos, {})
 
         # self.mainWindow.graph_max = previous_source_max
 
@@ -1660,6 +1709,43 @@ class GraphSettingsWindows(QtWidgets.QWidget):
             # Re-plot synchronously to keep the view updated
             try:
                 self.Plot()
+            except Exception:
+                pass
+            
+            # Auto-add .pos file (Speed) if available and not already in profile
+            try:
+                session_path, set_filename = os.path.split(self.mainWindow.current_set_filename)
+                session = os.path.splitext(set_filename)[0]
+                pos_path = os.path.join(session_path, f"{session}.pos")
+                
+                if os.path.exists(pos_path):
+                    # Check if Speed source already exists in loaded sources
+                    speed_exists = False
+                    for i in range(self.graphs.topLevelItemCount()):
+                        item = self.graphs.topLevelItem(i)
+                        if item:
+                            for option, position in self.graph_header_option_positions.items():
+                                if 'source' in option.lower():
+                                    src_col = position[1]
+                                    break
+                            source_text = item.text(src_col) if src_col is not None else ''
+                            if 'Speed' in source_text:
+                                speed_exists = True
+                                break
+                    
+                    # Add Speed if not already present
+                    if not speed_exists:
+                        # Find source combobox
+                        for option, position in self.graph_header_option_positions.items():
+                            if 'source' in option.lower():
+                                source_combo = self.graph_header_option_fields[position[0], position[1] + 1]
+                                # Set to Speed
+                                for idx in range(source_combo.count()):
+                                    if 'speed' == source_combo.itemText(idx).lower():
+                                        source_combo.setCurrentIndex(idx)
+                                        self.validateSource('add')
+                                        break
+                                break
             except Exception:
                 pass
 

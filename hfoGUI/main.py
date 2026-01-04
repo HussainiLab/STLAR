@@ -1381,6 +1381,16 @@ def ImportSet(main_window, graph_options_window, score_window, tf_plots_window, 
                 except Exception:
                     pass
                 break
+    else:
+        # Even if profile was found, auto-add .pos file (Speed) if available
+        for i in range(graph_combobox.count()):
+            if 'speed' == graph_combobox.itemText(i).lower():
+                graph_combobox.setCurrentIndex(i)
+                try:
+                    graph_options_window.validateSource('add')
+                except Exception:
+                    pass
+                break
 
     # replace the score with a new proper score file
     score_filename = os.path.join(set_directory, 'HFOScores', set_basename, '%s_HFOScores.txt' % set_basename)
