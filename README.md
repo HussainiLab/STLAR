@@ -585,8 +585,8 @@ python -m stlar hilbert-batch \
 | `--min-duration-ms` | float | 10.0 | Minimum event duration (ms) |
 | `--min-freq` | float | 80 | Minimum bandpass frequency (Hz) |
 | `--max-freq` | float | 125 (EEG) / 500 (EGF) | Maximum bandpass frequency (Hz) |
-| `--required-peaks` | int | 6 | Minimum peaks in rectified signal |
-| `--required-peak-threshold-sd` | float | 2.0 | Peak threshold SD above mean |
+| `--required-peaks` | int | 4 | Minimum peaks in rectified signal |
+| `--required-peak-threshold-sd` | float | 5.0 | Peak threshold SD above mean |
 | `--no-required-peak-threshold` | flag | off | Disable peak-threshold check |
 | `--boundary-percent` | float | 30.0 | Percent of threshold to find boundaries |
 | `--skip-bits2uv` | flag | off | Skip bits-to-uV conversion if .set missing |
@@ -732,7 +732,7 @@ python -m stlar consensus-batch \
 | `-s, --set-file` | str | auto-detect | .set file or directory |
 | `-o, --output` | str | HFOScores/ | Output directory |
 | `--voting-strategy` | str | majority | `strict` (3/3), `majority` (2/3), or `any` (1/3) |
-| `--overlap-threshold-ms` | float | 10.0 | Time window (ms) for overlapping detections |
+| `--overlap-threshold-ms` | float | 25.0 | Time window (ms) for overlapping detections |
 | `--epoch-sec` | float | 300 | Hilbert epoch length (seconds) |
 | `--hilbert-threshold-sd` | float | 3.5 | Hilbert envelope threshold (SD) |
 | `--ste-threshold` | float | 2.5 | STE/RMS threshold |
@@ -740,8 +740,8 @@ python -m stlar consensus-batch \
 | `--min-duration-ms` | float | 10.0 | Minimum event duration (ms) |
 | `--min-freq` | float | 80 | Minimum frequency (Hz) |
 | `--max-freq` | float | 125 (EEG) / 500 (EGF) | Maximum frequency (Hz) |
-| `--required-peaks` | int | 6 | Hilbert minimum peaks |
-| `--required-peak-sd` | float | 2.0 | Hilbert peak threshold (SD) |
+| `--required-peaks` | int | 4 | All detectors minimum peaks |
+| `--required-peak-sd` | float | 5.0 | All detectors peak threshold (SD) |
 | `--skip-bits2uv` | flag | off | Skip scaling conversion |
 | `-v, --verbose` | flag | off | Verbose logging |
 
@@ -2068,21 +2068,30 @@ Include:
 
 #### CLI Updates
 - ✅ **25ms event merging:** All detection methods (Hilbert, STE, MNI, Consensus, DL) apply post-detection 25ms merge window to reduce over-fragmentation
+- ✅ **Peak validation for all detectors:** STE, MNI, and Consensus now validate minimum 4 peaks at 5 SD threshold (previously only Hilbert)
+- ✅ **Updated default parameters:** Changed from 6 peaks at 2 SD → 4 peaks at 5 SD for more stringent HFO validation
+- ✅ **Consensus merge window:** Increased from 10ms to 25ms for better event consolidation
 - ✅ **Behavioral state computation in exports:** Behavioral state computed and stored in manifest for all exported segments
 - ✅ **Region preset support:** CLI respects region-specific duration and behavior thresholds when exporting
 
 ### 📊 Parameter Standardization
 
-All detection parameters standardized to epilepsy literature best practices:
+All detection parameters standardized to epilepsy literature best practices with **universal peak validation**:
 
 | Detector | Parameter | Value | Justification |
 |----------|-----------|-------|---------------|
 | **Hilbert** | Threshold (SD) | 3.5 | 3.5σ above baseline; literature standard |
-| | Cycles | 4 | ≥4 cycles @ 80-250 Hz confirms oscillatory content |
+| | Required Peaks | 4 | Minimum 4 peaks @ 5σ confirms oscillatory content |
+| | Peak Threshold (SD) | 5.0 | 5σ above baseline; stringent validation |
 | | Min Duration | 10 ms | Shortest physiological HFO duration |
 | | Merge Window | 25 ms | Post-detection merging for robustness |
 | **STE** | Threshold (RMS) | 2.5 | 2.5× baseline RMS energy |
+| | Required Peaks | 4 | Peak validation (same as Hilbert) |
+| | Peak Threshold (SD) | 5.0 | Validates genuine oscillations |
 | **MNI** | Threshold (Percentile) | 98% | Top 2% of energy distribution |
+| | Required Peaks | 4 | Peak validation (same as Hilbert) |
+| | Peak Threshold (SD) | 5.0 | Validates genuine oscillations |
+| **Consensus** | Overlap Window | 25 ms | Merge window for voting |
 | **Region Presets** | Ripple Duration | 10-150 ms | Ripple-specific range |
 | | Fast Ripple Duration | 10-50 ms | Faster, pathological oscillations |
 
