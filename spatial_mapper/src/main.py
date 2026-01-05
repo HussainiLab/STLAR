@@ -439,11 +439,11 @@ class BinnedAnalysisWindow(QDialog):
         
         # Buttons
         control_layout.addSpacing(20)
-        save_pngs_btn = QPushButton("Export All JPGs", self)
+        save_pngs_btn = QPushButton("Export Plots", self)
         save_pngs_btn.clicked.connect(self.exportAllPngs)
         control_layout.addWidget(save_pngs_btn)
         
-        export_data_btn = QPushButton("Export Data (Excel)", self)
+        export_data_btn = QPushButton("Export Data", self)
         export_data_btn.clicked.connect(self.exportData)
         control_layout.addWidget(export_data_btn)
         
@@ -1277,7 +1277,15 @@ class frequencyPlotWindow(QWidget):
         # Setting main window geometry
         self.center()
         self.mainUI()
-        self.showMaximized()
+        
+        # Open at 70% of screen resolution instead of fullscreen
+        screen = QApplication.primaryScreen().geometry()
+        width = int(screen.width() * 0.7)
+        height = int(screen.height() * 0.7)
+        x = (screen.width() - width) // 2
+        y = (screen.height() - height) // 2
+        self.setGeometry(x, y, width, height)
+        
         self.setWindowFlag(Qt.WindowCloseButtonHint, False) # Grey out 'X' button to prevent improper PyQt termination
         
     # ------------------------------------------- # 
@@ -1379,6 +1387,8 @@ class frequencyPlotWindow(QWidget):
         self.scene.addItem(self.imageMapper)
         self.view.centerOn(self.imageMapper)
         self.view.scale(3,3)
+        # Set maximum size for frequency map view to match tracking canvas size
+        self.view.setMaximumSize(600, 600)  # Similar to tracking canvas (6 inches * 100 dpi)
         
         
         # Instantiating widget properties 

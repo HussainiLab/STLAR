@@ -188,7 +188,8 @@ def compute_freq_map(self, freq_range: str, pos_x: np.ndarray, pos_y: np.ndarray
     scaling_factor_perBand = kwargs.get('scaling_factor_perBand', None)
     
     # Set kernel and std block sizes to about 20% of the map sizes in preparation for convolutional smoothing.
-    map_res = 200
+    # Reduced to 100 pixels for smaller display size (was 200)
+    map_res = 100
     kernlen = int(map_res * 0.2)
     std = int(kernlen * 0.2)
 
