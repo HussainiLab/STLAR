@@ -1265,8 +1265,8 @@ class ScoreWindow(QtWidgets.QWidget):
                 'Minimum Time(ms):': str(durations.get('ripple_min_ms', 10)),
                 'Min Frequency(Hz):': str(bands.get('ripple', [80, 250])[0]),
                 'Max Frequency(Hz):': str(bands.get('ripple', [80, 250])[1]),
-                'Required Peaks:': '6',
-                'Required Peak Threshold(SD):': '2',
+                'Required Peaks:': '4',
+                'Required Peak Threshold(SD):': '5',
                 'Boundary Threshold(Percent)': '30',
             }
             with open(settings_file, 'w') as f:
@@ -1317,7 +1317,7 @@ class ScoreWindow(QtWidgets.QWidget):
                 'hilbert_min_duration': profile.get('durations', {}).get('ripple_min_ms', 10),
                 'hilbert_min_freq': bands.get('ripple', [80, 250])[0],
                 'hilbert_max_freq': bands.get('fast_ripple', [250, 500])[1],
-                'hilbert_required_peaks': 6,
+                'hilbert_required_peaks': 4,
                 'hilbert_peak_sd': 2.0,
                 'ste_threshold': 2.5,
                 'ste_window_size': 0.01,
