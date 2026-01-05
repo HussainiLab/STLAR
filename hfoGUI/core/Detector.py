@@ -311,6 +311,60 @@ def _convert_pyhfo_results_to_eois(hfos, Fs):
     return np.asarray([])
 
 
+def _validate_peaks(data, fs, events_ms, required_peaks=4, peak_threshold_sd=5.0):
+    """
+    Validate that events contain minimum required peaks above threshold.
+    
+    Args:
+        data: raw signal array
+        fs: sampling frequency
+        events_ms: Nx2 array of [start_ms, end_ms]
+        required_peaks: minimum number of peaks required (default 4)
+        peak_threshold_sd: SD threshold for peaks (default 5.0)
+    
+    Returns:
+        Filtered Nx2 array with only events that pass peak validation
+    """
+    from scipy.signal import find_peaks
+    
+    if len(events_ms) == 0:
+        return np.asarray([])
+    
+    # Rectify signal (absolute value)
+    rectified = np.abs(data)
+    
+    # Compute baseline for peak threshold
+    baseline_mean = np.mean(rectified)
+    baseline_std = np.std(rectified)
+    peak_threshold = baseline_mean + peak_threshold_sd * baseline_std
+    
+    valid_events = []
+    for start_ms, end_ms in events_ms:
+        # Extract event segment
+        start_idx = int(start_ms * fs / 1000.0)
+        end_idx = int(end_ms * fs / 1000.0)
+        if end_idx > len(rectified):
+            end_idx = len(rectified)
+        if start_idx >= end_idx:
+            continue
+            
+        event_segment = rectified[start_idx:end_idx]
+        
+        # Find peaks in segment
+        peaks, _ = find_peaks(event_segment)
+        
+        # Count peaks above threshold
+        peaks_above_threshold = np.sum(event_segment[peaks] >= peak_threshold)
+        
+        # Keep event if it has enough peaks
+        if peaks_above_threshold >= required_peaks:
+            valid_events.append([start_ms, end_ms])
+    
+    if not valid_events:
+        return np.asarray([])
+    return np.asarray(valid_events, dtype=float)
+
+
 def _local_ste_rms_detect(data, fs, threshold=3.0, window_size=0.01, overlap=0.5, min_freq=80.0, max_freq=500.0):
     """
     Local STE/RMS detector using scipy signal processing.
@@ -392,7 +446,8 @@ def _local_ste_rms_detect(data, fs, threshold=3.0, window_size=0.01, overlap=0.5
     return np.asarray(events, dtype=float)
 
 
-def ste_detect_events(data, fs, threshold=3.0, window_size=0.01, overlap=0.5, min_freq=80.0, max_freq=500.0, **kwargs):
+def ste_detect_events(data, fs, threshold=3.0, window_size=0.01, overlap=0.5, min_freq=80.0, max_freq=500.0, 
+                      required_peaks=4, peak_threshold_sd=5.0, **kwargs):
     """
     Run Short-Term Energy (RMS) detection using local implementation.
     
@@ -401,13 +456,21 @@ def ste_detect_events(data, fs, threshold=3.0, window_size=0.01, overlap=0.5, mi
     - Computes windowed RMS with given window size and overlap
     - Flags windows exceeding mean + threshold * std of RMS
     - Merges contiguous windows into events
+    - Validates minimum 4 peaks above 5 SD threshold
     
     Returns Nx2 [start_ms, end_ms] array.
     """
-    return _local_ste_rms_detect(data, fs, threshold, window_size, overlap, min_freq, max_freq)
+    events = _local_ste_rms_detect(data, fs, threshold, window_size, overlap, min_freq, max_freq)
+    
+    # Apply peak validation (minimum 4 peaks above 5 SD)
+    if len(events) > 0:
+        events = _validate_peaks(data, fs, events, required_peaks, peak_threshold_sd)
+    
+    return events
 
 
-def mni_detect_events(data, fs, baseline_window=10.0, threshold_percentile=99.0, min_freq=80.0, **kwargs):
+def mni_detect_events(data, fs, baseline_window=10.0, threshold_percentile=99.0, min_freq=80.0, 
+                      required_peaks=4, peak_threshold_sd=5.0, **kwargs):
     """
     Run MNI-style detection using local implementation.
     
@@ -416,10 +479,17 @@ def mni_detect_events(data, fs, baseline_window=10.0, threshold_percentile=99.0,
     - Computes windowed RMS (20 ms, 50% overlap)
     - Computes global RMS threshold at given percentile
     - Merges contiguous supra-threshold windows into events
+    - Validates minimum 4 peaks above 5 SD threshold
     
     Returns Nx2 [start_ms, end_ms] array.
     """
-    return _local_mni_detect(data, fs, baseline_window, threshold_percentile, min_freq, kwargs.get('max_freq'))
+    events = _local_mni_detect(data, fs, baseline_window, threshold_percentile, min_freq, kwargs.get('max_freq'))
+    
+    # Apply peak validation (minimum 4 peaks above 5 SD)
+    if len(events) > 0:
+        events = _validate_peaks(data, fs, events, required_peaks, peak_threshold_sd)
+    
+    return events
 
 
 def _local_mni_detect(data, fs, baseline_window=10.0, threshold_percentile=99.0, min_freq=80.0, max_freq=None):
@@ -833,7 +903,7 @@ def _vote_consensus(all_events_list, voting_strategy='majority', overlap_thresho
 
 def consensus_detect_events(data, fs, 
                            hilbert_params=None, ste_params=None, mni_params=None,
-                           voting_strategy='majority', overlap_threshold_ms=10.0, **kwargs):
+                           voting_strategy='majority', overlap_threshold_ms=25.0, **kwargs):
     """
     Run Hilbert, STE, and MNI detectors and return consensus events.
     
@@ -844,7 +914,7 @@ def consensus_detect_events(data, fs,
         ste_params: dict of ste_detect_events kwargs
         mni_params: dict of mni_detect_events kwargs
         voting_strategy: 'strict' (3/3), 'majority' (2/3), 'any' (1/3)
-        overlap_threshold_ms: events within this distance are merged (default 10 ms)
+        overlap_threshold_ms: events within this distance are merged (default 25 ms)
     
     Returns:
         Nx2 array of [start_ms, stop_ms] consensus events
@@ -852,7 +922,7 @@ def consensus_detect_events(data, fs,
     # Import locally to handle circular deps
     from .Score import hilbert_detect_events
     
-    # Default parameters (conservative/balanced)
+    # Default parameters (conservative/balanced) - 4 peaks @ 5 SD
     if hilbert_params is None:
         hilbert_params = {
             'epoch': 300.0,
@@ -860,8 +930,8 @@ def consensus_detect_events(data, fs,
             'min_duration': 10.0,
             'min_freq': 80.0,
             'max_freq': 500.0,
-            'required_peak_number': 6,
-            'required_peak_sd': 2.0,
+            'required_peak_number': 4,
+            'required_peak_sd': 5.0,
             'boundary_fraction': 0.3
         }
     
@@ -871,7 +941,9 @@ def consensus_detect_events(data, fs,
             'window_size': 0.01,
             'overlap': 0.5,
             'min_freq': 80.0,
-            'max_freq': 500.0
+            'max_freq': 500.0,
+            'required_peaks': 4,
+            'peak_threshold_sd': 5.0
         }
     
     if mni_params is None:
@@ -879,7 +951,9 @@ def consensus_detect_events(data, fs,
             'baseline_window': 10.0,
             'threshold_percentile': 98.0,
             'min_freq': 80.0,
-            'max_freq': 500.0
+            'max_freq': 500.0,
+            'required_peaks': 4,
+            'peak_threshold_sd': 5.0
         }
     
     # Run all three detectors

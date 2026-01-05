@@ -386,8 +386,8 @@ def build_parser() -> argparse.ArgumentParser:
     hilbert.add_argument('--max-freq', type=float, help='Maximum bandpass frequency (Hz). Default 125 Hz for EEG, 500 Hz for EGF')
     hilbert.add_argument('--required-peaks', type=int, default=4,
                          help='Minimum peak count inside rectified signal (default: 4)')
-    hilbert.add_argument('--required-peak-threshold-sd', type=float, default=2.0,
-                         help='Peak threshold in SD above mean (default: 2). Use --no-required-peak-threshold to disable')
+    hilbert.add_argument('--required-peak-threshold-sd', type=float, default=5.0,
+                         help='Peak threshold in SD above mean (default: 5). Use --no-required-peak-threshold to disable')
     hilbert.add_argument('--no-required-peak-threshold', action='store_true',
                          help='Disable the peak-threshold SD check')
     hilbert.add_argument('--boundary-percent', type=float, default=30.0,
@@ -434,10 +434,10 @@ def build_parser() -> argparse.ArgumentParser:
     consensus.add_argument('--min-freq', type=float, help='Minimum bandpass frequency (Hz). Default 80 Hz')
     consensus.add_argument('--max-freq', type=float, help='Maximum bandpass frequency (Hz). Default 125 Hz for EEG, 500 Hz for EGF')
     consensus.add_argument('--required-peaks', type=int, default=4, help='Hilbert minimum peak count (default: 4)')
-    consensus.add_argument('--required-peak-sd', type=float, default=2.0, help='Hilbert peak threshold in SD (default: 2.0)')
+    consensus.add_argument('--required-peak-sd', type=float, default=5.0, help='Hilbert peak threshold in SD (default: 5.0)')
     consensus.add_argument('--voting-strategy', choices=['strict', 'majority', 'any'], default='majority', 
                           help='Voting rule: strict=3/3, majority=2/3, any=1/3 (default: majority)')
-    consensus.add_argument('--overlap-threshold-ms', type=float, default=10.0, help='Overlap window in ms (default: 10)')
+    consensus.add_argument('--overlap-threshold-ms', type=float, default=25.0, help='Overlap window in ms (default: 25)')
     consensus.add_argument('--skip-bits2uv', action='store_true', help='Skip bits-to-uV conversion')
     consensus.add_argument('-v', '--verbose', action='store_true', help='Verbose logging')
 
