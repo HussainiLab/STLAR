@@ -145,6 +145,7 @@ class Window(QtWidgets.QWidget):  # defines the window class (main window)
         self.Graph_axis.setMouseEnabled(x=False, y=False)  # disables the mouse interactions
 
         self.Graph_axis.setLabel('bottom', "Time", units='s')  # adds the x label
+        self.Graph_axis.getAxis('bottom').enableAutoSIPrefix(False)  # keep time in seconds (no ks, Ms, etc)
         
         # Add gridlines in light color
         self.Graph_axis.showGrid(x=True, y=True, alpha=0.3)

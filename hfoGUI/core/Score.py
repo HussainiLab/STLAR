@@ -4064,9 +4064,10 @@ def DLDetection(self):
                         progress = 40 + int(50 * (global_idx / len(segments)))
                         elapsed_time = time.time() - inference_start_time
                         
-                        # Calculate ETA based on average batch time
-                        if len(batch_times) > 10:  # Need at least 10 batches for reliable estimate
-                            avg_batch_time = sum(batch_times[-10:]) / min(len(batch_times), 10)  # Use last 10 batches
+                        # Calculate ETA based on cumulative average batch time (all batches so far)
+                        # This is more accurate than using only recent batches
+                        if len(batch_times) > 0:
+                            avg_batch_time = sum(batch_times) / len(batch_times)  # Cumulative average
                             total_batches = len(loader)
                             remaining_batches = total_batches - (batch_idx + 1)
                             eta_seconds = remaining_batches * avg_batch_time
