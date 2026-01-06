@@ -4018,12 +4018,11 @@ def DLDetection(self):
             import time
             inference_start_time = time.time()
             batch_times = []
+            last_batch_end_time = time.time()  # Track end time of previous batch to include data loading
             
             global_idx = 0
             with torch.no_grad():
                 for batch_idx, batch_data in enumerate(loader):
-                    batch_start_time = time.time()
-                    
                     # CWT_InferenceDataset returns only tensors (no labels for inference)
                     # pad_collate_fn_2d returns either tensors or (tensors, labels)
                     if isinstance(batch_data, tuple):
@@ -4056,18 +4055,23 @@ def DLDetection(self):
                             detected_events.append([t_start * 1000.0, t_stop * 1000.0])
                         global_idx += 1
                     
-                    # Track batch processing time
-                    batch_time = time.time() - batch_start_time
+                    # Track total time per batch (including data loading overhead from DataLoader)
+                    # This measures from end of previous batch to end of current batch
+                    current_time = time.time()
+                    batch_time = current_time - last_batch_end_time
+                    last_batch_end_time = current_time
                     batch_times.append(batch_time)
                     
                     if batch_idx % 10 == 0:
                         progress = 40 + int(50 * (global_idx / len(segments)))
                         elapsed_time = time.time() - inference_start_time
                         
-                        # Calculate ETA based on cumulative average batch time (all batches so far)
-                        # This is more accurate than using only recent batches
+                        # Calculate ETA based on recent batch times (last 10 batches)
+                        # This is more accurate than cumulative average which gets skewed by early slow batches
                         if len(batch_times) > 0:
-                            avg_batch_time = sum(batch_times) / len(batch_times)  # Cumulative average
+                            # Use last 10 batches for recent average, or all if less than 10
+                            recent_batches = batch_times[-10:] if len(batch_times) > 10 else batch_times
+                            avg_batch_time = sum(recent_batches) / len(recent_batches)
                             total_batches = len(loader)
                             remaining_batches = total_batches - (batch_idx + 1)
                             eta_seconds = remaining_batches * avg_batch_time
