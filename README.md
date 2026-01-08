@@ -6,17 +6,55 @@ STLAR (or **Stellar**) is a comprehensive Spatio-Temporal LFP analysis tool comb
 
 ---
 
+<a id="quickstart"></a>
+## Quickstart
+
+- Preferred Python: 3.12 (Conda recommended)
+- Create environment and install dependencies:
+
+```bash
+# Create and activate environment
+conda create -n stlar python=3.12
+conda activate stlar
+
+# Install tested, pinned dependencies
+pip install -r requirements.txt
+```
+
+- Run the GUI:
+
+```bash
+python -m stlar gui
+```
+
+- Run a batch CLI example:
+
+```bash
+python -m stlar hilbert-batch -f path/to/data/
+```
+
+- Troubleshooting tip (Windows): If you see DLL or `_ctypes` errors after changing Python versions, recreate the environment:
+
+```bash
+conda env remove -n stlar
+conda create -n stlar python=3.12
+conda activate stlar
+pip install -r requirements.txt
+```
+
+---
+
 ## 📑 Table of Contents
 
 ### Getting Started
-- [Features](#features)
+- [Quickstart](#quickstart)
 - [Installation](#installation)
-- [Quick Start](#quick-start)
+- [Features](#features)
 
 ### Usage
 - [GUI Workflow](#gui-workflow)
 - [Command-Line Interface (CLI)](#cli-reference)
-- [Deep Learning Training](#complete-deep-learning-training-workflow)
+- [Complete Deep Learning Training Workflow](#complete-deep-learning-training-workflow)
 
 ### Advanced
 - [Module Structure](#module-structure)
@@ -24,12 +62,13 @@ STLAR (or **Stellar**) is a comprehensive Spatio-Temporal LFP analysis tool comb
 - [API Documentation](#api-documentation)
 
 ### Support
-- [Troubleshooting](#troubleshooting-installation)
+- [Troubleshooting Installation](#troubleshooting-installation)
 - [Getting Help](#getting-help)
 - [Recent Changes](#recent-changes)
 
 ---
 
+<a id="features"></a>
 ## Features
 
 ### 🕐 Temporal Analysis
@@ -65,10 +104,11 @@ STLAR (or **Stellar**) is a comprehensive Spatio-Temporal LFP analysis tool comb
 - Configurable detection thresholds
 - Progress tracking and summary statistics
 
+<a id="installation"></a>
 ## Installation
 
 ### Requirements
-- **Python 3.8+** (check with `python --version`)
+- **Python 3.12 (preferred)** — 3.10–3.13 supported; some packages may have limited support on 3.13
 - **pip** (Python package manager, usually included with Python)
 - ~2-3 GB disk space for dependencies
 
@@ -103,7 +143,7 @@ Using a virtual environment keeps STLAR's dependencies isolated from your system
 
 ```bash
 # Create new environment named "stlar"
-conda create -n stlar python=3.10
+conda create -n stlar python=3.12
 
 # Activate the environment
 conda activate stlar
@@ -145,6 +185,8 @@ To deactivate: `deactivate`
 pip install -r requirements.txt
 ```
 
+The `requirements.txt` is pinned to tested versions for Python 3.12 to ensure reproducible installs.
+
 **Takes 2-5 minutes depending on internet speed.** You should see packages downloading.
 
 #### 5. (Optional) Install as Editable Package
@@ -178,6 +220,7 @@ Notes:
 - ONNX is optional; STLAR supports TorchScript models out of the box.
 - Verify GPU availability with: `python -c "import torch; print(torch.cuda.is_available())"`.
 
+<a id="troubleshooting-installation"></a>
 ### Troubleshooting Installation
 
 **"Command not found: python"**
@@ -245,6 +288,8 @@ This shows a heatmap of HFO activity across the recording arena with position tr
 
 ---
 
+<a id="cli-reference"></a>
+### CLI Reference
 #### 2️⃣ **Command Line (For Batch Processing)**
 
 Process multiple files automatically without the GUI. Good for processing dozens of files consistently.
@@ -327,6 +372,7 @@ fast_ripples = detector.detect_ripples(method='hilbert',
 
 ---
 
+<a id="gui-workflow"></a>
 ## GUI Workflow
 
 This section provides a detailed walkthrough of the GUI-based analysis. If you're new to STLAR, **start here**.
@@ -1220,6 +1266,7 @@ val_signals = [np.load(path) for path in val_df['segment_path']]
 # Train model...
 ```
 
+<a id="complete-deep-learning-training-workflow"></a>
 ## Complete Deep Learning Training Workflow
 
 This section describes the end-to-end workflow for training a custom deep learning model and using it for HFO detection.
@@ -1777,6 +1824,7 @@ logit = sess.run(None, {'input': signal})[0]
 prob = 1 / (1 + np.exp(-logit))
 ```
 
+<a id="module-structure"></a>
 ## Module Structure
 
 ### Temporal Analysis (HFO Detection)
@@ -1808,6 +1856,7 @@ This project unifies:
 - [Consensus Summary](docs/CONSENSUS_SUMMARY.md)
 
 ### Spatial Spectral Mapper
+<a id="api-documentation"></a>
 ## API Documentation
 
 ### Core Detector Class
@@ -1885,6 +1934,7 @@ with torch.no_grad():
 
 ---
 
+<a id="getting-help"></a>
 ## Getting Help
 
 ### 📚 Documentation Resources
@@ -1966,6 +2016,7 @@ Include:
 - Python version: `python --version`
 - Operating system
 
+<a id="recent-changes"></a>
 ## Recent Changes
 
 ### 🎉 Major Features & Improvements (Latest)
