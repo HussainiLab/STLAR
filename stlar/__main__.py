@@ -45,6 +45,8 @@ Examples:
     prepare_dl_parser = subparsers.add_parser('prepare-dl', help='Prepare EOIs for DL training', add_help=False)
     train_dl_parser = subparsers.add_parser('train-dl', help='Train DL model on prepared data', add_help=False)
     export_dl_parser = subparsers.add_parser('export-dl', help='Export trained DL model to .pt/.onnx', add_help=False)
+    metrics_parser = subparsers.add_parser('metrics-batch', help='Compute HFO metrics from scores files', add_help=False)
+    filter_parser = subparsers.add_parser('filter-scores', help='Filter scores by duration', add_help=False)
     
     # Spatial mapping command (delegate to batch_ssm)
     ssm_parser = subparsers.add_parser('batch-ssm', help='Batch spatial spectral mapper', add_help=False)
@@ -69,7 +71,7 @@ Examples:
         return result.returncode
     
     # HFO detection commands
-    if args.command in ['hilbert-batch', 'ste-batch', 'mni-batch', 'consensus-batch', 'dl-batch', 'prepare-dl', 'train-dl', 'export-dl']:
+    if args.command in ['hilbert-batch', 'ste-batch', 'mni-batch', 'consensus-batch', 'dl-batch', 'prepare-dl', 'train-dl', 'export-dl', 'metrics-batch', 'filter-scores']:
         from hfoGUI.cli import build_parser, main as hfo_main
         hfo_parser_full = build_parser()
         hfo_args = hfo_parser_full.parse_args([args.command] + remaining)
