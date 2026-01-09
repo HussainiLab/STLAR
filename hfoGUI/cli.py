@@ -505,6 +505,13 @@ def build_parser() -> argparse.ArgumentParser:
     metrics_parser.add_argument('-f', '--scores', required=True, help='Path to scores file or directory with scores files')
     metrics_parser.add_argument('--data', help='Path to directory with data files (.eeg/.egf) for duration inference')
     metrics_parser.add_argument('--duration-min', type=float, help='Fallback recording duration in minutes')
+    metrics_parser.add_argument('--preset', help='Region preset name (e.g., LEC, Hippocampus, MEC)')
+    metrics_parser.add_argument('--preset-file', help='Optional JSON file with region presets to override/extend defaults')
+    metrics_parser.add_argument('--band', help='Comma-separated band/label filters (matches label/score column)')
+    metrics_parser.add_argument('--behavior-gating', action='store_true', help='Apply behavior gating (speed thresholds) if speed column exists')
+    metrics_parser.add_argument('--speed-min', type=float, help='Override min speed for behavior gating (cm/s)')
+    metrics_parser.add_argument('--speed-max', type=float, help='Override max speed for behavior gating (cm/s)')
+    metrics_parser.add_argument('--save-filtered', action='store_true', help='Save preset-annotated filtered scores to filtered_scores/ subdirectory')
     metrics_parser.add_argument('-o', '--output', help='Output directory for metrics (default: scores parent dir)')
     metrics_parser.add_argument('-v', '--verbose', action='store_true', help='Verbose logging')
 
@@ -513,6 +520,12 @@ def build_parser() -> argparse.ArgumentParser:
     filter_parser.add_argument('-f', '--scores', required=True, help='Path to scores file to filter')
     filter_parser.add_argument('--min-duration-ms', type=float, help='Minimum event duration in milliseconds')
     filter_parser.add_argument('--max-duration-ms', type=float, help='Maximum event duration in milliseconds')
+    filter_parser.add_argument('--preset', help='Region preset name (e.g., LEC, Hippocampus, MEC)')
+    filter_parser.add_argument('--preset-file', help='Optional JSON file with region presets to override/extend defaults')
+    filter_parser.add_argument('--band', help='Comma-separated band/label filters (matches label/score column)')
+    filter_parser.add_argument('--behavior-gating', action='store_true', help='Apply behavior gating (speed thresholds) if speed column exists')
+    filter_parser.add_argument('--speed-min', type=float, help='Override min speed for behavior gating (cm/s)')
+    filter_parser.add_argument('--speed-max', type=float, help='Override max speed for behavior gating (cm/s)')
     filter_parser.add_argument('-o', '--output', help='Output directory for filtered scores (default: scores parent dir)')
     filter_parser.add_argument('-v', '--verbose', action='store_true', help='Verbose logging')
 
@@ -1483,6 +1496,142 @@ def _load_scores_from_txt(scores_path: Path):
     return starts, stops, df
 
 
+def _build_default_region_presets():
+    """Default region presets, aligned with GUI Score tab."""
+    return {
+        'LEC': {
+            'bands': {
+                'ripple': [80, 250],
+                'fast_ripple': [250, 500],
+                'gamma': [30, 80],
+            },
+            'durations': {
+                'ripple_min_ms': 15,
+                'ripple_max_ms': 120,
+                'fast_min_ms': 10,
+                'fast_max_ms': 80,
+            },
+            'threshold_sd': 3.5,
+            'epoch_s': 300,
+            'behavior_gating': True,
+            'speed_threshold_min_cm_s': 0.0,
+            'speed_threshold_max_cm_s': 5.0,
+        },
+        'Hippocampus': {
+            'bands': {
+                'ripple': [100, 250],
+                'fast_ripple': [250, 500],
+                'gamma': [30, 80],
+            },
+            'durations': {
+                'ripple_min_ms': 15,
+                'ripple_max_ms': 120,
+                'fast_min_ms': 10,
+                'fast_max_ms': 80,
+            },
+            'threshold_sd': 4.0,
+            'epoch_s': 300,
+            'behavior_gating': True,
+            'speed_threshold_min_cm_s': 0.0,
+            'speed_threshold_max_cm_s': 5.0,
+        },
+        'MEC': {
+            'bands': {
+                'ripple': [80, 200],
+                'fast_ripple': [200, 500],
+                'gamma': [30, 80],
+            },
+            'durations': {
+                'ripple_min_ms': 15,
+                'ripple_max_ms': 120,
+                'fast_min_ms': 10,
+                'fast_max_ms': 80,
+            },
+            'threshold_sd': 3.5,
+            'epoch_s': 300,
+            'behavior_gating': True,
+            'speed_threshold_min_cm_s': 0.0,
+            'speed_threshold_max_cm_s': 5.0,
+        },
+    }
+
+
+def _load_region_presets(preset_file: Path | None = None):
+    """Load region presets from optional JSON, falling back to defaults."""
+    presets = _build_default_region_presets()
+    if preset_file:
+        try:
+            with open(preset_file, 'r') as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                presets.update(data)
+            else:
+                print(f"Warning: preset file {preset_file} is not a dict; using defaults")
+        except FileNotFoundError:
+            print(f"Warning: preset file not found: {preset_file}; using defaults")
+        except Exception as e:
+            print(f"Warning: could not parse preset file {preset_file}: {e}; using defaults")
+    return presets
+
+
+def _apply_preset_and_gating(df, starts_ms, stops_ms, preset: dict, band_filters=None, behavior_gating=False, speed_min=None, speed_max=None):
+    """Apply duration, band, and behavior gating masks based on preset and options."""
+    mask = np.ones(len(df), dtype=bool)
+    durations_ms = stops_ms - starts_ms
+
+    # Duration gating per band if labels exist
+    label_col = None
+    for col in df.columns:
+        if col.lower() in {'label', 'score', 'band'}:
+            label_col = col
+            break
+
+    dur_cfg = preset.get('durations', {}) if preset else {}
+    ripple_min = float(dur_cfg.get('ripple_min_ms', 0))
+    ripple_max = float(dur_cfg.get('ripple_max_ms', 1e9))
+    fast_min = float(dur_cfg.get('fast_min_ms', ripple_min))
+    fast_max = float(dur_cfg.get('fast_max_ms', ripple_max))
+
+    if label_col:
+        labels_lower = df[label_col].astype(str).str.lower()
+        ripple_mask = labels_lower.str.contains('ripple') & ~labels_lower.str.contains('fast')
+        fast_mask = labels_lower.str.contains('fast')
+        other_mask = ~(ripple_mask | fast_mask)
+        mask &= ~ripple_mask | ((durations_ms >= ripple_min) & (durations_ms <= ripple_max))
+        mask &= ~fast_mask | ((durations_ms >= fast_min) & (durations_ms <= fast_max))
+        mask &= ~other_mask | ((durations_ms >= ripple_min) & (durations_ms <= ripple_max))
+    else:
+        mask &= (durations_ms >= ripple_min) & (durations_ms <= ripple_max)
+
+    # Optional band whitelist (string match on label/score column)
+    if band_filters:
+        if not label_col:
+            print("Warning: band filter requested but no label/score column found; skipping band filter")
+        else:
+            labels_lower = df[label_col].astype(str).str.lower()
+            band_mask = False
+            for band in band_filters:
+                band_mask = band_mask | labels_lower.str.contains(band.lower())
+            mask &= band_mask
+
+    # Behavior gating using speed column if available
+    if behavior_gating:
+        speed_col = None
+        for col in df.columns:
+            if 'speed' in col.lower():
+                speed_col = col
+                break
+        if speed_col is None:
+            print("Warning: behavior gating requested but no speed column found; skipping behavior gate")
+        else:
+            spd = pd.to_numeric(df[speed_col], errors='coerce')
+            g_min = speed_min if speed_min is not None else preset.get('speed_threshold_min_cm_s', 0.0)
+            g_max = speed_max if speed_max is not None else preset.get('speed_threshold_max_cm_s', 5.0)
+            mask &= (spd >= g_min) & (spd <= g_max)
+
+    return mask
+
+
 def _compute_hfo_metrics(starts_ms, stops_ms, recording_duration_sec, verbose=False):
     """Compute HFO metrics from start/stop times.
     
@@ -1527,7 +1676,7 @@ def _infer_data_duration(data_path: Path, verbose=False):
 
 
 def run_metrics_batch(args: argparse.Namespace):
-    """Batch compute HFO metrics from scores files."""
+    """Batch compute HFO metrics from scores files with optional presets and gating."""
     scores_path = Path(args.scores).expanduser()
     output_dir = Path(args.output).expanduser() if args.output else scores_path.parent / "metrics"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1545,6 +1694,10 @@ def run_metrics_batch(args: argparse.Namespace):
         print(f"No scores files found in {scores_path}")
         return
     
+    # Load presets if needed
+    presets = _load_region_presets(Path(args.preset_file)) if args.preset_file else _build_default_region_presets()
+    band_filters = [b.strip() for b in args.band.split(',')] if args.band else None
+
     print(f"Processing {len(scores_files)} scores files...")
     
     for scores_file in scores_files:
@@ -1555,7 +1708,32 @@ def run_metrics_batch(args: argparse.Namespace):
             
             # Load scores
             starts, stops, df = _load_scores_from_txt(scores_file)
-            
+
+            # Apply preset/gating mask if requested
+            preset = presets.get(args.preset) if args.preset else None
+            if args.preset and not preset:
+                print(f"  Warning: preset '{args.preset}' not found; available: {list(presets.keys())}")
+            behavior_flag = args.behavior_gating or (preset.get('behavior_gating', False) if preset else False)
+            mask = None
+            if preset or args.band or behavior_flag:
+                mask = _apply_preset_and_gating(
+                    df=df,
+                    starts_ms=starts,
+                    stops_ms=stops,
+                    preset=preset or {},
+                    band_filters=band_filters,
+                    behavior_gating=behavior_flag,
+                    speed_min=args.speed_min,
+                    speed_max=args.speed_max,
+                )
+                starts_filtered = starts[mask]
+                stops_filtered = stops[mask]
+                df_filtered = df[mask]
+            else:
+                starts_filtered = starts
+                stops_filtered = stops
+                df_filtered = df
+
             # Try to infer duration from data file
             duration_sec = 0
             if args.data:
@@ -1568,16 +1746,33 @@ def run_metrics_batch(args: argparse.Namespace):
                 duration_sec = args.duration_min * 60.0
             
             # Compute metrics
-            metrics = _compute_hfo_metrics(starts, stops, duration_sec, verbose=args.verbose)
+            metrics = _compute_hfo_metrics(starts_filtered, stops_filtered, duration_sec, verbose=args.verbose)
             
             # Save metrics
-            metrics_file = output_dir / f"{session_name}_hfo_metrics.csv"
+            suffix_bits = []
+            if args.preset:
+                suffix_bits.append(args.preset)
+            if args.band:
+                suffix_bits.append('band')
+            if behavior_flag:
+                suffix_bits.append('gated')
+            suffix = '_' + '_'.join(suffix_bits) if suffix_bits else ''
+
+            metrics_file = output_dir / f"{session_name}_hfo_metrics{suffix}.csv"
             with open(metrics_file, 'w') as f:
                 f.write("metric,value\n")
                 for key, val in metrics.items():
                     f.write(f"{key},{val}\n")
             
             print(f"  Saved metrics -> {metrics_file}")
+
+            # Save filtered scores if requested and filtering was applied
+            if args.save_filtered and mask is not None:
+                filtered_output_dir = output_dir / "filtered_scores"
+                filtered_output_dir.mkdir(parents=True, exist_ok=True)
+                filtered_file = filtered_output_dir / f"{session_name}{suffix}.txt"
+                df_filtered.to_csv(filtered_file, sep='\t', index=False)
+                print(f"  Saved filtered scores -> {filtered_file}")
         
         except Exception as e:
             print(f"  Error processing {scores_file}: {e}")
@@ -1587,7 +1782,7 @@ def run_metrics_batch(args: argparse.Namespace):
 
 
 def run_filter_scores(args: argparse.Namespace):
-    """Filter scores by duration, labels, or preset."""
+    """Filter scores with optional region preset, band whitelist, and behavior gating."""
     scores_path = Path(args.scores).expanduser()
     output_dir = Path(args.output).expanduser() if args.output else scores_path.parent
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1600,20 +1795,49 @@ def run_filter_scores(args: argparse.Namespace):
         # Load scores
         starts, stops, df = _load_scores_from_txt(scores_path)
         durations_ms = stops - starts
-        
-        # Apply filters
+
+        # Base duration filters
         mask = np.ones(len(starts), dtype=bool)
-        
-        if args.min_duration_ms:
+        if args.min_duration_ms is not None:
             mask &= durations_ms >= float(args.min_duration_ms)
-        
-        if args.max_duration_ms:
+        if args.max_duration_ms is not None:
             mask &= durations_ms <= float(args.max_duration_ms)
-        
+
+        # Optional preset-based filters
+        preset = None
+        band_filters = None
+        if args.preset or args.preset_file:
+            presets = _load_region_presets(Path(args.preset_file) if args.preset_file else None)
+            if args.preset and args.preset not in presets:
+                print(f"Warning: preset '{args.preset}' not found; available: {list(presets.keys())}")
+            preset = presets.get(args.preset) if args.preset else None
+            band_filters = [b.strip() for b in args.band.split(',')] if args.band else None
+
+        if preset or args.behavior_gating or args.band:
+            preset_mask = _apply_preset_and_gating(
+                df=df,
+                starts_ms=starts,
+                stops_ms=stops,
+                preset=preset or {},
+                band_filters=band_filters,
+                behavior_gating=args.behavior_gating or (preset.get('behavior_gating', False) if preset else False),
+                speed_min=args.speed_min,
+                speed_max=args.speed_max,
+            )
+            mask &= preset_mask
+
         df_filtered = df[mask].copy()
-        
+
         # Save filtered
-        output_file = output_dir / f"{scores_path.stem}_filtered.txt"
+        suffix_bits = []
+        if args.preset:
+            suffix_bits.append(args.preset)
+        if args.band:
+            suffix_bits.append('band')
+        if args.behavior_gating:
+            suffix_bits.append('gated')
+        suffix = '_' + '_'.join(suffix_bits) if suffix_bits else '_filtered'
+        output_file = output_dir / f"{scores_path.stem}{suffix}.txt"
         df_filtered.to_csv(output_file, sep='\t', index=False)
         
         print(f"Filtered: {len(starts)} -> {len(df_filtered)} events")
