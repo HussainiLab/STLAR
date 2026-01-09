@@ -270,13 +270,14 @@ You'll see a window with buttons to:
 
 **GUI Workflow (step-by-step):**
 
-1. **Load Data:** Click "File" → "Open" → select your `.eeg` or `.egf` file
-2. **Set Parameters:** Adjust sliders for frequency bands, thresholds (don't worry about exact values)
-3. **Detect Events:** Click "Run Detection" (Hilbert is fastest)
-4. **Review Results:** Browse detected events in the **Automatic Detection** tab
-5. **Move to Score Tab:** Select events you want to keep → Click **"Add Selected EOI(s) to Score"**
-6. **Label Events:** In the Score tab, select each event and click score buttons (Ripple, Fast Ripple, Artifact, etc.)
-7. **Save Results:** Click "Save Scores" to export to a text file
+1. **Import Set** (required): In the main window click **"Import Set"** → pick a `.set` file **or a folder containing it** (use **"Choose a Set file"** or **"Choose a Folder"**) → click **Apply**. The main window shows the chosen path and loads sources.
+2. **Select source & params:** Click **"Graph Settings"**. In the Graph Settings window pick the source (.eeg/.egf), set frequency bands and thresholds. Close/Hide to return.
+3. **Open scoring/detection:** Click **"Score"** to open the Score window. Go to the **Automatic Detection** tab.
+4. **Run detection:** Choose a method (Hilbert, STE, MNI, Consensus, DL), adjust parameters if needed, then click **"Run Detection"**.
+5. **Review detections:** Still in **Automatic Detection**, sort/filter the detected EOIs; preview on the plot.
+6. **Send to Score tab:** Select EOIs to keep → click **"Add Selected EOI(s) to Score"**.
+7. **Label events:** In the **Score** tab, assign labels (Ripple, Fast Ripple, Sharp Wave Ripple, Artifact). Optionally choose a **Brain Region** preset (LEC/Hippocampus/MEC/None).
+8. **Save results:** Click **"Save Scores"** to write the tab-separated scores file.
 
 **Tip:** Use the **"None"** option in "Brain Region" dropdown if you don't want region-specific filtering.
 
@@ -958,6 +959,33 @@ python -m stlar metrics-batch \
     -v
 ```
 
+With region preset, band filter, gating, and save-filtered TSV:
+```bash
+python -m stlar metrics-batch \
+  -f HFOScores/recording_HIL.txt \
+  --preset Hippocampus \
+  --band ripple \
+  --behavior-gating \
+  --speed-max 4.0 \
+  --save-filtered \
+  --duration-min 30 \
+  -v
+```
+
+Directory batch with custom presets file and speed override:
+```bash
+python -m stlar metrics-batch \
+  -f HFOScores/ \
+  --preset LEC \
+  --preset-file my_presets.json \
+  --band "ripple,fast" \
+  --behavior-gating \
+  --speed-min 0.5 \
+  --speed-max 3.0 \
+  --save-filtered \
+  -o results/metrics/
+```
+
 **Parameters:**
 
 | Parameter | Type | Default | Description |
@@ -965,6 +993,13 @@ python -m stlar metrics-batch \
 | `-f, --scores` | str | **required** | Path to scores file (.txt) or directory containing scores files |
 | `--data` | str | optional | Directory containing data files (.eeg/.egf) for duration inference |
 | `--duration-min` | float | optional | Fallback recording duration in minutes (if data files not found) |
+| `--preset` | str | optional | Region preset name (LEC, Hippocampus, MEC; extendable via preset file) |
+| `--preset-file` | str | optional | JSON file to override/extend presets (dict keyed by region names) |
+| `--band` | str | optional | Comma-separated band/label filters (matches label/score column) |
+| `--behavior-gating` | flag | off | Apply speed gating if a speed column exists in scores |
+| `--speed-min` | float | optional | Override min speed for gating (cm/s) |
+| `--speed-max` | float | optional | Override max speed for gating (cm/s) |
+| `--save-filtered` | flag | off | Save preset-filtered scores to `<output>/filtered_scores/` |
 | `-o, --output` | str | scores parent | Output directory for metrics CSV files |
 | `-v, --verbose` | flag | off | Verbose progress logging |
 
@@ -1025,6 +1060,29 @@ python -m stlar filter-scores \
     --max-duration-ms 120
 ```
 
+Apply region preset with band filter and behavior gating:
+```bash
+python -m stlar filter-scores \
+  -f scores.txt \
+  --preset LEC \
+  --band ripple,fast \
+  --behavior-gating \
+  --speed-max 4.0 \
+  -v
+```
+
+Band filtering only with custom speed thresholds (no preset):
+```bash
+python -m stlar filter-scores \
+  -f scores.txt \
+  --band ripple \
+  --behavior-gating \
+  --speed-min 0.5 \
+  --speed-max 2.5 \
+  --min-duration-ms 15 \
+  --max-duration-ms 120
+```
+
 **Parameters:**
 
 | Parameter | Type | Default | Description |
@@ -1032,6 +1090,12 @@ python -m stlar filter-scores \
 | `-f, --scores` | str | **required** | Path to scores file to filter |
 | `--min-duration-ms` | float | optional | Minimum event duration in milliseconds |
 | `--max-duration-ms` | float | optional | Maximum event duration in milliseconds |
+| `--preset` | str | optional | Region preset name (LEC, Hippocampus, MEC; extendable via preset file) |
+| `--preset-file` | str | optional | JSON file to override/extend presets (dict keyed by region names) |
+| `--band` | str | optional | Comma-separated band/label filters (matches label/score column) |
+| `--behavior-gating` | flag | off | Apply speed gating if a speed column exists in scores |
+| `--speed-min` | float | optional | Override min speed for gating (cm/s) |
+| `--speed-max` | float | optional | Override max speed for gating (cm/s) |
 | `-o, --output` | str | scores parent | Output directory for filtered scores |
 | `-v, --verbose` | flag | off | Verbose progress logging |
 
@@ -1051,6 +1115,16 @@ ID#     Start Time(ms)    Stop Time(ms)    Settings File
 - Exclude motion artifacts (very long events > 200 ms)
 - Focus on ripple range (15-120 ms) for further analysis
 - Region-specific filtering (different thresholds for different brain areas)
+
+**Preset file format:**
+Provide a JSON dict keyed by region name. Example:
+```json
+{
+  "LEC": {"bands": {"ripple": [80, 250]}, "durations": {"ripple_min_ms": 15, "ripple_max_ms": 120}, "behavior_gating": true, "speed_threshold_min_cm_s": 0.0, "speed_threshold_max_cm_s": 5.0},
+  "Hippocampus": {"bands": {"ripple": [100, 250]}, "durations": {"ripple_min_ms": 15, "ripple_max_ms": 120}}
+}
+```
+Defaults match the GUI (LEC, Hippocampus, MEC) and are extended/overridden by any file you pass via `--preset-file`.
 
 ---
 
