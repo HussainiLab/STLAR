@@ -25,6 +25,10 @@ spatial_mapper/ssm_git_venv/
 HFOScores/
 *.log
 
+# Documentation images (keep banner.png for README)
+docs/images/*
+!docs/images/banner.png
+
 # Distribution
 build/
 dist/
