@@ -1,0 +1,77 @@
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stlar"
+version = "1.0.8"
+description = "STLAR - unified spatio-temporal LFP analysis GUI."
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [
+    {name = "Geoffrey Barrett"},
+    {name = "Srujan Vajram"},
+    {name = "HussainiLab", email = "lab.ephys@gmail.com"}
+]
+license = {text = "GPL-3.0"}
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Operating System :: OS Independent",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+keywords = ["HFO", "LFP", "neuroscience", "electrophysiology", "analysis"]
+dependencies = [
+    "PyQt5",
+    "pillow",
+    "numpy",
+    "pyqtgraph",
+    "scipy",
+    "matplotlib",
+    "pandas",
+    "pyfftw",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "black>=23.0",
+    "pylint>=2.0",
+]
+dl = [
+    "torch>=2.0",
+    "onnxruntime>=1.15",
+]
+
+[project.urls]
+Homepage = "https://github.com/HussainiLab/STLAR"
+Repository = "https://github.com/HussainiLab/STLAR.git"
+"Bug Tracker" = "https://github.com/HussainiLab/STLAR/issues"
+Documentation = "https://github.com/HussainiLab/STLAR/tree/main/docs"
+
+[project.scripts]
+stlar = "stlar.__main__:main"
+
+[tool.setuptools]
+packages = ["stlar", "hfoGUI", "spatial_mapper"]
+
+[tool.setuptools.package-data]
+stlar = ["img/*.png"]
+hfoGUI = ["img/*.png"]
+
+[tool.black]
+line-length = 100
+target-version = ['py38', 'py39', 'py310', 'py311']
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.pylint.messages_control]
+disable = ["C0111", "R0913", "R0914", "W0212"]
