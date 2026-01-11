@@ -1128,7 +1128,7 @@ def _get_region_presets():
             'speed_threshold_min_cm_s': 0.0,
             'speed_threshold_max_cm_s': 5.0,
             'dl_export': {
-                'filter_by_duration': True,
+                'filter_by_duration': False,
                 'annotate_band': True,
                 'behavior_gating': True,
             },
@@ -1151,7 +1151,7 @@ def _get_region_presets():
             'speed_threshold_min_cm_s': 0.0,
             'speed_threshold_max_cm_s': 5.0,
             'dl_export': {
-                'filter_by_duration': True,
+                'filter_by_duration': False,
                 'annotate_band': True,
                 'behavior_gating': True,
             },
@@ -1174,7 +1174,7 @@ def _get_region_presets():
             'speed_threshold_min_cm_s': 0.0,
             'speed_threshold_max_cm_s': 5.0,
             'dl_export': {
-                'filter_by_duration': True,
+                'filter_by_duration': False,
                 'annotate_band': True,
                 'behavior_gating': True,
             },
