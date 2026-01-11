@@ -215,7 +215,8 @@ class RegionPresetDialog(QtWidgets.QDialog):
         dl_export = preset_data.get('dl_export', {})
         
         filter_dur_check = QtWidgets.QCheckBox("Filter by duration")
-        filter_dur_check.setChecked(dl_export.get('filter_by_duration', True))
+        # Default to PSD-first labeling; duration filtering opt-in
+        filter_dur_check.setChecked(dl_export.get('filter_by_duration', False))
         self.field_widgets['dl_filter_by_duration'] = filter_dur_check
         form_layout.addRow("  ", filter_dur_check)
         
@@ -1163,7 +1164,7 @@ class ScoreWindow(QtWidgets.QWidget):
                 'speed_threshold_min_cm_s': 0.0,
                 'speed_threshold_max_cm_s': 5.0,
                 'dl_export': {
-                    'filter_by_duration': True,
+                    'filter_by_duration': False,
                     'annotate_band': True,
                     'behavior_gating': True,
                 },
@@ -1186,7 +1187,7 @@ class ScoreWindow(QtWidgets.QWidget):
                 'speed_threshold_min_cm_s': 0.0,
                 'speed_threshold_max_cm_s': 5.0,
                 'dl_export': {
-                    'filter_by_duration': True,
+                    'filter_by_duration': False,
                     'annotate_band': True,
                     'behavior_gating': True,
                 },
@@ -1209,7 +1210,7 @@ class ScoreWindow(QtWidgets.QWidget):
                 'speed_threshold_min_cm_s': 0.0,
                 'speed_threshold_max_cm_s': 5.0,
                 'dl_export': {
-                    'filter_by_duration': True,
+                    'filter_by_duration': False,
                     'annotate_band': True,
                     'behavior_gating': True,
                 },
@@ -1435,7 +1436,8 @@ class ScoreWindow(QtWidgets.QWidget):
         speed_max = profile.get('speed_threshold_max_cm_s', 5.0)
         do_behavior = profile.get('behavior_gating', False)
         export_opts = profile.get('dl_export', {})
-        filter_by_duration = export_opts.get('filter_by_duration', True)
+        # Default to PSD-first labeling; duration filtering is optional
+        filter_by_duration = export_opts.get('filter_by_duration', False)
 
         speed_signal = self._get_speed_signal() if do_behavior else None
 
