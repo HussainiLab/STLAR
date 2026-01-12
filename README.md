@@ -2326,6 +2326,7 @@ Include:
 - ✅ **Peak validation for all detectors:** STE, MNI, and Consensus now validate minimum 4 peaks at 5 SD threshold (previously only Hilbert)
 - ✅ **Updated default parameters:** Changed from 6 peaks at 2 SD → 4 peaks at 5 SD for more stringent HFO validation
 - ✅ **Consensus merge window:** Increased from 10ms to 25ms for better event consolidation
+- ✅ **DL window defaults:** DL CLI now exposes `--window-size`/`--overlap`, defaulting to 0.1 s and 0.5 (≈75 ms internal merge prior to the 25 ms post-merge standard)
 - ✅ **Behavioral state computation in exports:** Behavioral state computed and stored in manifest for all exported segments
 - ✅ **Region preset support:** CLI respects region-specific duration and behavior thresholds when exporting
 
