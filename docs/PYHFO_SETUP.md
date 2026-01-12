@@ -15,7 +15,7 @@ No separate `pyHFO` installation or setup is required.
 
 Use the built‑in detectors via the GUI or CLI:
 
-- GUI: Launch with `python -m stlar` → Score Window → Automatic Detection tab → choose `Hilbert`, `STE`, `MNI`, or `Consensus`.
+- GUI: Launch with `python -m stlar` → HFO Detection window → Automatic Detection tab → choose `Hilbert`, `STE`, `MNI`, or `Consensus`.
 - CLI: See consensus and single‑detector batch commands in the Quick Start and Detection docs.
 
 Recommended starting points:

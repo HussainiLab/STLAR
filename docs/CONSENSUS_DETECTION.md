@@ -42,7 +42,7 @@ Interactive parameter configuration window with three grouped parameter sections
 
 #### GUI Flow
 
-1. **Score Window → Automatic Detection tab**
+1. **HFO Detection window → Automatic Detection tab**
 2. **EOI Detection Method dropdown**: Select "Consensus" (new option alongside Hilbert/STE/MNI/DL)
 3. **Click "Find EOIs"**: Opens ConsensusParametersWindow
 4. **Configure parameters** for each detector
@@ -85,7 +85,7 @@ python -m stlar consensus-batch \
 ### GUI Usage
 
 1. Load data file in Graph Settings
-2. Open Score Window
+2. Open HFO Detection window
 3. Go to "Automatic Detection" tab
 4. Select "Consensus" from method dropdown
 5. Click "Find EOIs"

@@ -17,7 +17,7 @@ If you're detecting many low-amplitude or noisy events (e.g., <200 µV peak-to-p
 - **Trade-off:** Fewer false positives, but may miss subtle HFOs
 - **When to use:** Noisy recordings, high baseline activity
 
-**GUI:** Score Window → Hilbert Parameters → "Threshold (SD)"  
+**GUI:** HFO Detection window → Hilbert Parameters → "Threshold (SD)"  
 **CLI:** `--hilbert-threshold-sd 4.5`
 
 ---
@@ -31,7 +31,7 @@ If you're detecting many low-amplitude or noisy events (e.g., <200 µV peak-to-p
 - **Trade-off:** Reduces sensitivity to low-energy oscillations
 - **When to use:** High background activity
 
-**GUI:** Score Window → STE Parameters → "Threshold (RMS)"  
+**GUI:** HFO Detection window → STE Parameters → "Threshold (RMS)"  
 **CLI:** `--ste-threshold 3.5`
 
 ---
@@ -47,7 +47,7 @@ If you're detecting many low-amplitude or noisy events (e.g., <200 µV peak-to-p
 - **Trade-off:** Rejects shorter or lower-amplitude bursts
 - **When to use:** Prioritizing high-confidence detections
 
-**GUI:** Score Window → Detection Parameters → "Required Peaks" / "Peak Threshold SD"  
+**GUI:** HFO Detection window → Detection Parameters → "Required Peaks" / "Peak Threshold SD"  
 **CLI:** `--required-peaks 6 --required-peak-threshold-sd 6.0`
 
 ---
@@ -61,7 +61,7 @@ If you're detecting many low-amplitude or noisy events (e.g., <200 µV peak-to-p
 - **Trade-off:** Reduces sensitivity significantly
 - **When to use:** Very active recordings with frequent high-energy events
 
-**GUI:** Score Window → MNI Parameters → "Threshold Percentile"  
+**GUI:** HFO Detection window → MNI Parameters → "Threshold Percentile"  
 **CLI:** `--mni-percentile 99.5`
 
 ---
@@ -75,7 +75,7 @@ If you're detecting many low-amplitude or noisy events (e.g., <200 µV peak-to-p
 - **Trade-off:** May miss fast ripples (physiologically valid at 10-15 ms)
 - **When to use:** Targeting longer ripple-band events only
 
-**GUI:** Score Window → Parameters → "Min Duration (ms)"  
+**GUI:** HFO Detection window → Parameters → "Min Duration (ms)"  
 **CLI:** `--min-duration-ms 20`
 
 ---

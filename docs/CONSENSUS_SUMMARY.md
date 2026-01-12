@@ -129,7 +129,7 @@ A **consensus-based HFO detection system** has been successfully implemented, co
 
 ### GUI (Simplest)
 ```
-1. Score Window → "Automatic Detection" tab
+1. HFO Detection window → "Automatic Detection" tab
 2. EOI Method: Select "Consensus"
 3. Click "Find EOIs"
 4. Adjust parameters (optional) or use defaults
@@ -205,7 +205,7 @@ Single-detector training:    Consensus-detector training:
 
 ### Immediate Use
 1. Open GUI: `python -m stlar`
-2. Load data → Score Window → "Automatic Detection"
+2. Load data → HFO Detection window → "Automatic Detection"
 3. Select "Consensus" method
 4. Try it out!
 
