@@ -65,7 +65,7 @@ class TFPlotWindow(QtWidgets.QWidget):
         self.mainWindow = main
         self.settingsWindow = settings
 
-        self.setWindowTitle("STLAR - T-F Plots")  # sets the title of the window
+        self.setWindowTitle("Time-Frequency Plots window")  # sets the title of the window
 
         self.newData = update_plots_signal()
         self.newData.mysignal.connect(self.update_plots)

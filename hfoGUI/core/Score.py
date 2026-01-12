@@ -230,6 +230,29 @@ class RegionPresetDialog(QtWidgets.QDialog):
         self.field_widgets['dl_behavior_gating'] = dl_gating_check
         form_layout.addRow("  ", dl_gating_check)
         
+        # HFO Amplitude threshold (band-specific)
+        amp_layout = QtWidgets.QHBoxLayout()
+        amp_widget = QtWidgets.QWidget()
+        amp_widget.setLayout(amp_layout)
+        
+        amp_label = QtWidgets.QLabel("Min HFO Amplitude (µV):")
+        amp_spin = QtWidgets.QDoubleSpinBox()
+        amp_spin.setRange(0.0, 5000.0)
+        amp_spin.setSingleStep(10.0)
+        amp_spin.setValue(dl_export.get('min_hfo_amplitude_uv', 0.0))
+        amp_spin.setDecimals(1)
+        amp_spin.setSpecialValueText("Off")
+        amp_spin.setToolTip("Optional QC filter: Reject events with low amplitude in the detected HFO band.\n"
+                            "Measures peak-to-peak amplitude AFTER bandpass filtering to ripple/fast-ripple band.\n"
+                            "Default: 0 (disabled). Consider tightening detection thresholds first.")
+        self.field_widgets['dl_min_hfo_amplitude_uv'] = amp_spin
+        
+        amp_layout.addWidget(amp_label)
+        amp_layout.addWidget(amp_spin)
+        amp_layout.addStretch()
+        
+        form_layout.addRow("  Amplitude Filter:", amp_widget)
+        
         scroll_widget.setLayout(form_layout)
         scroll.setWidget(scroll_widget)
         layout.addWidget(scroll)
@@ -285,6 +308,7 @@ class RegionPresetDialog(QtWidgets.QDialog):
             'filter_by_duration': self.field_widgets['dl_filter_by_duration'].isChecked(),
             'annotate_band': self.field_widgets['dl_annotate_band'].isChecked(),
             'behavior_gating': self.field_widgets['dl_behavior_gating'].isChecked(),
+            'min_hfo_amplitude_uv': self.field_widgets['dl_min_hfo_amplitude_uv'].value(),
         }
         
         return preset
@@ -320,8 +344,7 @@ class ScoreWindow(QtWidgets.QWidget):
         width = int(self.deskW / 6)
         height = int(self.deskH / 1.5)
 
-        self.setWindowTitle(
-            os.path.splitext(os.path.basename(__file__))[0] + " - Score Window")  # sets the title of the window
+        self.setWindowTitle("HFO Detection window")  # sets the title of the window
 
         main_location = main.frameGeometry().getCoords()
 
@@ -1167,6 +1190,7 @@ class ScoreWindow(QtWidgets.QWidget):
                     'filter_by_duration': False,
                     'annotate_band': True,
                     'behavior_gating': True,
+                    'min_hfo_amplitude_uv': 0.0,  # Optional QC filter; disabled by default
                 },
             },
             'Hippocampus': {
@@ -1190,6 +1214,7 @@ class ScoreWindow(QtWidgets.QWidget):
                     'filter_by_duration': False,
                     'annotate_band': True,
                     'behavior_gating': True,
+                    'min_hfo_amplitude_uv': 0.0,  # Optional QC filter; disabled by default
                 },
             },
             'MEC': {
@@ -1213,6 +1238,7 @@ class ScoreWindow(QtWidgets.QWidget):
                     'filter_by_duration': False,
                     'annotate_band': True,
                     'behavior_gating': True,
+                    'min_hfo_amplitude_uv': 0.0,  # Optional QC filter; disabled by default
                 },
             },
         }
@@ -1312,7 +1338,7 @@ class ScoreWindow(QtWidgets.QWidget):
             bands = profile.get('bands', {})
             params = {
                 'voting_strategy': 'majority',
-                'overlap_ms': 10.0,
+                'overlap_ms': 25.0,
                 'hilbert_epoch': profile.get('epoch_s', 300),
                 'hilbert_sd_num': profile.get('threshold_sd', 3.5),
                 'hilbert_min_duration': profile.get('durations', {}).get('ripple_min_ms', 10),
@@ -1336,13 +1362,23 @@ class ScoreWindow(QtWidgets.QWidget):
             pass
 
     def _update_score_labels_from_profile(self, profile):
-        """Re-evaluate Score labels and behavioral state for all existing Score items based on new duration and speed thresholds."""
+        """Re-evaluate Score labels and behavioral state for all existing Score items using PSD-based band annotation (same as addEOI).
+        
+        Band annotation priority:
+        1) PSD-based: compare ripple vs fast ripple band power; choose dominant.
+        2) If band powers within 10% (ambiguous), fall back to duration thresholds.
+        3) If duration also ambiguous, label as 'ripple_fast_ripple' → 'None' display.
+        """
         try:
             durations = profile.get('durations', {})
             r_min = durations.get('ripple_min_ms', 10)
             r_max = durations.get('ripple_max_ms', 150)
             fr_min = durations.get('fast_ripple_min_ms', 10)
             fr_max = durations.get('fast_ripple_max_ms', 50)
+            
+            bands = profile.get('bands', {})
+            ripple_band = bands.get('ripple', [80, 250])
+            fast_band = bands.get('fast_ripple', [250, 500])
             
             # Get speed thresholds for behavioral gating
             speed_min = profile.get('speed_threshold_min_cm_s', 0.0)
@@ -1354,35 +1390,74 @@ class ScoreWindow(QtWidgets.QWidget):
             start_col = self.score_headers.get('Start Time(ms):', 2)
             stop_col = self.score_headers.get('Stop Time(ms):', 3)
             
-            # Get speed signal for behavioral state re-computation
+            # Get speed signal and raw data for re-annotation
             speed_signal = self._get_speed_signal()
+            try:
+                raw_data, Fs = self.settingsWindow.loaded_sources[self.source_filename]
+                raw_data = np.asarray(raw_data).flatten()
+            except Exception:
+                raw_data, Fs = None, None
             
-            # Iterate through all Score items and re-label based on duration and behavior
+            # Iterate through all Score items and re-label using PSD-based annotation (same as addEOI)
             for i in range(self.scores.topLevelItemCount()):
                 item = self.scores.topLevelItem(i)
                 if item:
                     try:
-                        # Update Score label based on duration
-                        duration_text = item.text(duration_col)
-                        if duration_text:
-                            duration = float(duration_text)
-                            # Classify based on duration thresholds
+                        s_ms = float(item.text(start_col))
+                        e_ms = float(item.text(stop_col))
+                        duration = e_ms - s_ms
+                        
+                        band_label = 'ripple_fast_ripple'  # default ambiguous
+                        
+                        # PSD-based classification when raw_data is available (same logic as _filter_and_annotate_eois_for_export)
+                        psd_decided = False
+                        if raw_data is not None and Fs is not None:
+                            s_idx_sig = int(max(0, np.floor(s_ms / 1000 * Fs)))
+                            e_idx_sig = int(min(len(raw_data), np.ceil(e_ms / 1000 * Fs)))
+                            if e_idx_sig > s_idx_sig:
+                                seg = raw_data[s_idx_sig:e_idx_sig]
+                                try:
+                                    nper = int(min(1024, max(64, len(seg))))
+                                    f, Pxx = welch(seg, fs=Fs, nperseg=nper, noverlap=nper//2, scaling='density')
+                                    rp_lo, rp_hi = float(ripple_band[0]), float(ripple_band[1])
+                                    fr_lo, fr_hi = float(fast_band[0]), float(fast_band[1])
+                                    rp_mask = (f >= rp_lo) & (f < rp_hi)
+                                    fr_mask = (f >= fr_lo) & (f < fr_hi)
+                                    ripple_power = float(np.nansum(Pxx[rp_mask])) if np.any(rp_mask) else 0.0
+                                    fast_power = float(np.nansum(Pxx[fr_mask])) if np.any(fr_mask) else 0.0
+                                    max_power = max(ripple_power, fast_power)
+                                    if max_power > 0:
+                                        rel_diff = abs(ripple_power - fast_power) / max_power
+                                        if rel_diff > 0.10:
+                                            band_label = 'ripple' if ripple_power > fast_power else 'fast_ripple'
+                                            psd_decided = True
+                                except Exception:
+                                    psd_decided = False
+                        
+                        # If PSD didn't decide, use duration fallback
+                        if not psd_decided:
                             if r_min <= duration <= r_max:
-                                new_label = 'Ripple'
+                                band_label = 'ripple'
                             elif fr_min <= duration <= fr_max:
-                                new_label = 'Fast Ripple'
+                                band_label = 'fast_ripple'
                             else:
-                                new_label = 'None'  # ambiguous
-                            
-                            item.setText(score_col, new_label)
+                                band_label = 'ripple_fast_ripple'
+                        
+                        # Convert band_label to UI display text: ripple → 'Ripple', fast_ripple → 'Fast Ripple', ambiguous → 'None'
+                        if band_label == 'ripple':
+                            display_label = 'Ripple'
+                        elif band_label == 'fast_ripple':
+                            display_label = 'Fast Ripple'
+                        else:
+                            display_label = 'None'
+                        
+                        item.setText(score_col, display_label)
                         
                         # Re-compute behavioral state only if currently "unknown" or empty
                         current_behavior = item.text(behavior_col) if behavior_col is not None else 'unknown'
                         if (current_behavior.lower() == 'unknown' or current_behavior.strip() == '') and speed_signal is not None:
                             try:
                                 speed_trace, fs_speed = speed_signal
-                                s_ms = float(item.text(start_col))
-                                e_ms = float(item.text(stop_col))
                                 
                                 s_idx = int(max(0, np.floor(s_ms / 1000 * fs_speed)))
                                 e_idx = int(min(len(speed_trace), np.ceil(e_ms / 1000 * fs_speed)))
@@ -1438,6 +1513,7 @@ class ScoreWindow(QtWidgets.QWidget):
         export_opts = profile.get('dl_export', {})
         # Default to PSD-first labeling; duration filtering is optional
         filter_by_duration = export_opts.get('filter_by_duration', False)
+        min_hfo_amplitude_uv = export_opts.get('min_hfo_amplitude_uv', 0.0)
 
         speed_signal = self._get_speed_signal() if do_behavior else None
 
@@ -1500,6 +1576,41 @@ class ScoreWindow(QtWidgets.QWidget):
             if filter_by_duration and not (r_min <= duration <= r_max or fr_min <= duration <= fr_max):
                 # Only drop if user enforces duration filter; keep ambiguous labels otherwise
                 continue
+            
+            # HFO Amplitude filtering: measure peak-to-peak amplitude in the detected HFO band
+            hfo_amplitude_uv = 0.0
+            if min_hfo_amplitude_uv > 0 and raw_data is not None and Fs is not None:
+                s_idx_sig = int(max(0, np.floor(s_ms / 1000 * Fs)))
+                e_idx_sig = int(min(len(raw_data), np.ceil(e_ms / 1000 * Fs)))
+                if e_idx_sig > s_idx_sig:
+                    seg = raw_data[s_idx_sig:e_idx_sig]
+                    if seg.size > 0:
+                        try:
+                            # Bandpass filter to the detected HFO band
+                            if band_label == 'ripple':
+                                band_lo, band_hi = float(ripple_band[0]), float(ripple_band[1])
+                            elif band_label == 'fast_ripple':
+                                band_lo, band_hi = float(fast_band[0]), float(fast_band[1])
+                            else:
+                                # For ambiguous events, use whichever band has higher power
+                                band_lo, band_hi = float(fast_band[0]), float(fast_band[1])
+                            
+                            # Apply bandpass filter
+                            from scipy.signal import butter, sosfiltfilt
+                            nyq = 0.5 * float(Fs)
+                            low = band_lo / nyq
+                            high = band_hi / nyq
+                            low = max(low, 1e-6)
+                            high = min(high, 0.999999)
+                            if low < high:
+                                sos = butter(4, [low, high], btype='band', output='sos')
+                                seg_filtered = sosfiltfilt(sos, seg)
+                                hfo_amplitude_uv = float(np.max(seg_filtered) - np.min(seg_filtered))
+                        except Exception:
+                            hfo_amplitude_uv = 0.0
+                        
+                        if hfo_amplitude_uv < min_hfo_amplitude_uv:
+                            continue  # Reject low-HFO-amplitude event
 
             state = 'unknown'
             mean_speed = None
@@ -1520,6 +1631,7 @@ class ScoreWindow(QtWidgets.QWidget):
                 'duration_ms': duration,
                 'state': state,
                 'mean_speed_cm_s': mean_speed,
+                'hfo_amplitude_uv': hfo_amplitude_uv,
             }
             if brain_region_name:
                 meta_dict['brain_region'] = brain_region_name
@@ -3971,7 +4083,7 @@ def DLDetection(self):
             
             # Prepare sliding windows
             self.progressSignal.progress.emit("DL: 30% - Preparing Data segments")
-            window_size = getattr(self, 'dl_window_size', 1.0) # seconds
+            window_size = getattr(self, 'dl_window_size', 0.1) # seconds
             overlap = getattr(self, 'dl_overlap', 0.5)
             
             win_samp = int(window_size * Fs)
@@ -4145,6 +4257,17 @@ def DLDetection(self):
             
             self.progressSignal.progress.emit(f"DL: 90% - Found {len(detected_events)} events (after merging)")
             
+            # Apply peak validation if enabled
+            if getattr(self, 'dl_enable_peak_validation', True) and detected_events:
+                from core.Detector import _validate_peaks
+                required_peaks = getattr(self, 'dl_required_peaks', 4)
+                peak_threshold_sd = getattr(self, 'dl_peak_threshold_sd', 5.0)
+                self.progressSignal.progress.emit(f"DL: 92% - Validating peaks (≥{required_peaks} @ {peak_threshold_sd}SD)")
+                detected_events_arr = np.array(detected_events)
+                detected_events_arr = _validate_peaks(raw_data, Fs, detected_events_arr, required_peaks, peak_threshold_sd)
+                detected_events = detected_events_arr.tolist() if len(detected_events_arr) > 0 else []
+                self.progressSignal.progress.emit(f"DL: 95% - After peak validation: {len(detected_events)} events")
+            
             # Populate Tree
             if detected_events:
                 _process_detection_results(self, np.array(detected_events))
@@ -4258,14 +4381,24 @@ def DLDetection(self):
                 model_path=self.dl_model_path,
                 threshold=self.dl_threshold,
                 batch_size=self.dl_batch_size,
-                window_size=getattr(self, 'dl_window_size', 1.0),
+                window_size=getattr(self, 'dl_window_size', 0.1),
                 overlap=getattr(self, 'dl_overlap', 0.5),
                 progress_callback=dl_progress
             )
+            
+            # Apply peak validation if enabled
+            if getattr(self, 'dl_enable_peak_validation', True) and len(EOIs) > 0:
+                from core.Detector import _validate_peaks
+                required_peaks = getattr(self, 'dl_required_peaks', 4)
+                peak_threshold_sd = getattr(self, 'dl_peak_threshold_sd', 5.0)
+                self.progressSignal.progress.emit(f"DL: 65% - Validating peaks (≥{required_peaks} @ {peak_threshold_sd}SD)")
+                EOIs = _validate_peaks(raw_data, Fs, EOIs, required_peaks, peak_threshold_sd)
+                self.progressSignal.progress.emit(f"DL: 70% - After peak validation: {len(EOIs)} events")
+            
             if EOIs is None or len(EOIs) == 0:
                 self.progressSignal.progress.emit("DL: Complete - 0 events")
             else:
-                self.progressSignal.progress.emit(f"DL: 70% - Found {len(EOIs)} events")
+                self.progressSignal.progress.emit(f"DL: 75% - Found {len(EOIs)} events")
             _process_detection_results(self, EOIs)
             self.progressSignal.progress.emit("DL: 100% - Complete")
 
@@ -4323,7 +4456,7 @@ def ConsensusDetection(self):
             ste_params=ste_params,
             mni_params=mni_params,
             voting_strategy=getattr(self, 'consensus_voting', 'majority'),
-            overlap_threshold_ms=getattr(self, 'consensus_overlap_ms', 10.0)
+            overlap_threshold_ms=getattr(self, 'consensus_overlap_ms', 25.0)
         )
 
         if EOIs is None or len(EOIs) == 0:
@@ -5285,7 +5418,7 @@ class DLParametersWindow(QtWidgets.QWidget):
 
         self.threshold_edit = QtWidgets.QLineEdit("0.75")
         self.batch_size_edit = QtWidgets.QLineEdit("32")
-        self.window_size_edit = QtWidgets.QLineEdit("1.0")
+        self.window_size_edit = QtWidgets.QLineEdit("0.1")
         self.overlap_edit = QtWidgets.QLineEdit("0.5")
         
         self.cwt_check = QtWidgets.QCheckBox("Use CWT (Scalogram) Preprocessing")
@@ -5297,6 +5430,38 @@ class DLParametersWindow(QtWidgets.QWidget):
         layout.addRow("Window Size (s):", self.window_size_edit)
         layout.addRow("Overlap (0-1):", self.overlap_edit)
         layout.addRow("", self.cwt_check)
+        
+        # Peak Validation section
+        separator = QtWidgets.QFrame()
+        separator.setFrameShape(QtWidgets.QFrame.HLine)
+        separator.setFrameShadow(QtWidgets.QFrame.Sunken)
+        layout.addRow(separator)
+        
+        peak_label = QtWidgets.QLabel("<b>Peak Validation (Post-Detection Filter)</b>")
+        layout.addRow(peak_label)
+        
+        self.enable_peaks_check = QtWidgets.QCheckBox("Enable peak validation")
+        self.enable_peaks_check.setChecked(True)  # Default enabled to match other detectors
+        self.enable_peaks_check.setToolTip(
+            "Validates detected events contain oscillatory content.\n"
+            "Requires minimum peaks above threshold in rectified signal.\n"
+            "Enabled by default (matches Hilbert/STE/MNI behavior)."
+        )
+        layout.addRow("", self.enable_peaks_check)
+        
+        self.required_peaks_spin = QtWidgets.QSpinBox()
+        self.required_peaks_spin.setRange(1, 20)
+        self.required_peaks_spin.setValue(4)
+        self.required_peaks_spin.setToolTip("Minimum oscillation cycles required (default: 4)")
+        layout.addRow("  Required Peaks:", self.required_peaks_spin)
+        
+        self.peak_threshold_sd_spin = QtWidgets.QDoubleSpinBox()
+        self.peak_threshold_sd_spin.setRange(1.0, 10.0)
+        self.peak_threshold_sd_spin.setValue(5.0)
+        self.peak_threshold_sd_spin.setSingleStep(0.5)
+        self.peak_threshold_sd_spin.setDecimals(1)
+        self.peak_threshold_sd_spin.setToolTip("Peak must exceed mean + N×SD (default: 5.0)")
+        layout.addRow("  Peak Threshold (SD):", self.peak_threshold_sd_spin)
 
         self.analyze_btn = QtWidgets.QPushButton("Classify EOIs")
         self.analyze_btn.clicked.connect(self.analyze)
@@ -5324,6 +5489,9 @@ class DLParametersWindow(QtWidgets.QWidget):
             self.scoreWindow.dl_window_size = float(self.window_size_edit.text())
             self.scoreWindow.dl_overlap = float(self.overlap_edit.text())
             self.scoreWindow.dl_use_cwt = self.cwt_check.isChecked()
+            self.scoreWindow.dl_enable_peak_validation = self.enable_peaks_check.isChecked()
+            self.scoreWindow.dl_required_peaks = self.required_peaks_spin.value()
+            self.scoreWindow.dl_peak_threshold_sd = self.peak_threshold_sd_spin.value()
         except ValueError:
             QtWidgets.QMessageBox.warning(self, "Invalid Input", "Please enter valid numeric values.")
             return
@@ -5334,7 +5502,10 @@ class DLParametersWindow(QtWidgets.QWidget):
             'batch_size': self.scoreWindow.dl_batch_size,
             'window_size': self.scoreWindow.dl_window_size,
             'overlap': self.scoreWindow.dl_overlap,
-            'use_cwt': self.scoreWindow.dl_use_cwt
+            'use_cwt': self.scoreWindow.dl_use_cwt,
+            'enable_peak_validation': self.scoreWindow.dl_enable_peak_validation,
+            'required_peaks': self.scoreWindow.dl_required_peaks,
+            'peak_threshold_sd': self.scoreWindow.dl_peak_threshold_sd
         }
         _save_generic_settings(self.scoreWindow, 'DL', settings)
 
@@ -5388,7 +5559,7 @@ class ConsensusParametersWindow(QtWidgets.QWidget):
         # Overlap threshold
         overlap_layout = QtWidgets.QHBoxLayout()
         overlap_label = QtWidgets.QLabel("Overlap Threshold (ms):")
-        self.overlap_edit = QtWidgets.QLineEdit(str(params.get('overlap_ms', 10.0)))
+        self.overlap_edit = QtWidgets.QLineEdit(str(params.get('overlap_ms', 25.0)))
         self.overlap_edit.setMaximumWidth(100)
         overlap_layout.addWidget(overlap_label)
         overlap_layout.addWidget(self.overlap_edit)

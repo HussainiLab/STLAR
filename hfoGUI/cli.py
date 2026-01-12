@@ -238,6 +238,8 @@ def _process_dl_file(data_path: Path, set_path: Optional[Path], args: argparse.N
         'model_path': args.model_path,
         'threshold': float(args.threshold),
         'batch_size': int(args.batch_size),
+        'window_size': float(args.window_size),
+        'overlap': float(args.overlap),
     }
 
     dump_probs = getattr(args, 'dump_probs', False)
@@ -449,6 +451,8 @@ def build_parser() -> argparse.ArgumentParser:
     dl.add_argument('--model-path', required=True, help='Path to trained model file')
     dl.add_argument('--threshold', type=float, default=0.5, help='Detection probability threshold')
     dl.add_argument('--batch-size', type=int, default=32, help='Inference batch size')
+    dl.add_argument('--window-size', type=float, default=0.1, help='Window size in seconds (default: 0.1)')
+    dl.add_argument('--overlap', type=float, default=0.5, help='Window overlap fraction (default: 0.5)')
     dl.add_argument('--dump-probs', action='store_true', help='Print per-window probability stats')
     dl.add_argument('--skip-bits2uv', action='store_true', help='Skip bits-to-uV conversion')
     dl.add_argument('-v', '--verbose', action='store_true', help='Verbose logging')
@@ -1131,6 +1135,7 @@ def _get_region_presets():
                 'filter_by_duration': False,
                 'annotate_band': True,
                 'behavior_gating': True,
+                'min_hfo_amplitude_uv': 0.0,  # Optional QC filter; disabled by default
             },
         },
         'Hippocampus': {
@@ -1154,6 +1159,7 @@ def _get_region_presets():
                 'filter_by_duration': False,
                 'annotate_band': True,
                 'behavior_gating': True,
+                'min_hfo_amplitude_uv': 0.0,  # Optional QC filter; disabled by default
             },
         },
         'MEC': {
@@ -1177,6 +1183,7 @@ def _get_region_presets():
                 'filter_by_duration': False,
                 'annotate_band': True,
                 'behavior_gating': True,
+                'min_hfo_amplitude_uv': 0.0,  # Optional QC filter; disabled by default
             },
         },
     }

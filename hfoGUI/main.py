@@ -64,7 +64,7 @@ class Window(QtWidgets.QWidget):  # defines the window class (main window)
         self.graph_settings_btn = QtWidgets.QPushButton("Graph Settings", self)
         self.graph_settings_btn.setToolTip("Click if you want to add/remove waveforms, and edit the graph")
  
-        self.score_btn = QtWidgets.QPushButton("Score", self)
+        self.score_btn = QtWidgets.QPushButton("HFO Detection", self)
         self.score_btn.setToolTip("Click if you want to score the EEG file")
 
         quit_btn = QtWidgets.QPushButton("Quit", self)
@@ -72,18 +72,21 @@ class Window(QtWidgets.QWidget):  # defines the window class (main window)
         quit_btn.setShortcut("Ctrl+Q")
         quit_btn.setToolTip('Click to quit (or press Ctrl+Q)')
 
-        self.TF_btn = QtWidgets.QPushButton("T-F Plots", self)
+        self.TF_btn = QtWidgets.QPushButton("Time-Freq Plots", self)
         self.TF_btn.setToolTip("Click to open a window showing the Time-Frequency plots (Stockwell)")
 
-        self.plot_pos_btn = QtWidgets.QPushButton("Position", self)
-        self.plot_pos_btn.setToolTip("Plot position from a .pos file")
+        #self.plot_pos_btn = QtWidgets.QPushButton("Position", self)
+        #self.plot_pos_btn.setToolTip("Plot position from a .pos file")
 
         self.spatial_map_btn = QtWidgets.QPushButton("Spatial Map", self)
         self.spatial_map_btn.setToolTip("Open the Spatial Map GUI for analyzing neural activity in space")
         
         btn_layout = QtWidgets.QHBoxLayout()
 
-        button_order = [self.graph_settings_btn, self.score_btn, self.TF_btn, self.plot_pos_btn, self.spatial_map_btn, quit_btn]
+        
+        #button_order = [self.graph_settings_btn, self.score_btn, self.TF_btn, self.plot_pos_btn, self.spatial_map_btn, quit_btn]
+        button_order = [self.graph_settings_btn, self.score_btn, self.TF_btn, self.spatial_map_btn, quit_btn]
+
         for button in button_order:
             btn_layout.addWidget(button)
 
@@ -328,40 +331,55 @@ class Window(QtWidgets.QWidget):  # defines the window class (main window)
                     elif os.path.exists(base_path + '.eeg'):
                         eeg_file = base_path + '.eeg'
             
-            # Check for EOIs and save to a temp file
+            # Check for EOIs from both Automatic Detection and Score tabs and save to a temp file
             eoi_temp_file = None
-            if hasattr(self, 'score_window') and self.score_window.EOI.topLevelItemCount() > 0:
+            if hasattr(self, 'score_window'):
                 try:
                     import csv
-                    # Find start and stop columns
-                    start_col = -1
-                    stop_col = -1
-                    for key, val in self.score_window.EOI_headers.items():
-                        if 'Start Time' in key:
-                            start_col = val
-                        elif 'Stop Time' in key:
-                            stop_col = val
-                    
-                    if start_col != -1 and stop_col != -1:
-                        eoi_data = []
-                        for i in range(self.score_window.EOI.topLevelItemCount()):
-                            item = self.score_window.EOI.topLevelItem(i)
+
+                    def extract_intervals(tree_widget, headers):
+                        start_col = None
+                        stop_col = None
+                        for key, val in headers.items():
+                            if 'Start Time' in key:
+                                start_col = val
+                            elif 'Stop Time' in key:
+                                stop_col = val
+                        if start_col is None or stop_col is None:
+                            return []
+                        intervals = []
+                        for i in range(tree_widget.topLevelItemCount()):
+                            item = tree_widget.topLevelItem(i)
                             try:
-                                # Convert ms to s
                                 start_s = float(item.text(start_col)) / 1000.0
                                 stop_s = float(item.text(stop_col)) / 1000.0
-                                eoi_data.append([start_s, stop_s])
+                                intervals.append([start_s, stop_s])
                             except ValueError:
                                 continue
-                        
-                        if eoi_data:
-                            # Create temp file
-                            temp_f = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.csv', newline='', encoding='utf-8')
-                            writer = csv.writer(temp_f)
-                            writer.writerow(['Start(s)', 'Stop(s)']) # Header
-                            writer.writerows(eoi_data)
-                            eoi_temp_file = temp_f.name
-                            temp_f.close()
+                        return intervals
+
+                    eoi_data = []
+                    if hasattr(self.score_window, 'EOI'):
+                        eoi_data.extend(extract_intervals(self.score_window.EOI, self.score_window.EOI_headers))
+                    if hasattr(self.score_window, 'scores'):
+                        eoi_data.extend(extract_intervals(self.score_window.scores, self.score_window.score_headers))
+
+                    if eoi_data:
+                        seen = set()
+                        deduped = []
+                        for start_s, stop_s in eoi_data:
+                            key = (start_s, stop_s)
+                            if key in seen:
+                                continue
+                            seen.add(key)
+                            deduped.append([start_s, stop_s])
+
+                        temp_f = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.csv', newline='', encoding='utf-8')
+                        writer = csv.writer(temp_f)
+                        writer.writerow(['Start(s)', 'Stop(s)'])
+                        writer.writerows(deduped)
+                        eoi_temp_file = temp_f.name
+                        temp_f.close()
                 except Exception as e:
                     print(f"Could not save temporary EOI file: {e}")
                     eoi_temp_file = None
@@ -1583,7 +1601,7 @@ def run():
 
     main_w.score_btn.clicked.connect(lambda: raise_w(score_w, main_w))
     main_w.graph_settings_btn.clicked.connect(lambda: raise_w(setting_w, main_w))
-    main_w.plot_pos_btn.clicked.connect(main_w.plot_pos_trajectory)
+    #main_w.plot_pos_btn.clicked.connect(main_w.plot_pos_trajectory)
     main_w.spatial_map_btn.clicked.connect(main_w.open_spatial_mapper)
     main_w.main_window_fields[i_set_btn, j_set_btn].clicked.connect(lambda: raise_w(chooseSet, main_w, source='Set'))
     main_w.main_window_fields[i_intan_btn, j_intan_btn].clicked.connect(run_intan_converter)
