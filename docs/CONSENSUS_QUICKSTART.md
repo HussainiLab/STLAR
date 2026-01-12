@@ -2,13 +2,13 @@
 
 ## GUI Usage (Fastest Way)
 
-### 1. Open Score Window and Load Data
+### 1. Open HFO Detection window and Load Data
 - Graph Settings → Select .egf/.eeg file
-- Score Window → Choose source from dropdown
+- HFO Detection window → Choose source from dropdown
 
 ### 2. Run Consensus Detection
 ```
-Score Window → "Automatic Detection" tab
+HFO Detection window → "Automatic Detection" tab
   ↓
 EOI Detection Method: Select "Consensus" (new option)
   ↓
@@ -121,7 +121,7 @@ python -m stlar consensus-batch \
 
 Parameters are saved to: `HFOScores/<session>/Consensus_<session>_settings.txt`
 
-Reload with: Score Window → right-click EOI → "Open Settings File"
+Reload with: HFO Detection window → right-click EOI → "Open Settings File"
 
 ## Next Steps
 

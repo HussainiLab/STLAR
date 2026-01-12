@@ -272,7 +272,7 @@ You'll see a window with buttons to:
 
 1. **Import Set** (required): In the main window click **"Import Set"** → pick a `.set` file **or a folder containing it** (use **"Choose a Set file"** or **"Choose a Folder"**) → click **Apply**. The main window shows the chosen path and loads sources.
 2. **Select source & params:** Click **"Graph Settings"**. In the Graph Settings window pick the source (.eeg/.egf), set frequency bands and thresholds. Close/Hide to return.
-3. **Open scoring/detection:** Click **"Score"** to open the Score window. Go to the **Automatic Detection** tab.
+3. **Open scoring/detection:** Click **"HFO Detection"** to open the **HFO Detection window**. Go to the **Automatic Detection** tab.
 4. **Run detection:** Choose a method (Hilbert, STE, MNI, Consensus, DL), adjust parameters if needed, then click **"Run Detection"**.
 5. **Review detections:** Still in **Automatic Detection**, sort/filter the detected EOIs; preview on the plot.
 6. **Send to Score tab:** Select EOIs to keep → click **"Add Selected EOI(s) to Score"**.
@@ -288,7 +288,7 @@ You'll see a window with buttons to:
 python -m stlar spatial-gui
 ```
 
-This shows a heatmap of HFO activity across the recording arena with position tracking overlays.
+This shows a heatmap of HFO activity across the recording arena with position tracking overlays. When launched from the GUI, EOIs from both **Automatic Detection** and **Score** tabs are passed automatically to spatial mapper.
 
 ---
 
@@ -353,7 +353,7 @@ fast_ripples = detector.detect_ripples(method='hilbert',
 
 ### GUI Workflow Overview
 
-**The Score window workflow (fast overview):**
+**The HFO Detection window workflow (fast overview):**
 
 1. **Detect EOIs** with Hilbert / STE / MNI / Consensus / Deep Learning in the **Automatic Detection** tab
 2. **Select EOIs** from the detection table and click **"Add Selected EOI(s) to Score"** to move them to the **Score** tab
@@ -2043,7 +2043,7 @@ prob = 1 / (1 + np.exp(-logit))
 
 ### Deep Learning (Training Data Preparation)
 - Location: `hfoGUI/dl_training/`
-- Entry: `python -m stlar prepare-dl` (CLI) or GUI Score window
+- Entry: `python -m stlar prepare-dl` (CLI) or GUI HFO Detection window
 - See: [hfoGUI/dl_training/README.md](hfoGUI/dl_training/README.md)
 
 ## Original Tools
