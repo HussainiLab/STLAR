@@ -50,21 +50,22 @@ def create_eeg_and_egf_files(intan_data: dict, session_name: str, output_dir: st
             write_eeg_or_egf_file(egf_ephys_data, duration, efg_header, channel, session_name, output_dir, is_egf=True)
 
 
-            # EEG
-            eeg_ephys_data, N = fir_hann(egf_ephys_data, 4.8e3, 125, n_taps=101, showresponse=0)
+            # EEG - downsample from egf (4800 Hz) to 250 Hz
+            try:
+                # Convert to float for downsampling to avoid integer overflow issues
+                eeg_ephys_data = down_sample_timeseries(egf_ephys_data.astype(np.float32), 4.8e3, 250)
 
-            # converting data from int16 to int8
-            #value = np.divide(eeg_ephys_data, 256).astype(int)
-            #eeg_ephys_data[np.where(eeg_ephys_data > 127)] = 127
-            #eeg_ephys_data[np.where(eeg_ephys_data < -128)] = -128
+                # converting data from int16 to int8 - scale down by 256 and clip to int8 range
+                eeg_ephys_data = np.divide(eeg_ephys_data, 256.0)
+                eeg_ephys_data = np.clip(eeg_ephys_data, -128, 127)
+                eeg_ephys_data = eeg_ephys_data.astype(np.int8)
 
-            # downsample the data
-            eeg_ephys_data = down_sample_timeseries(filtered_data, 4.8e3, 250)
-
-            eeg_ephys_data = eeg_ephys_data.astype(np.int8)
-
-
-            write_eeg_or_egf_file(eeg_ephys_data, duration, eeg_header, channel, session_name, output_dir, is_egf=False)
+                write_eeg_or_egf_file(eeg_ephys_data, duration, eeg_header, channel, session_name, output_dir, is_egf=False)
+                print(f"Successfully created .eeg file for channel {channel}")
+            except Exception as e:
+                print(f"Error creating .eeg file for channel {channel}: {e}")
+                import traceback
+                traceback.print_exc()
 
 
 
@@ -91,43 +92,99 @@ def write_eeg_or_egf_file(lfp_single_unit_data, duration,lfp_header_dict, channe
     """
 
     if is_egf:
-        filepath = os.path.join(output_dir, session_name + '.egf{}'.format(channel_name[-3:]))
-    else:
-        filepath = os.path.join(output_dir, session_name + '.eeg{}'.format(channel_name[-3:]))
-
-
-    with open(filepath, 'w') as f:
-        header = "\nThis data set was created by the hfoGUI software."
-
-        num_chans = '\nnum_chans 1'
-
-        num_samples = len(lfp_single_unit_data)
-
-        if is_egf:
-            sample_rate = '\nsample_rate 4.8e3'
-            b_p_sample = '\nbytes_per_sample 2'
+        # For channel 000, use .egf without suffix; for others, use .egf### with channel number
+        if channel_name[-3:] == '000':
+            filepath = os.path.join(output_dir, session_name + '.egf')
         else:
-            sample_rate = '\nsample_rate 250 Hz'
-            b_p_sample = '\nbytes_per_sample 1'
+            filepath = os.path.join(output_dir, session_name + '.egf{}'.format(channel_name[-3:]))
+    else:
+        # For channel 000, use .eeg without suffix; for others, use .eeg### with channel number
+        if channel_name[-3:] == '000':
+            filepath = os.path.join(output_dir, session_name + '.eeg')
+        else:
+            filepath = os.path.join(output_dir, session_name + '.eeg{}'.format(channel_name[-3:]))
 
-        num_samples_line = '\nnum_samples %d' % (num_samples)
+    # Parse date and time from session name if possible (format: YYYYMMDD-X-YY-HHMM)
+    # Default values if parsing fails
+    trial_date = datetime.datetime.now().strftime('%A, %d %b %Y')
+    trial_time = datetime.datetime.now().strftime('%H:%M:%S')
+    
+    # Try to parse from session_name (e.g., "20160908-2-NO-3700")
+    import re
+    date_match = re.match(r'(\d{4})(\d{2})(\d{2})', session_name)
+    if date_match:
+        year, month, day = date_match.groups()
+        try:
+            date_obj = datetime.datetime(int(year), int(month), int(day))
+            trial_date = date_obj.strftime('%A, %d %b %Y')
+        except:
+            pass
+    
+    # Try to parse time from session_name (last 4 digits as HHMM)
+    time_match = re.search(r'(\d{2})(\d{2})$', session_name)
+    if time_match:
+        hour, minute = time_match.groups()
+        trial_time = f"{hour}:{minute}:00"
 
-        p_position = '\nsamples_per_position %d' % (5)
+    num_samples = len(lfp_single_unit_data)
 
-        duration = '\nduration %.3f' % (duration)
+    # Build header lines using CRLF so downstream parsers can locate sample_rate and data_end reliably
+    trial_date_line = f"trial_date {trial_date}"
+    trial_time_line = f"trial_time {trial_time}"
+    experimenter_line = "experimenter Abid"
+    comments_line = "comments "
+    duration_line = f"duration {int(duration)}"
+    sw_version_line = "sw_version 1.2.2.16"
+    num_chans_line = "num_chans 1"
 
-        start = '\ndata_start'
+    if is_egf:
+        # EGF format
+        sample_rate_line = "sample_rate 4800 Hz"
+        bytes_per_sample_line = "bytes_per_sample 2"
+        num_samples_line = f"num_EGF_samples {num_samples}"
+        write_order = [
+            trial_date_line,
+            trial_time_line,
+            experimenter_line,
+            comments_line,
+            duration_line,
+            sw_version_line,
+            num_chans_line,
+            sample_rate_line,
+            bytes_per_sample_line,
+            num_samples_line,
+            "data_start",
+        ]
+    else:
+        # EEG format (includes EEG_samples_per_position)
+        sample_rate_line = "sample_rate 250.0 hz"
+        samples_per_position_line = "EEG_samples_per_position 5"
+        bytes_per_sample_line = "bytes_per_sample 1"
+        num_samples_line = f"num_EEG_samples {num_samples}"
+        write_order = [
+            trial_date_line,
+            trial_time_line,
+            experimenter_line,
+            comments_line,
+            duration_line,
+            sw_version_line,
+            num_chans_line,
+            sample_rate_line,
+            samples_per_position_line,
+            bytes_per_sample_line,
+            num_samples_line,
+            "data_start",
+        ]
 
-        write_order = [header, num_chans,sample_rate, p_position, b_p_sample, num_samples_line, start]
-
-        # write the header to the file
-        f.writelines(write_order)
+    header_bytes = "\r\n".join(write_order).encode("ascii")
+    with open(filepath, "wb") as f:
+        f.write(header_bytes)
 
     # write the data to the file
     if is_egf:
         data = struct.pack('<%dh' % (num_samples), *[np.int16(data_value) for data_value in lfp_single_unit_data.tolist()])
     else:
-        data = struct.pack('<%dh' % (num_samples), *[np.int8(data_value) for data_value in lfp_single_unit_data.tolist()])
+        data = struct.pack('<%db' % (num_samples), *[np.int8(data_value) for data_value in lfp_single_unit_data.tolist()])
 
 
     with open(filepath, 'rb+') as f:
@@ -509,20 +566,62 @@ def get_set_header(set_filename):
 def write_faux_set_file(intan_header_dict, session_name, output_dir, duration):
     set_filepath = os.path.join(output_dir, session_name + '.set')
 
-    timestamp = 'created ' + datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    duration = '\nduration {}'.format(str(duration))
+    # Derive timing information from session name if possible
+    trial_date = datetime.datetime.now().strftime('%A, %d %b %Y')
+    trial_time = datetime.datetime.now().strftime('%H:%M:%S')
+    import re
+    date_match = re.match(r'(\d{4})(\d{2})(\d{2})', session_name)
+    if date_match:
+        y, m, d = date_match.groups()
+        try:
+            dt = datetime.datetime(int(y), int(m), int(d))
+            trial_date = dt.strftime('%A, %d %b %Y')
+        except Exception:
+            pass
+    time_match = re.search(r'(\d{2})(\d{2})(?:\d{2})?$', session_name)
+    if time_match:
+        hh, mm = time_match.groups()[:2]
+        trial_time = f"{hh}:{mm}:00"
 
-    ADC_fullscale_mv = '\nADC_fullscale_mv {}'.format(1500) # TODO - 1500 may not be the correct number; replace with real one once you can ask Abid what it should be
+    duration_sec = int(round(float(duration)))
+    eeg_samples = duration_sec * 250  # matches sample_rate 250.0 hz
 
-    gains = ['\ngain_ch_{} {}'.format(channel[-3:], 6277) for channel in intan_header_dict['channels']] # TODO - 6277 is a fake number; replace with real one once you can ask Abid what it should be; Are these gain values inside the intan header??? Maybe in the channel data dictionary?
-    EEG_ch = ['\nEEG_ch_{} {}'.format(channel[-3:], int(channel[-3:]) + 1) for channel in intan_header_dict['channels']]
+    # Header block matching expected Tint-style set format
+    header_lines = [
+        f"trial_date {trial_date}",
+        f"trial_time {trial_time}",
+        "experimenter Abid",
+        "comments ",
+        f"duration {duration_sec}",
+        "sw_version 1.2.2.16",
+        "num_chans 1",
+        "sample_rate 250.0 hz",
+        "EEG_samples_per_position 5",
+        "bytes_per_sample 1",
+        f"num_EEG_samples {eeg_samples}",
+        "data_start",
+    ]
 
-    additional = '\nThis is a fake set file created by the hfoGUI software.\n' \
+    # Fields needed by bits2uV()
+    ADC_fullscale_mv = "ADC_fullscale_mv 1500"
+    gains = []
+    eeg_ch_map = []
+    save_eeg = []
+    default_gain = 192  # Intan RHD2000 datasheet default gain V/V
+    for idx, _ in enumerate(intan_header_dict['channels']):
+        gains.append(f"gain_ch_{idx} {default_gain}")
+        eeg_ch_id = idx + 1
+        eeg_ch_map.append(f"EEG_ch_{eeg_ch_id} {eeg_ch_id}")
+        save_eeg.append(f"saveEEG_ch_{eeg_ch_id} 1")
 
-    write_order = [timestamp, duration, ADC_fullscale_mv] + gains + EEG_ch + [additional]
+    footer = "This is a faux set file created by the hfoGUI software."
 
-    with open(set_filepath, 'w+') as f:
-        f.writelines(write_order)
+    # Assemble file with CRLF line endings to mirror Tint output
+    body = header_lines + [ADC_fullscale_mv] + gains + eeg_ch_map + save_eeg + [footer]
+    content = "\r\n".join(body) + "\r\n"
+
+    with open(set_filepath, 'w+', encoding='cp1252', newline='') as f:
+        f.write(content)
 
 def intan_to_lfp_header_dict(intan_data: dict, egf=True) -> dict:
     """
