@@ -236,16 +236,29 @@ def main():
         irfiltered_data, Fs=intan_sample_rate, freq=60, band=10, order=2, showresponse=0
     )
 
-    if create_egf:
-        # Create EGF file (4.8 kHz)
-        egf_ephys_data = down_sample_timeseries(filtered_data, intan_sample_rate, 4.8e3)
-        egf_ephys_data = egf_ephys_data.astype('int16')
-        write_eeg_or_egf_file(egf_ephys_data, duration, header, target_channel_name, session_name, output_dir, is_egf=True)
-    else:
-        # Create EEG file (250 Hz)
-        eeg_ephys_data = down_sample_timeseries(filtered_data, intan_sample_rate, 250)
-        eeg_ephys_data = eeg_ephys_data.astype('int8')
-        write_eeg_or_egf_file(eeg_ephys_data, duration, header, target_channel_name, session_name, output_dir, is_egf=False)
+    # Always create both EGF and EEG files
+    # Create EGF file (4.8 kHz)
+    egf_ephys_data = down_sample_timeseries(filtered_data, intan_sample_rate, 4.8e3)
+    egf_ephys_data = egf_ephys_data.astype('int16')
+    
+    # Create EGF header
+    egf_header = intan_to_lfp_header_dict(intan_data, egf=True)
+    egf_header['channels'] = [target_channel_name]
+    write_eeg_or_egf_file(egf_ephys_data, duration, egf_header, target_channel_name, session_name, output_dir, is_egf=True)
+    print(f"Created .egf file for {target_channel_name}")
+    
+    # Create EEG file (250 Hz) - downsample from egf data
+    eeg_ephys_data = down_sample_timeseries(egf_ephys_data.astype(np.float32), 4.8e3, 250)
+    # Scale int16 to int8 range
+    eeg_ephys_data = np.divide(eeg_ephys_data, 256.0)
+    eeg_ephys_data = np.clip(eeg_ephys_data, -128, 127)
+    eeg_ephys_data = eeg_ephys_data.astype('int8')
+    
+    # Create EEG header
+    eeg_header = intan_to_lfp_header_dict(intan_data, egf=False)
+    eeg_header['channels'] = [target_channel_name]
+    write_eeg_or_egf_file(eeg_ephys_data, duration, eeg_header, target_channel_name, session_name, output_dir, is_egf=False)
+    print(f"Created .eeg file for {target_channel_name}")
 
     print(f"\nConversion complete!")
     print(f"Session name: {session_name}")
