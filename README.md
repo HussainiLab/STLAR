@@ -972,6 +972,21 @@ python -m stlar metrics-batch \
   -v
 ```
 
+With behavior gating using position data for speed computation:
+```bash
+python -m stlar metrics-batch \
+  -f HFOScores/recording_HIL.txt \
+  --preset LEC \
+  --behavior-gating \
+  --ppm 500 \
+  --pos-file HFOScores/recording.pos \
+  --speed-min 0.5 \
+  --speed-max 3.0 \
+  --save-filtered \
+  --duration-min 30 \
+  -v
+```
+
 Directory batch with custom presets file and speed override:
 ```bash
 python -m stlar metrics-batch \
@@ -996,7 +1011,9 @@ python -m stlar metrics-batch \
 | `--preset` | str | optional | Region preset name (LEC, Hippocampus, MEC; extendable via preset file) |
 | `--preset-file` | str | optional | JSON file to override/extend presets (dict keyed by region names) |
 | `--band` | str | optional | Comma-separated band/label filters (matches label/score column) |
-| `--behavior-gating` | flag | off | Apply speed gating if a speed column exists in scores |
+| `--behavior-gating` | flag | off | Apply speed gating if a speed column exists in scores, or compute from position file |
+| `--ppm` | int | optional | Pixels per meter for .pos file conversion (e.g., 500, 600). Required if using `--pos-file` |
+| `--pos-file` | str | optional | Path to .pos file for computing speed during behavior gating. Ignored if speed column already in scores |
 | `--speed-min` | float | optional | Override min speed for gating (cm/s) |
 | `--speed-max` | float | optional | Override max speed for gating (cm/s) |
 | `--save-filtered` | flag | off | Save preset-filtered scores to `<output>/filtered_scores/` |
@@ -1040,6 +1057,22 @@ Filter existing score files by event duration to remove short noise bursts or lo
 python -m stlar filter-scores -f <scores_file> [options]
 ```
 
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `-f, --scores` | str | **required** | Path to scores file (.txt) or directory containing scores files |
+| `--min-duration-ms` | float | optional | Event duration minimum in milliseconds |
+| `--max-duration-ms` | float | optional | Event duration maximum in milliseconds |
+| `--band` | str | optional | Comma-separated band/label filters (matches label/score column) |
+| `--behavior-gating` | flag | off | Apply speed gating if a speed column exists in scores, or compute from position file |
+| `--ppm` | int | optional | Pixels per meter for .pos file conversion (e.g., 500, 600). Required if using `--pos-file` |
+| `--pos-file` | str | optional | Path to .pos file for computing speed during behavior gating. Ignored if speed column already in scores |
+| `--speed-min` | float | optional | Override min speed for gating (cm/s) |
+| `--speed-max` | float | optional | Override max speed for gating (cm/s) |
+| `-o, --output` | str | scores parent | Output directory for filtered scores files |
+| `-v, --verbose` | flag | off | Verbose progress logging |
+
 **Examples:**
 
 Remove short events (< 15 ms) and long artifacts (> 150 ms):
@@ -1071,6 +1104,19 @@ python -m stlar filter-scores \
   -v
 ```
 
+With behavior gating using position data for speed computation:
+```bash
+python -m stlar filter-scores \
+  -f scores.txt \
+  --band ripple \
+  --behavior-gating \
+  --ppm 500 \
+  --pos-file recording.pos \
+  --speed-min 0.5 \
+  --speed-max 4.0 \
+  -v
+```
+
 Band filtering only with custom speed thresholds (no preset):
 ```bash
 python -m stlar filter-scores \
@@ -1087,13 +1133,13 @@ python -m stlar filter-scores \
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `-f, --scores` | str | **required** | Path to scores file to filter |
-| `--min-duration-ms` | float | optional | Minimum event duration in milliseconds |
-| `--max-duration-ms` | float | optional | Maximum event duration in milliseconds |
-| `--preset` | str | optional | Region preset name (LEC, Hippocampus, MEC; extendable via preset file) |
-| `--preset-file` | str | optional | JSON file to override/extend presets (dict keyed by region names) |
+| `-f, --scores` | str | **required** | Path to scores file (.txt) or directory containing scores files |
+| `--min-duration-ms` | float | optional | Event duration minimum in milliseconds |
+| `--max-duration-ms` | float | optional | Event duration maximum in milliseconds |
 | `--band` | str | optional | Comma-separated band/label filters (matches label/score column) |
-| `--behavior-gating` | flag | off | Apply speed gating if a speed column exists in scores |
+| `--behavior-gating` | flag | off | Apply speed gating if a speed column exists in scores, or compute from position file |
+| `--ppm` | int | optional | Pixels per meter for .pos file conversion (e.g., 500, 600). Required if using `--pos-file` |
+| `--pos-file` | str | optional | Path to .pos file for computing speed during behavior gating. Ignored if speed column already in scores |
 | `--speed-min` | float | optional | Override min speed for gating (cm/s) |
 | `--speed-max` | float | optional | Override max speed for gating (cm/s) |
 | `-o, --output` | str | scores parent | Output directory for filtered scores |

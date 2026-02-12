@@ -312,6 +312,96 @@ def _process_consensus_file(data_path: Path, set_path: Optional[Path], args: arg
 
 
 
+def _compute_speed_at_events(events_ms, pos_file, custom_ppm, fs_eeg, verbose=False):
+    """
+    Compute animal speed at event times from .pos file.
+    
+    Parameters:
+    -----------
+    events_ms : np.ndarray of shape (N, 2)
+        Event times in milliseconds [start_ms, stop_ms]
+    pos_file : Path or str
+        Path to .pos file
+    custom_ppm : int or float
+        Pixels per meter for position conversion
+    fs_eeg : float
+        EEG sampling rate (for time alignment)
+    verbose : bool
+        Print debug info
+        
+    Returns:
+    --------
+    np.ndarray of shape (N,) or None
+        Mean speed (cm/s) at each event, or None if pos file not found
+    """
+    try:
+        from .core.Tint_Matlab import getpos, speed2D
+        
+        pos_file = Path(pos_file) if isinstance(pos_file, str) else pos_file
+        if not pos_file.exists():
+            if verbose:
+                print(f"    Position file not found: {pos_file}")
+            return None
+        
+        if verbose:
+            print(f"    Loading position data from {pos_file.name}...")
+        
+        # Load raw position data without arena transformations
+        x_raw, y_raw, t_raw, fs_pos = getpos(str(pos_file), arena='Linear Track', method='raw', custom_ppm=custom_ppm)
+        
+        if x_raw is None or len(x_raw) == 0:
+            if verbose:
+                print("    Position data empty or invalid")
+            return None
+        
+        # Clean position data
+        x_clean = x_raw.flatten().copy().astype(float)
+        y_clean = y_raw.flatten().copy().astype(float)
+        t_clean = t_raw.flatten().copy().astype(float)
+        
+        # Remove missing data markers and NaNs
+        x_clean[x_clean == 1023] = np.nan
+        y_clean[y_clean == 1023] = np.nan
+        
+        valid_idx = ~(np.isnan(x_clean) | np.isnan(y_clean))
+        if np.sum(valid_idx) == 0:
+            if verbose:
+                print("    No valid position data after cleaning")
+            return None
+        
+        x_clean = x_clean[valid_idx]
+        y_clean = y_clean[valid_idx]
+        t_clean = t_clean[valid_idx]
+        
+        # Compute 2D speed
+        speed_trace = speed2D(x_clean.reshape(-1, 1), y_clean.reshape(-1, 1), t_clean.reshape(-1, 1))
+        speed_trace = np.asarray(speed_trace, dtype=np.float32).flatten()
+        
+        if verbose:
+            print(f"    Computed speed trace: {len(speed_trace)} samples at {fs_pos} Hz")
+        
+        # Sample speed at each event  (use midpoint of event)
+        speed_at_events = []
+        for s_ms, e_ms in events_ms:
+            # Event midpoint in seconds
+            midpoint_sec = (s_ms + e_ms) / 2000.0
+            # Convert to position sampling index
+            idx = int(midpoint_sec * fs_pos)
+            idx = max(0, min(idx, len(speed_trace) - 1))
+            
+            speed_val = speed_trace[idx]
+            speed_at_events.append(speed_val)
+        
+        return np.array(speed_at_events, dtype=float)
+        
+    except Exception as e:
+        if verbose:
+            import traceback
+            print(f"    Error computing speed: {e}")
+            traceback.print_exc()
+        return None
+
+
 def _save_results(events, params, data_path, set_path, args, method_tag):
     """Helper to save events and settings to disk."""
     # Ensure events is a numpy array
@@ -354,13 +444,15 @@ def _save_results(events, params, data_path, set_path, args, method_tag):
         start_times = []
         stop_times = []
 
-    df = pd.DataFrame({
+    # Build dataframe
+    df_dict = {
         'ID#:': ids,
         'Start Time(ms):': start_times,
         'Stop Time(ms):': stop_times,
         'Settings File:': settings_path.as_posix(),
-    })
-
+    }
+    
+    df = pd.DataFrame(df_dict)
     df.to_csv(str(scores_path), sep='\t', index=False)
 
     if args.verbose:
@@ -512,9 +604,11 @@ def build_parser() -> argparse.ArgumentParser:
     metrics_parser.add_argument('--preset', help='Region preset name (e.g., LEC, Hippocampus, MEC)')
     metrics_parser.add_argument('--preset-file', help='Optional JSON file with region presets to override/extend defaults')
     metrics_parser.add_argument('--band', help='Comma-separated band/label filters (matches label/score column)')
-    metrics_parser.add_argument('--behavior-gating', action='store_true', help='Apply behavior gating (speed thresholds) if speed column exists')
+    metrics_parser.add_argument('--behavior-gating', action='store_true', help='Apply behavior gating (speed thresholds) if speed column exists or can be computed from .pos file')
     metrics_parser.add_argument('--speed-min', type=float, help='Override min speed for behavior gating (cm/s)')
     metrics_parser.add_argument('--speed-max', type=float, help='Override max speed for behavior gating (cm/s)')
+    metrics_parser.add_argument('--pos-file', help='Optional .pos file for computing speed during behavior gating')
+    metrics_parser.add_argument('--ppm', type=int, help='Pixels per meter for .pos file conversion (e.g., 500, 600)')
     metrics_parser.add_argument('--save-filtered', action='store_true', help='Save preset-annotated filtered scores to filtered_scores/ subdirectory')
     metrics_parser.add_argument('-o', '--output', help='Output directory for metrics (default: scores parent dir)')
     metrics_parser.add_argument('-v', '--verbose', action='store_true', help='Verbose logging')
@@ -527,9 +621,11 @@ def build_parser() -> argparse.ArgumentParser:
     filter_parser.add_argument('--preset', help='Region preset name (e.g., LEC, Hippocampus, MEC)')
     filter_parser.add_argument('--preset-file', help='Optional JSON file with region presets to override/extend defaults')
     filter_parser.add_argument('--band', help='Comma-separated band/label filters (matches label/score column)')
-    filter_parser.add_argument('--behavior-gating', action='store_true', help='Apply behavior gating (speed thresholds) if speed column exists')
+    filter_parser.add_argument('--behavior-gating', action='store_true', help='Apply behavior gating (speed thresholds) if speed column exists or can be computed from .pos file')
     filter_parser.add_argument('--speed-min', type=float, help='Override min speed for behavior gating (cm/s)')
     filter_parser.add_argument('--speed-max', type=float, help='Override max speed for behavior gating (cm/s)')
+    filter_parser.add_argument('--pos-file', help='Optional .pos file for computing speed during behavior gating')
+    filter_parser.add_argument('--ppm', type=int, help='Pixels per meter for .pos file conversion (e.g., 500, 600)')
     filter_parser.add_argument('-o', '--output', help='Output directory for filtered scores (default: scores parent dir)')
     filter_parser.add_argument('-v', '--verbose', action='store_true', help='Verbose logging')
 
@@ -1715,6 +1811,29 @@ def run_metrics_batch(args: argparse.Namespace):
             
             # Load scores
             starts, stops, df = _load_scores_from_txt(scores_file)
+            
+            # Ensure starts/stops are numpy arrays
+            starts = np.asarray(starts, dtype=float)
+            stops = np.asarray(stops, dtype=float)
+
+            # Compute speed if behavior gating is enabled and we have position data
+            behavior_flag = args.behavior_gating or (preset.get('behavior_gating', False) if preset else False)
+            if behavior_flag and hasattr(args, 'ppm') and args.ppm and hasattr(args, 'pos_file') and args.pos_file:
+                pos_file = Path(args.pos_file).expanduser()
+                if 'Speed(cm/s):' not in df.columns:  # Only compute if not already in file
+                    speed_values = _compute_speed_at_events(
+                        np.column_stack((starts, stops)),
+                        pos_file,
+                        args.ppm,
+                        fs_eeg=50,  # Position file sampling rate is typically 50 Hz
+                        verbose=args.verbose
+                    )
+                    if speed_values is not None:
+                        df['Speed(cm/s):'] = speed_values
+                        if args.verbose:
+                            print(f"  Added speed column from {pos_file.name}")
+                    else:
+                        print(f"  Warning: Could not compute speed from {pos_file.name}")
 
             # Apply preset/gating mask if requested
             preset = presets.get(args.preset) if args.preset else None
@@ -1801,7 +1920,29 @@ def run_filter_scores(args: argparse.Namespace):
     try:
         # Load scores
         starts, stops, df = _load_scores_from_txt(scores_path)
+        
+        # Ensure starts/stops are numpy arrays
+        starts = np.asarray(starts, dtype=float)
+        stops = np.asarray(stops, dtype=float)
         durations_ms = stops - starts
+
+        # Compute speed if behavior gating is enabled and we have position data
+        if args.behavior_gating and hasattr(args, 'ppm') and args.ppm and hasattr(args, 'pos_file') and args.pos_file:
+            pos_file = Path(args.pos_file).expanduser()
+            if 'Speed(cm/s):' not in df.columns:  # Only compute if not already in file
+                speed_values = _compute_speed_at_events(
+                    np.column_stack((starts, stops)),
+                    pos_file,
+                    args.ppm,
+                    fs_eeg=50,  # Position file sampling rate is typically 50 Hz
+                    verbose=args.verbose
+                )
+                if speed_values is not None:
+                    df['Speed(cm/s):'] = speed_values
+                    if args.verbose:
+                        print(f"Added speed column from {pos_file.name}")
+                else:
+                    print(f"Warning: Could not compute speed from {pos_file.name}")
 
         # Base duration filters
         mask = np.ones(len(starts), dtype=bool)
