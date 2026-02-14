@@ -28,6 +28,7 @@ from core.processors.spectral_functions import (
 )
 matplotlib.use('Agg')  # Use Agg backend - no display needed
 from matplotlib import pyplot as plt
+from matplotlib.patches import Ellipse
 import os
 os.environ['QT_QPA_PLATFORM'] = 'offscreen'  # Set Qt to offscreen mode
 
@@ -177,36 +178,295 @@ def find_eoi_file(electrophys_file):
             
     return None
 
+
+def resolve_eoi_file(electrophys_file, eoi_file_override=None):
+    """Resolve EOI file from explicit path or auto-detection."""
+    if not eoi_file_override:
+        return find_eoi_file(electrophys_file)
+
+    override = os.path.expanduser(eoi_file_override)
+    if os.path.isdir(override):
+        base_name = os.path.splitext(os.path.basename(electrophys_file))[0]
+        candidates = [
+            os.path.join(override, f"{base_name}_EOI.csv"),
+            os.path.join(override, f"{base_name}.csv"),
+        ]
+        for tag in ['HIL', 'STE', 'MNI', 'DL', 'CON']:
+            candidates.append(os.path.join(override, f"{base_name}_{tag}.txt"))
+        for candidate in candidates:
+            if os.path.exists(candidate):
+                return candidate
+        return None
+
+    return override if os.path.exists(override) else None
+
 def load_eois(eoi_file):
-    """Load EOIs from CSV or Score file. Returns list of (start, stop) in seconds."""
+    """Load EOIs from CSV or score file. Returns list of dicts with start/stop (s) and label."""
     eois = []
+    header_map = None
     try:
         with open(eoi_file, 'r') as f:
             reader = csv.reader(f, delimiter='\t' if eoi_file.endswith('.txt') else ',')
             for row in reader:
-                if not row: continue
-                # Skip header if present (heuristic: first col is string "ID" or similar)
-                if "ID" in row[0] or "Start" in row[0]: continue
-                
+                if not row:
+                    continue
+
+                if header_map is None:
+                    lowered = [cell.strip().lower() for cell in row]
+                    if any("start" in cell for cell in lowered) and any("stop" in cell for cell in lowered):
+                        header_map = {
+                            "start": next(i for i, cell in enumerate(lowered) if "start" in cell),
+                            "stop": next(i for i, cell in enumerate(lowered) if "stop" in cell),
+                            "label": next((i for i, cell in enumerate(lowered) if "label" in cell or "band" in cell), None),
+                        }
+                        continue
+
                 try:
-                    # HFO Score format: ID, Start(ms), Stop(ms), ...
-                    # CSV format: Start(s), Stop(s) OR Start(ms), Stop(ms) (heuristic)
-                    
-                    # Assume HFO Score format (ms) if 3+ columns and file is .txt
+                    if header_map is not None:
+                        start = float(row[header_map["start"]])
+                        stop = float(row[header_map["stop"]])
+                        label = None
+                        if header_map["label"] is not None and header_map["label"] < len(row):
+                            label = row[header_map["label"]].strip() or None
+                        if eoi_file.endswith('.txt'):
+                            start /= 1000.0
+                            stop /= 1000.0
+                        eois.append({"start": start, "stop": stop, "label": label})
+                        continue
+
+                    # HFO score format: ID, Start(ms), Stop(ms), Settings, Label, ...
                     if eoi_file.endswith('.txt') and len(row) >= 3:
                         start = float(row[1]) / 1000.0
                         stop = float(row[2]) / 1000.0
-                        eois.append((start, stop))
+                        label = row[4].strip() if len(row) >= 5 and row[4].strip() else None
+                        eois.append({"start": start, "stop": stop, "label": label})
                     elif len(row) >= 2:
-                        # Assume seconds for simple CSV
+                        # Simple CSV: Start(s), Stop(s), optional Label
                         start = float(row[0])
                         stop = float(row[1])
-                        eois.append((start, stop))
-                except (ValueError, IndexError):
+                        label = row[2].strip() if len(row) >= 3 and row[2].strip() else None
+                        eois.append({"start": start, "stop": stop, "label": label})
+                except (ValueError, IndexError, StopIteration):
                     continue
     except Exception as e:
         print(f"  ⚠ Error loading EOIs from {eoi_file}: {e}")
     return eois
+
+
+def _normalize_label(label):
+    if not label:
+        return "eoi"
+    return " ".join(label.strip().lower().split())
+
+
+def _label_color(label, fallback_index):
+    palette = {
+        "ripple": "#1f77b4",
+        "fast ripple": "#ff7f0e",
+        "fast_ripple": "#ff7f0e",
+        "fr": "#ff7f0e",
+        "artifact": "#d62728",
+        "noise": "#d62728",
+        "eoi": "#2ca02c",
+        "unknown": "#7f7f7f",
+    }
+    normalized = _normalize_label(label)
+    if normalized in palette:
+        return palette[normalized]
+    cycle = plt.get_cmap("tab10").colors
+    return cycle[fallback_index % len(cycle)]
+
+
+def plot_trajectory_with_eois(output_path, pos_x_chunks, pos_y_chunks, eoi_segments, ppm=None, arena_shape=None, binned_data=None):
+    if pos_x_chunks is None or pos_y_chunks is None:
+        print("  ⚠ No tracking data available for trajectory plot.")
+        return
+
+    def _flatten(chunks):
+        arrays = [np.asarray(chunk) for chunk in chunks if len(chunk) > 0]
+        return np.concatenate(arrays) if arrays else np.array([])
+
+    def _to_cm(values):
+        if ppm is not None and ppm > 0:
+            return (values / ppm) * 100.0
+        return values
+
+    def _draw_bins(ax, min_x, max_x, min_y, max_y):
+        is_polar = False
+        if arena_shape:
+            is_polar = ("Circle" in arena_shape or "Ellipse" in arena_shape)
+
+        if is_polar:
+            width = max_x - min_x
+            height = max_y - min_y
+            center_x = min_x + width / 2.0
+            center_y = min_y + height / 2.0
+
+            if width <= 0 or height <= 0:
+                return
+
+            e1 = Ellipse((center_x, center_y), width, height, fill=False, edgecolor='gray', linestyle='--', alpha=0.5)
+            ax.add_patch(e1)
+            scale = 1.0 / np.sqrt(2)
+            e2 = Ellipse((center_x, center_y), width * scale, height * scale, fill=False, edgecolor='gray', linestyle='--', alpha=0.5)
+            ax.add_patch(e2)
+
+            angles = np.linspace(-np.pi, np.pi, 9)
+            for theta in angles:
+                x_edge = center_x + (width / 2.0) * np.cos(theta)
+                y_edge = center_y + (height / 2.0) * np.sin(theta)
+                ax.plot([center_x, x_edge], [center_y, y_edge], color='gray', linestyle='--', alpha=0.5, linewidth=0.8)
+        else:
+            if binned_data and 'x_bin_edges' in binned_data and 'y_bin_edges' in binned_data:
+                x_edges = _to_cm(np.asarray(binned_data['x_bin_edges']))
+                y_edges = _to_cm(np.asarray(binned_data['y_bin_edges']))
+            else:
+                x_edges = np.linspace(min_x, max_x, 5)
+                y_edges = np.linspace(min_y, max_y, 5)
+            for x in x_edges:
+                ax.axvline(x, color='gray', linestyle='--', alpha=0.5, linewidth=0.8)
+            for y in y_edges:
+                ax.axhline(y, color='gray', linestyle='--', alpha=0.5, linewidth=0.8)
+
+    def _compute_occupancy(traj_x, traj_y, min_x, max_x, min_y, max_y):
+        is_polar = False
+        if arena_shape:
+            is_polar = ("Circle" in arena_shape or "Ellipse" in arena_shape)
+
+        if traj_x.size == 0 or traj_y.size == 0:
+            return None
+
+        if is_polar:
+            width = max_x - min_x
+            height = max_y - min_y
+            if width <= 0 or height <= 0:
+                return None
+            center_x = min_x + width / 2.0
+            center_y = min_y + height / 2.0
+            dx = traj_x - center_x
+            dy = traj_y - center_y
+            rx = width / 2.0 if width > 0 else 1.0
+            ry = height / 2.0 if height > 0 else 1.0
+            r_norm = np.sqrt((dx / rx) ** 2 + (dy / ry) ** 2)
+            theta = np.arctan2(dy, dx)
+            r_edges = np.array([0.0, 1.0 / np.sqrt(2), 1e9])
+            theta_edges = np.linspace(-np.pi, np.pi, 9)
+            occ_counts, _, _ = np.histogram2d(r_norm, theta, bins=[r_edges, theta_edges])
+            total = np.sum(occ_counts)
+            if total <= 0:
+                return None
+            occ_pct = (occ_counts / total) * 100.0
+            return {
+                "is_polar": True,
+                "values": occ_pct,
+                "radius_edges": np.array([0.0, 1.0 / np.sqrt(2), 1.0]),
+                "angle_edges": theta_edges,
+                "center": (center_x, center_y),
+                "width": width,
+                "height": height,
+            }
+
+        if binned_data and 'x_bin_edges' in binned_data and 'y_bin_edges' in binned_data:
+            x_edges = _to_cm(np.asarray(binned_data['x_bin_edges']))
+            y_edges = _to_cm(np.asarray(binned_data['y_bin_edges']))
+        else:
+            x_edges = np.linspace(min_x, max_x, 5)
+            y_edges = np.linspace(min_y, max_y, 5)
+
+        occ_counts, _, _ = np.histogram2d(traj_x, traj_y, bins=[x_edges, y_edges])
+        total = np.sum(occ_counts)
+        if total <= 0:
+            return None
+        occ_pct = (occ_counts / total) * 100.0
+        x_centers = 0.5 * (x_edges[:-1] + x_edges[1:])
+        y_centers = 0.5 * (y_edges[:-1] + y_edges[1:])
+        return {
+            "is_polar": False,
+            "values": occ_pct,
+            "x_centers": x_centers,
+            "y_centers": y_centers,
+        }
+
+    def _add_occupancy_labels(ax, occ_info):
+        if not occ_info or "values" not in occ_info:
+            return
+        values = occ_info["values"]
+        if np.sum(values) <= 0:
+            return
+        if occ_info.get("is_polar"):
+            center_x, center_y = occ_info["center"]
+            width = occ_info["width"]
+            height = occ_info["height"]
+            r_edges = occ_info["radius_edges"]
+            theta_edges = occ_info["angle_edges"]
+            r_centers = 0.5 * (r_edges[:-1] + r_edges[1:])
+            theta_centers = 0.5 * (theta_edges[:-1] + theta_edges[1:])
+            for i, r in enumerate(r_centers):
+                for j, theta in enumerate(theta_centers):
+                    pct = values[i, j]
+                    if pct <= 0:
+                        continue
+                    r_clamped = min(r, 1.0)
+                    x = center_x + (width / 2.0) * r_clamped * np.cos(theta)
+                    y = center_y + (height / 2.0) * r_clamped * np.sin(theta)
+                    ax.text(x, y, f"{pct:.0f}%", fontsize=7, ha='center', va='center', color='#222',
+                            bbox=dict(boxstyle='round,pad=0.15', facecolor='white', alpha=0.65, linewidth=0))
+        else:
+            x_centers = occ_info["x_centers"]
+            y_centers = occ_info["y_centers"]
+            for i, xc in enumerate(x_centers):
+                for j, yc in enumerate(y_centers):
+                    pct = values[i, j]
+                    if pct <= 0:
+                        continue
+                    ax.text(xc, yc, f"{pct:.0f}%", fontsize=7, ha='center', va='center', color='#222',
+                            bbox=dict(boxstyle='round,pad=0.15', facecolor='white', alpha=0.65, linewidth=0))
+
+    traj_x = _flatten(pos_x_chunks)
+    traj_y = _flatten(pos_y_chunks)
+
+    traj_x = _to_cm(traj_x)
+    traj_y = _to_cm(traj_y)
+    unit = "cm" if ppm is not None and ppm > 0 else "px"
+
+    if traj_x.size and traj_y.size:
+        min_x, max_x = float(np.min(traj_x)), float(np.max(traj_x))
+        min_y, max_y = float(np.min(traj_y)), float(np.max(traj_y))
+    else:
+        min_x, max_x, min_y, max_y = 0.0, 1.0, 0.0, 1.0
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+    if traj_x.size and traj_y.size:
+        ax.plot(traj_x, traj_y, color="#b0b0b0", linewidth=0.7, alpha=0.7, label="Trajectory")
+
+    _draw_bins(ax, min_x, max_x, min_y, max_y)
+    occ_info = _compute_occupancy(traj_x, traj_y, min_x, max_x, min_y, max_y)
+    _add_occupancy_labels(ax, occ_info)
+
+    used_labels = set()
+    label_index = 0
+    for chunk_idx, segments in eoi_segments.items():
+        for seg_x, seg_y, label in segments:
+            seg_x = _to_cm(np.asarray(seg_x))
+            seg_y = _to_cm(np.asarray(seg_y))
+            color = _label_color(label, label_index)
+            display_label = label or "EOI"
+            if display_label not in used_labels:
+                ax.scatter(seg_x, seg_y, s=6, color=color, alpha=0.9, label=display_label)
+                used_labels.add(display_label)
+                label_index += 1
+            else:
+                ax.scatter(seg_x, seg_y, s=6, color=color, alpha=0.9)
+
+    ax.set_title("Trajectory with EOIs")
+    ax.set_xlabel(f"X ({unit})")
+    ax.set_ylabel(f"Y ({unit})")
+    ax.set_aspect("equal", adjustable="box")
+    ax.legend(loc="best", fontsize=8)
+    ax.grid(True, alpha=0.2)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
 
 def export_to_csv(output_path, pos_t, chunk_powers_data, chunk_size, ppm, 
                   pos_x_chunks, pos_y_chunks):
@@ -408,6 +668,19 @@ Examples:
         action="store_true",
         help="Export CSV/Excel summaries for binned analysis"
     )
+
+    parser.add_argument(
+        "--plot-trajectory",
+        action="store_true",
+        help="Export trajectory plot with EOI overlays (if available)"
+    )
+
+    parser.add_argument(
+        "--eoi-file",
+        type=str,
+        default=None,
+        help="Optional EOI file or directory to use instead of auto-detect"
+    )
     
     args = parser.parse_args()
     
@@ -459,7 +732,9 @@ Examples:
                     high_speed,
                     args.window,
                     export_binned_jpgs=args.export_binned_jpgs,
-                    export_binned_csvs=args.export_binned_csvs
+                    export_binned_csvs=args.export_binned_csvs,
+                    plot_trajectory=args.plot_trajectory,
+                    eoi_file_override=args.eoi_file
                 )
                 success_count += 1
             except Exception as e:
@@ -502,7 +777,9 @@ Examples:
                 high_speed,
                 args.window,
                     export_binned_jpgs=args.export_binned_jpgs,
-                    export_binned_csvs=args.export_binned_csvs
+                export_binned_csvs=args.export_binned_csvs,
+                plot_trajectory=args.plot_trajectory,
+                eoi_file_override=args.eoi_file
             )
         except Exception as e:
             print(f"\n✗ Error during processing: {e}")
@@ -518,7 +795,7 @@ def timeout_handler(signum, frame):
     raise TimeoutError("Processing timeout exceeded")
 
 def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size, 
-                        low_speed, high_speed, window_type, export_binned_jpgs=False, export_binned_csvs=False, timeout_seconds=300):
+                        low_speed, high_speed, window_type, export_binned_jpgs=False, export_binned_csvs=False, plot_trajectory=False, eoi_file_override=None, timeout_seconds=300):
     """Process a single EEG/EGF file with timeout protection"""
     
     # Monitor memory at start
@@ -562,6 +839,7 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
     
     
     # Unpack legacy/new result signature
+    arena_shape = None
     if len(result) == 6:
         freq_maps, plot_data, pos_t, scaling_factor_crossband, chunk_pows_data, tracking_data = result
         binned_data = None
@@ -581,7 +859,9 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
     
     # Process EOIs if available
     eoi_segments = {}
-    eoi_file = find_eoi_file(electrophys_file)
+    eoi_file = resolve_eoi_file(electrophys_file, eoi_file_override)
+    if eoi_file_override and not eoi_file:
+        print(f"  ⚠ Explicit EOI file not found: {eoi_file_override}")
     if eoi_file and tracking_data:
         print(f"[3.5/5] Processing EOIs from {os.path.basename(eoi_file)}...")
         eois = load_eois(eoi_file)
@@ -592,7 +872,10 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
                 x_chunks, y_chunks, t_chunks = tracking_data
                 for i, (chunk_x, chunk_y, chunk_t) in enumerate(zip(x_chunks, y_chunks, t_chunks)):
                     if len(chunk_t) == 0: continue
-                    for start, stop in eois:
+                    for eoi in eois:
+                        start = eoi["start"]
+                        stop = eoi["stop"]
+                        label = eoi.get("label")
                         # Find indices where time is within EOI
                         # Use searchsorted for speed
                         idx_start = np.searchsorted(chunk_t, start)
@@ -600,10 +883,24 @@ def process_single_file(electrophys_file, pos_file, output_dir, ppm, chunk_size,
                         
                         if idx_end > idx_start:
                             if i not in eoi_segments: eoi_segments[i] = []
-                            eoi_segments[i].append((chunk_x[idx_start:idx_end], chunk_y[idx_start:idx_end]))
+                            eoi_segments[i].append((chunk_x[idx_start:idx_end], chunk_y[idx_start:idx_end], label))
             print(f"  → Mapped {len(eois)} EOIs to {sum(len(v) for v in eoi_segments.values())} spatial segments")
     elif eoi_file:
         print(f"  ⚠ EOI file found but no tracking data available.")
+
+    if plot_trajectory and tracking_data:
+        trajectory_path = os.path.join(output_dir, f"{base_name}_trajectory_eoi.jpg")
+        print("[3.8/5] Exporting trajectory plot...")
+        plot_trajectory_with_eois(
+            trajectory_path,
+            pos_x_chunks,
+            pos_y_chunks,
+            eoi_segments,
+            ppm=ppm,
+            arena_shape=arena_shape,
+            binned_data=binned_data
+        )
+        print(f"  → Trajectory plot saved to: {trajectory_path}")
 
     
     print("[4/5] Exporting to CSV...")
