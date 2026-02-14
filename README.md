@@ -1198,7 +1198,8 @@ python -m stlar batch-ssm data/ --ppm 595 --export-binned-jpgs --export-binned-c
 | `input_path` | str | *required* | Path to .egf file or directory containing .egf files |
 | `--ppm` | int | *required* | Pixels per meter for position calibration |
 | `--chunk-size` | int | 30 | Duration of each analysis chunk in seconds |
-| `--speed-filter` | float | 0 | Minimum speed threshold (cm/s) for filtering stationary periods |
+| `--speed-min` | float | 0.0 | Minimum speed threshold in cm/s (default: 0.0) |
+| `--speed-max` | float | 100.0 | Maximum speed threshold in cm/s (default: 100.0) |
 | `--window` | float | 1.0 | Spectral window duration in seconds |
 | `--export-binned-jpgs` | flag | False | Export spatial bin visualizations as JPEG images |
 | `--export-binned-csvs` | flag | False | Export binned spectral data as CSV files |
@@ -1215,9 +1216,9 @@ python -m stlar batch-ssm recordings/rat01_day1.egf --ppm 595
 python -m stlar batch-ssm recordings/ --ppm 595 --chunk-size 60
 ```
 
-**Apply speed filtering (exclude stationary periods):**
+**Apply speed filtering (only analyze moving periods between 5-20 cm/s):**
 ```bash
-python -m stlar batch-ssm recordings/ --ppm 595 --speed-filter 5.0
+python -m stlar batch-ssm recordings/ --ppm 595 --speed-min 5.0 --speed-max 20.0
 ```
 
 **Export binned analyses for spatial correlation studies:**

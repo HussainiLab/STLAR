@@ -344,10 +344,10 @@ Examples:
   python batch_ssm.py data/recordings/
   
   # With custom parameters
-  python batch_ssm.py data/recording.eeg --ppm 500 --chunk-size 5 --speed-filter 5,20
+  python batch_ssm.py data/recording.eeg --ppm 500 --chunk-size 5 --speed-min 5 --speed-max 20
   
   # Batch directory with custom output
-  python batch_ssm.py data/recordings/ --ppm 600 -o results/
+  python batch_ssm.py data/recordings/ --ppm 600 --speed-min 0 --speed-max 100 -o results/
         """
     )
     
@@ -377,10 +377,17 @@ Examples:
     )
     
     parser.add_argument(
-        "--speed-filter",
-        type=str,
-        default="0,100",
-        help="Speed filter range in cm/s (format: min,max, default: 0,100)"
+        "--speed-min",
+        type=float,
+        default=0.0,
+        help="Minimum speed threshold in cm/s (default: 0.0)"
+    )
+    
+    parser.add_argument(
+        "--speed-max",
+        type=float,
+        default=100.0,
+        help="Maximum speed threshold in cm/s (default: 100.0)"
     )
     
     parser.add_argument(
@@ -404,13 +411,16 @@ Examples:
     
     args = parser.parse_args()
     
-    # Parse speed filter
-    try:
-        speed_range = args.speed_filter.split(',')
-        low_speed = float(speed_range[0])
-        high_speed = float(speed_range[1])
-    except (ValueError, IndexError):
-        print(f"✗ Error: Invalid speed filter format. Use 'min,max' (e.g., '5,20')")
+    # Get speed thresholds
+    low_speed = args.speed_min
+    high_speed = args.speed_max
+    
+    # Validate speed range
+    if low_speed < 0 or high_speed < 0:
+        print(f"✗ Error: Speed thresholds must be non-negative")
+        sys.exit(1)
+    if low_speed >= high_speed:
+        print(f"✗ Error: --speed-min ({low_speed}) must be less than --speed-max ({high_speed})")
         sys.exit(1)
     
     # Check if input is a directory or file
