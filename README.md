@@ -1200,9 +1200,11 @@ python -m stlar batch-ssm data/ --ppm 595 --export-binned-jpgs --export-binned-c
 | `--chunk-size` | int | 30 | Duration of each analysis chunk in seconds |
 | `--speed-min` | float | 0.0 | Minimum speed threshold in cm/s (default: 0.0) |
 | `--speed-max` | float | 100.0 | Maximum speed threshold in cm/s (default: 100.0) |
-| `--window` | float | 1.0 | Spectral window duration in seconds |
+| `--window` | str | hann | Window type for FFT/Welch (e.g., hann, hamming, blackmanharris, boxcar) |
 | `--export-binned-jpgs` | flag | False | Export spatial bin visualizations as JPEG images |
 | `--export-binned-csvs` | flag | False | Export binned spectral data as CSV files |
+| `--plot-trajectory` | flag | False | Export trajectory plot with EOI overlays (if available) |
+| `--eoi-file` | str | optional | Explicit EOI file or directory to use instead of auto-detect |
 
 ### Examples
 
@@ -1227,6 +1229,11 @@ python -m stlar batch-ssm recordings/ --ppm 595 \
   --export-binned-jpgs \
   --export-binned-csvs \
   --chunk-size 60
+```
+
+**Export trajectory plot with EOI overlays:**
+```bash
+python -m stlar batch-ssm recordings/rat01_day1.egf --ppm 595 --plot-trajectory
 ```
 
 ### Output Structure
