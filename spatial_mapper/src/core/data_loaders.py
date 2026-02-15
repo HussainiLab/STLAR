@@ -162,7 +162,10 @@ def grab_chunks(filename, notch=60, chunk_size=10, chunk_overlap=0):
             start_index = int(m.find(b'data_start') + len('data_start'))  # start of the data
             stop_index = int(m.find(b'\r\ndata_end'))  # end of the data
 
-            m = m[start_index:stop_index]
+            if stop_index == -1:
+                m = m[start_index:]
+            else:
+                m = m[start_index:stop_index]
             
             ########## test ##########
             if is_eeg:
@@ -181,6 +184,8 @@ def grab_chunks(filename, notch=60, chunk_size=10, chunk_overlap=0):
                     f_max = Fs / 2
 
                 # reading in the data
+                if len(m) % 2 != 0:
+                    m = m[:-1]
                 m = np.frombuffer(m, dtype='<h')
                 m, scalar = bits2uV(m, filename)
 

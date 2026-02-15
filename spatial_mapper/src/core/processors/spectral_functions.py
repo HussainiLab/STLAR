@@ -207,7 +207,14 @@ def compute_freq_map(self, freq_range: str, pos_x: np.ndarray, pos_y: np.ndarray
     max_y = max(pos_y)
     
     # Calculate the new dimensions of the frequncy map
-    resize_ratio = np.abs(max_x - min_x) / np.abs(max_y - min_y)
+    width = np.abs(max_x - min_x)
+    height = np.abs(max_y - min_y)
+    
+    if height == 0 or width == 0:
+        resize_ratio = 1.0
+    else:
+        resize_ratio = width / height
+
     # Ensure the largest dimension of the map is 200
     base_resolution_scale = map_res
     
@@ -1391,6 +1398,3 @@ def export_binned_analysis_jpgs(binned_data: dict, output_folder: str, base_name
         export_count += 1
 
     return export_count
-
-
-
