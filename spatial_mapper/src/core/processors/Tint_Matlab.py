@@ -136,44 +136,74 @@ def getpos(pos_fpath, ppm, method='', flip_y=True):
     y: a column array of the y-values (in pixels)
     """
 
+    def _safe_decode(raw_line):
+        return raw_line.decode(encoding='UTF-8', errors='ignore')
+
+    def _parse_header_value(line, line_iter, cast, key):
+        decoded = _safe_decode(line).strip()
+        parts = decoded.split()
+        if len(parts) >= 2:
+            try:
+                return cast(parts[1])
+            except ValueError:
+                return None
+        if len(parts) == 1:
+            while True:
+                try:
+                    next_line = next(line_iter)
+                except StopIteration:
+                    return None
+                next_decoded = _safe_decode(next_line).strip()
+                if not next_decoded:
+                    continue
+                if 'data_start' in next_decoded:
+                    return None
+                token = next_decoded.split()[0]
+                try:
+                    return cast(token)
+                except ValueError:
+                    return None
+        return None
+
     with open(pos_fpath, 'rb+') as f:  # opening the .pos file
         headers = ''  # initializing the header string
-        for line in f:  # reads line by line to read the header of the file
+        line_iter = iter(f)
+        for line in line_iter:  # reads line by line to read the header of the file
             # print(line)
             if 'data_start' in str(line):  # if it reads data_start that means the header has ended
                 headers += 'data_start'
                 break  # break out of for loop once header has finished
             elif 'duration' in str(line):
-                headers += line.decode(encoding='UTF-8')
+                headers += _safe_decode(line)
             elif 'num_pos_samples' in str(line):
-                num_pos_samples = int(line.decode(encoding='UTF-8')[len('num_pos_samples '):])
-                headers += line.decode(encoding='UTF-8')
+                num_pos_samples = _parse_header_value(line, line_iter, int, 'num_pos_samples')
+                headers += _safe_decode(line)
             elif 'bytes_per_timestamp' in str(line):
-                bytes_per_timestamp = int(line.decode(encoding='UTF-8')[len('bytes_per_timestamp '):])
-                headers += line.decode(encoding='UTF-8')
+                bytes_per_timestamp = _parse_header_value(line, line_iter, int, 'bytes_per_timestamp')
+                headers += _safe_decode(line)
             elif 'bytes_per_coord' in str(line):
-                bytes_per_coord = int(line.decode(encoding='UTF-8')[len('bytes_per_coord '):])
-                headers += line.decode(encoding='UTF-8')
+                bytes_per_coord = _parse_header_value(line, line_iter, int, 'bytes_per_coord')
+                headers += _safe_decode(line)
             elif 'timebase' in str(line):
-                timebase = (line.decode(encoding='UTF-8')[len('timebase '):]).split(' ')[0]
-                headers += line.decode(encoding='UTF-8')
+                timebase = (_safe_decode(line)[len('timebase '):]).split(' ')[0]
+                headers += _safe_decode(line)
             elif 'pixels_per_metre' in str(line):
-                ppm = float(line.decode(encoding='UTF-8')[len('pixels_per_metre '):])
-                headers += line.decode(encoding='UTF-8')
+                ppm = _parse_header_value(line, line_iter, float, 'pixels_per_metre')
+                headers += _safe_decode(line)
             elif 'min_x' in str(line) and 'window' not in str(line):
-                min_x = int(line.decode(encoding='UTF-8')[len('min_x '):])
-                headers += line.decode(encoding='UTF-8')
+                min_x = _parse_header_value(line, line_iter, int, 'min_x')
+                headers += _safe_decode(line)
             elif 'max_x' in str(line) and 'window' not in str(line):
-                max_x = int(line.decode(encoding='UTF-8')[len('max_x '):])
-                headers += line.decode(encoding='UTF-8')
+                max_x = _parse_header_value(line, line_iter, int, 'max_x')
+                headers += _safe_decode(line)
             elif 'min_y' in str(line) and 'window' not in str(line):
-                min_y = int(line.decode(encoding='UTF-8')[len('min_y '):])
-                headers += line.decode(encoding='UTF-8')
+                min_y = _parse_header_value(line, line_iter, int, 'min_y')
+                headers += _safe_decode(line)
             elif 'max_y' in str(line) and 'window' not in str(line):
-                max_y = int(line.decode(encoding='UTF-8')[len('max_y '):])
-                headers += line.decode(encoding='UTF-8')
+                max_y = _parse_header_value(line, line_iter, int, 'max_y')
+                headers += _safe_decode(line)
             elif 'pos_format' in str(line):
-                headers += line.decode(encoding='UTF-8')
+                headers += _safe_decode(line)
                 if 't,x1,y1,x2,y2,numpix1,numpix2' in str(line):
                     two_spot = True
                 else:
@@ -181,11 +211,11 @@ def getpos(pos_fpath, ppm, method='', flip_y=True):
                     print('The position format is unrecognized!')
 
             elif 'sample_rate' in str(line):
-                sample_rate = float(line.decode(encoding='UTF-8').split(' ')[1])
-                headers += line.decode(encoding='UTF-8')
+                sample_rate = _parse_header_value(line, line_iter, float, 'sample_rate')
+                headers += _safe_decode(line)
 
             else:
-                headers += line.decode(encoding='UTF-8')
+                headers += _safe_decode(line)
 
     if two_spot:
         '''Run when two spot mode is on, (one_spot has the same format so it will also run here)'''
@@ -195,6 +225,18 @@ def getpos(pos_fpath, ppm, method='', flip_y=True):
             pos_data = pos_data[len(headers):-12]  # removes the header values
 
             byte_string = 'i8h'
+            sample_size = struct.calcsize(f'>{byte_string}')
+            if sample_size <= 0:
+                raise ValueError("Unable to determine sample size for .pos data")
+
+            if 'num_pos_samples' not in locals() or not num_pos_samples:
+                num_pos_samples = len(pos_data) // sample_size
+
+            expected_size = num_pos_samples * sample_size
+            if len(pos_data) < expected_size:
+                num_pos_samples = len(pos_data) // sample_size
+                expected_size = num_pos_samples * sample_size
+            pos_data = pos_data[:expected_size]
 
             pos_data = np.asarray(struct.unpack('>%s' % (num_pos_samples * byte_string), pos_data))
             pos_data = pos_data.astype(float).reshape((num_pos_samples, 9))  # there are 8 words and 1 time sample

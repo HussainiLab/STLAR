@@ -190,9 +190,17 @@ def resolve_eoi_file(electrophys_file, eoi_file_override=None):
         candidates = [
             os.path.join(override, f"{base_name}_EOI.csv"),
             os.path.join(override, f"{base_name}.csv"),
+            os.path.join(override, base_name, f"{base_name}_EOI.csv"),
+            os.path.join(override, base_name, f"{base_name}.csv"),
+            os.path.join(override, "HFOScores", base_name, f"{base_name}_EOI.csv"),
+            os.path.join(override, "HFOScores", base_name, f"{base_name}.csv"),
         ]
         for tag in ['HIL', 'STE', 'MNI', 'DL', 'CON']:
-            candidates.append(os.path.join(override, f"{base_name}_{tag}.txt"))
+            candidates.extend([
+                os.path.join(override, f"{base_name}_{tag}.txt"),
+                os.path.join(override, base_name, f"{base_name}_{tag}.txt"),
+                os.path.join(override, "HFOScores", base_name, f"{base_name}_{tag}.txt"),
+            ])
         for candidate in candidates:
             if os.path.exists(candidate):
                 return candidate

@@ -1231,10 +1231,32 @@ python -m stlar batch-ssm recordings/ --ppm 595 \
   --chunk-size 60
 ```
 
-**Export trajectory plot with EOI overlays:**
+**Export trajectory plot with EOI overlays and occupancy %:**
 ```bash
 python -m stlar batch-ssm recordings/rat01_day1.egf --ppm 595 --plot-trajectory
 ```
+
+**Use explicit EOI file from custom directory:**
+```bash
+python -m stlar batch-ssm recordings/rat01_day1.egf --ppm 595 --plot-trajectory --eoi-file D:/my_eois/
+```
+
+**Full analysis with binned exports and trajectory:**
+```bash
+python -m stlar batch-ssm recordings/ --ppm 595 \
+  --export-binned-jpgs \
+  --export-binned-csvs \
+  --plot-trajectory \
+  --chunk-size 60
+```
+
+### Trajectory Plot Details
+
+The `--plot-trajectory` flag exports a JPG showing:
+- **Gray trajectory line**: Animal's path throughout session
+- **Bin overlay**: Auto-detected arena shape (4×4 grid for rectangular, polar rings+sectors for circular)
+- **Occupancy %**: Per-bin occupancy percentages (whole-session)
+- **EOI markers**: Event locations colored by label (Ripple, Fast Ripple, etc.)
 
 ### Output Structure
 
@@ -1242,9 +1264,10 @@ batch-ssm creates a timestamped output directory for each session:
 
 ```
 <session_name>_SSMoutput_<YYYYMMDD_HHMMSS>/
-├── <session>_sessionAverage.csv          # Session-wide PSD averages
-├── <session>_chunk_000_psd.csv           # Per-chunk PSD data
-├── <session>_chunk_001_psd.csv
+├── <session>_SSM.csv                     # Session-wide PSD averages
+├── <session>_trajectory_eoi.jpg          # (if --plot-trajectory) Trajectory + bins + occupancy % + EOIs
+├── chunk_000_psd.csv                     # Per-chunk PSD data (if available)
+├── chunk_001_psd.csv
 ├── ...
 ├── binned_analysis/                      # (if --export-binned-* used)
 │   ├── <session>_bin_0_0.csv            # Spatial bin PSDs
