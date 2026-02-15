@@ -1241,6 +1241,11 @@ python -m stlar batch-ssm recordings/rat01_day1.egf --ppm 595 --plot-trajectory
 python -m stlar batch-ssm recordings/rat01_day1.egf --ppm 595 --plot-trajectory --eoi-file D:/my_eois/
 ```
 
+When `--eoi-file` points to a directory, batch-ssm will look for these patterns:
+- `<dir>/<session>/<session>_HIL.txt` (and `_STE`, `_MNI`, `_DL`, `_CON`)
+- `<dir>/HFOScores/<session>/<session>_HIL.txt`
+- `<dir>/<session>_EOI.csv` or `<dir>/<session>.csv`
+
 **Full analysis with binned exports and trajectory:**
 ```bash
 python -m stlar batch-ssm recordings/ --ppm 595 \
