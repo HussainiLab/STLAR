@@ -84,11 +84,24 @@ Notes:
 
 ## Step 4: Detection (`dl-batch`)
 
+**Standard 1D models:**
 ```bash
 python -m stlar dl-batch -f recordings/ --model-path models/model.pt --threshold 0.5 --batch-size 64 -v
 ```
 
-Use `--dump-probs` for probability sanity checks.
+**CWT 2D models (CRITICAL):**
+If your model was trained with `--use-cwt`, you **must** enable CWT preprocessing during inference:
+```bash
+python -m stlar dl-batch -f recordings/ --model-path models/cwt_model.pt --use-cwt --fs 4800 --threshold 0.5 --batch-size 64 -v
+```
+
+**Important:** `--use-cwt` and `--fs` must match your training configuration, otherwise inference will fail with shape mismatch errors.
+
+Additional options:
+- `--dump-probs`: Print probability statistics for debugging
+- `--debug-cwt <dir>`: Save CWT scalogram images for visual inspection
+- `--window-size <secs>`: Window size in seconds (default: 0.1)
+- `--overlap <fraction>`: Window overlap fraction (default: 0.5)
 
 ---
 
