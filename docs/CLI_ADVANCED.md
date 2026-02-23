@@ -95,6 +95,7 @@ python -m stlar dl-batch -f data/ --model-path models/cwt_model.pt --use-cwt --f
 **Key flags:**
 - `--use-cwt`: Enable CWT scalogram preprocessing (required for models trained with CWT)
 - `--fs <Hz>`: Sampling frequency (must match training, default: 4800)
+- `--gap-threshold <secs>`: Gap for merging nearby detections (default: 0.05 = 50ms for ripples; use 0.5 for longer epileptic events)
 - `--dump-probs`: Inspect probability spread and identify poorly calibrated models
 - `--debug-cwt <dir>`: Save CWT scalogram images for debugging
 - `--window-size <secs>`: Detection window size (default: 0.1)

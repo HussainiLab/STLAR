@@ -102,6 +102,7 @@ Additional options:
 - `--debug-cwt <dir>`: Save CWT scalogram images for visual inspection
 - `--window-size <secs>`: Window size in seconds (default: 0.1)
 - `--overlap <fraction>`: Window overlap fraction (default: 0.5)
+- `--gap-threshold <secs>`: Gap for merging nearby detections (default: 0.05 = 50ms for ripples; increase to 0.5 for longer epileptic events)
 
 ---
 

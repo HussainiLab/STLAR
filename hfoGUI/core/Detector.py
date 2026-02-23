@@ -27,6 +27,7 @@ class ParamDL:
     overlap: float = 0.5
     use_cwt: bool = False
     debug_cwt_dir: str = None
+    gap_threshold: float = 0.05  # seconds, gap for merging nearby detections (default 50ms for ripples)
 
 
 class _LocalDLDetector:
@@ -205,9 +206,9 @@ class _LocalDLDetector:
             self._progress(f"[DL Detection] Threshold: {float(self.params.threshold):.4f}")
         self._progress(f"[DL Detection] Found {len(pos_windows)} positive windows out of {len(prob_values)} total windows")
         
-        # Merge overlapping/nearby windows (within 500ms gap for better event grouping)
-        # This prevents merging distant positive detections into one event
-        max_gap_samples = int(0.5 * fs)  # 500ms gap threshold (allows nearby bursts to merge)
+        # Merge overlapping/nearby windows within configurable gap threshold
+        # Default 50ms for ripples, can be increased for longer epileptic events
+        max_gap_samples = int(self.params.gap_threshold * fs)
         merged = []
         for start, end in pos_windows:
             if not merged:
@@ -228,7 +229,7 @@ class _LocalDLDetector:
             if min_duration_samples <= duration <= max_duration_samples:
                 filtered.append([start, end])
 
-        self._progress(f"[DL Detection] After merging: {len(merged)} events (0.5s gap)")
+        self._progress(f"[DL Detection] After merging: {len(merged)} events ({self.params.gap_threshold*1000:.0f}ms gap)")
         self._progress(f"[DL Detection] After filtering (20ms-2s): {len(filtered)} events")
         for i, (start, end) in enumerate(filtered):
             duration_sec = (end - start) / float(fs)
@@ -314,8 +315,8 @@ class _LocalDLDetector:
         # Sort by start time
         pos_windows.sort(key=lambda x: x[0])
         
-        # Merge windows within 500ms gap
-        gap_samples = int(0.5 * fs)
+        # Merge windows within configurable gap threshold (default 50ms for ripples)
+        gap_samples = int(self.params.gap_threshold * fs)
         merged = []
         curr_start, curr_end = pos_windows[0]
         
@@ -668,13 +669,14 @@ def _local_mni_detect(data, fs, baseline_window=10.0, threshold_percentile=99.0,
     return np.asarray(events, dtype=float)
 
 
-def dl_detect_events(data, fs, model_path, threshold=0.5, batch_size=32, window_size=1.0, overlap=0.5, progress_callback=None, dump_probs=False, use_cwt=False, debug_cwt_dir=None, **kwargs):
+def dl_detect_events(data, fs, model_path, threshold=0.5, batch_size=32, window_size=1.0, overlap=0.5, progress_callback=None, dump_probs=False, use_cwt=False, debug_cwt_dir=None, gap_threshold=0.05, **kwargs):
     """
     Run Deep Learning detection using local PyTorch/ONNX implementation.
     
     Args:
         use_cwt: If True, apply CWT scalogram preprocessing (for models trained with --use-cwt)
         debug_cwt_dir: Optional directory to save CWT scalogram images for debugging
+        gap_threshold: Gap in seconds for merging nearby detections (default 0.05s = 50ms for ripples)
     """
     _check_package()
 
@@ -686,7 +688,8 @@ def dl_detect_events(data, fs, model_path, threshold=0.5, batch_size=32, window_
         window_size=float(window_size),
         overlap=float(overlap),
         use_cwt=bool(use_cwt),
-        debug_cwt_dir=debug_cwt_dir
+        debug_cwt_dir=debug_cwt_dir,
+        gap_threshold=float(gap_threshold)
     )
     detector = set_DL_detector(args, progress_callback=progress_callback)
     signal = np.asarray(data, dtype=np.float32)
