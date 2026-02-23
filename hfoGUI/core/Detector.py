@@ -25,6 +25,8 @@ class ParamDL:
     batch_size: int = 32
     window_size: float = 1.0
     overlap: float = 0.5
+    use_cwt: bool = False
+    debug_cwt_dir: str = None
 
 
 class _LocalDLDetector:
@@ -139,6 +141,10 @@ class _LocalDLDetector:
         win = max(1, int(self.window_secs * fs))
         hop = max(1, int(win * self.hop_frac))
 
+        # CWT preprocessing path
+        if self.params.use_cwt:
+            return self._detect_cwt(x, fs, collect_probs)
+
         # Collect all windows first for batch processing
         windows = []
         window_indices = []
@@ -228,6 +234,102 @@ class _LocalDLDetector:
             duration_sec = (end - start) / float(fs)
             self._progress(f"[DL Detection]   Event {i+1}: {start//int(fs)}s - {end//int(fs)}s (duration: {duration_sec:.3f}s)")
         events_sec = [{'start': s/float(fs), 'end': e/float(fs)} for s, e in filtered]
+        return (events_sec, prob_values) if collect_probs else events_sec
+
+    def _detect_cwt(self, signal, fs, collect_probs=False):
+        """Run detection with CWT scalogram preprocessing."""
+        import torch
+        from torch.utils.data import DataLoader
+        
+        try:
+            from dl_training.data import CWT_InferenceDataset, pad_collate_fn_2d
+        except ImportError:
+            from ..dl_training.data import CWT_InferenceDataset, pad_collate_fn_2d
+        
+        self._progress("[DL Detection with CWT] Segmenting signal...")
+        
+        # Segment signal into windows
+        win = max(1, int(self.window_secs * fs))
+        hop = max(1, int(win * self.hop_frac))
+        
+        segments = []
+        window_indices = []
+        for start in range(0, len(signal), hop):
+            end = min(len(signal), start + win)
+            seg = signal[start:end]
+            if seg.size == 0:
+                continue
+            segments.append(seg)
+            window_indices.append((start, end))
+        
+        if not segments:
+            self._progress("[DL Detection with CWT] No segments found")
+            return ([], []) if collect_probs else []
+        
+        self._progress(f"[DL Detection with CWT] Processing {len(segments)} windows with CWT preprocessing...")
+        
+        # Create CWT dataset
+        dataset = CWT_InferenceDataset(segments, fs=fs, debug_cwt_dir=self.params.debug_cwt_dir)
+        loader = DataLoader(dataset, batch_size=self.params.batch_size, shuffle=False, collate_fn=pad_collate_fn_2d)
+        
+        # Run inference
+        prob_values = []
+        pos_windows = []
+        
+        with torch.no_grad():
+            for batch_idx, batch_data in enumerate(loader):
+                # Handle tuple (inputs, labels) or just inputs
+                if isinstance(batch_data, tuple):
+                    inputs, _ = batch_data
+                else:
+                    inputs = batch_data
+                
+                inputs = inputs.to(self.device)
+                logits = self.model(inputs)
+                
+                if isinstance(logits, (list, tuple)):
+                    logits = logits[0]
+                
+                # Handle different output shapes
+                if logits.shape[1] > 1:
+                    probs = torch.softmax(logits, dim=1)[:, 1].cpu().numpy()
+                else:
+                    probs = torch.sigmoid(logits).squeeze(1).cpu().numpy()
+                
+                prob_values.extend(probs.tolist())
+                
+                # Identify positive windows
+                for i, prob in enumerate(probs):
+                    if prob >= float(self.params.threshold):
+                        idx = batch_idx * self.params.batch_size + i
+                        if idx < len(window_indices):
+                            pos_windows.append(window_indices[idx])
+        
+        self._progress(f"[DL Detection with CWT] Found {len(pos_windows)} positive windows out of {len(prob_values)} total")
+        
+        # Merge overlapping/nearby windows
+        if not pos_windows:
+            return ([], prob_values) if collect_probs else []
+        
+        # Sort by start time
+        pos_windows.sort(key=lambda x: x[0])
+        
+        # Merge windows within 500ms gap
+        gap_samples = int(0.5 * fs)
+        merged = []
+        curr_start, curr_end = pos_windows[0]
+        
+        for start, end in pos_windows[1:]:
+            if start - curr_end <= gap_samples:
+                curr_end = max(curr_end, end)
+            else:
+                merged.append((curr_start, curr_end))
+                curr_start, curr_end = start, end
+        merged.append((curr_start, curr_end))
+        
+        # Convert to seconds
+        events_sec = [{'start': s/fs, 'end': e/fs} for s, e in merged]
+        
         return (events_sec, prob_values) if collect_probs else events_sec
 
 
@@ -566,9 +668,13 @@ def _local_mni_detect(data, fs, baseline_window=10.0, threshold_percentile=99.0,
     return np.asarray(events, dtype=float)
 
 
-def dl_detect_events(data, fs, model_path, threshold=0.5, batch_size=32, window_size=1.0, overlap=0.5, progress_callback=None, dump_probs=False, **kwargs):
+def dl_detect_events(data, fs, model_path, threshold=0.5, batch_size=32, window_size=1.0, overlap=0.5, progress_callback=None, dump_probs=False, use_cwt=False, debug_cwt_dir=None, **kwargs):
     """
     Run Deep Learning detection using local PyTorch/ONNX implementation.
+    
+    Args:
+        use_cwt: If True, apply CWT scalogram preprocessing (for models trained with --use-cwt)
+        debug_cwt_dir: Optional directory to save CWT scalogram images for debugging
     """
     _check_package()
 
@@ -578,7 +684,9 @@ def dl_detect_events(data, fs, model_path, threshold=0.5, batch_size=32, window_
         threshold=float(threshold),
         batch_size=int(batch_size),
         window_size=float(window_size),
-        overlap=float(overlap)
+        overlap=float(overlap),
+        use_cwt=bool(use_cwt),
+        debug_cwt_dir=debug_cwt_dir
     )
     detector = set_DL_detector(args, progress_callback=progress_callback)
     signal = np.asarray(data, dtype=np.float32)

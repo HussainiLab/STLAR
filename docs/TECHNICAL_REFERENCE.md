@@ -348,22 +348,33 @@ $$|\text{Method}_A \cap \text{Method}_B| \geq \text{overlap\_threshold}$$
 
 ### 3.4 Deep Learning Detection
 
-**File:** `hfoGUI/core/Detector.py` → `_local_dl_detect()`
+**File:** `hfoGUI/core/Detector.py` → `_LocalDLDetector`, `dl_detect_events()`
 
 **Purpose:** Classify HFO segments using trained neural network.
 
-**Pipeline:**
+**Pipeline (1D models):**
 
 1. **Preprocess:** Bandpass filter (80-500 Hz)
-2. **Segment:** 200 ms windows with 50% overlap
+2. **Segment:** Sliding windows (default: 100 ms with 50% overlap)
 3. **Normalize:** Z-score per window
-4. **Model:** LSTM or CNN (trained on labeled HFO data)
+4. **Model:** CNN/LSTM (trained on labeled HFO data)
 5. **Threshold:** Probability ≥ threshold (default 0.5)
 
+**Pipeline (2D CWT models):**
+
+1. **Segment:** Sliding windows (default: 100 ms with 50% overlap)
+2. **CWT Transform:** Convert 1D signal to 2D scalogram (64 scales)
+3. **Model:** 2D CNN (trained on CWT scalograms)
+4. **Threshold:** Probability ≥ threshold (default 0.5)
+
+**CLI Usage:**
+- 1D models: `dl-batch --model-path model.pt`
+- 2D CWT models: `dl-batch --model-path cwt_model.pt --use-cwt --fs 4800`
+
 **Input Features:**
-- Time-domain: Raw signal in window
-- Frequency-domain: FFT power spectrum
-- Envelope: Hilbert envelope
+- Time-domain: Raw signal in window (1D models)
+- Time-frequency: CWT scalogram (2D models)
+- Envelope: Hilbert envelope (legacy)
 
 **Model Export:**
 - PyTorch: `.pt` format

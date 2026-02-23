@@ -240,6 +240,8 @@ def _process_dl_file(data_path: Path, set_path: Optional[Path], args: argparse.N
         'batch_size': int(args.batch_size),
         'window_size': float(args.window_size),
         'overlap': float(args.overlap),
+        'use_cwt': getattr(args, 'use_cwt', False),
+        'debug_cwt_dir': getattr(args, 'debug_cwt', None),
     }
 
     dump_probs = getattr(args, 'dump_probs', False)
@@ -545,6 +547,9 @@ def build_parser() -> argparse.ArgumentParser:
     dl.add_argument('--batch-size', type=int, default=32, help='Inference batch size')
     dl.add_argument('--window-size', type=float, default=0.1, help='Window size in seconds (default: 0.1)')
     dl.add_argument('--overlap', type=float, default=0.5, help='Window overlap fraction (default: 0.5)')
+    dl.add_argument('--use-cwt', action='store_true', help='Use CWT scalogram preprocessing (required for models trained with --use-cwt)')
+    dl.add_argument('--fs', type=float, default=4800, help='Sampling frequency in Hz (required when --use-cwt is enabled; default: 4800)')
+    dl.add_argument('--debug-cwt', type=str, help='Save CWT scalogram images to directory for debugging')
     dl.add_argument('--dump-probs', action='store_true', help='Print per-window probability stats')
     dl.add_argument('--skip-bits2uv', action='store_true', help='Skip bits-to-uV conversion')
     dl.add_argument('-v', '--verbose', action='store_true', help='Verbose logging')
