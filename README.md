@@ -207,7 +207,7 @@ python -m stlar dl-batch -f data/ --model-path models/hfo_detector.pt
 - **STE:** RMS-window energy detector
 - **MNI:** percentile/baseline-driven detector
 - **Consensus:** combines Hilbert + STE + MNI voting
-- **DL:** model-based detection from exported `.pt` / `.onnx`
+- **DL:** model-based detection from exported `.pt` / `.onnx` (supports both 1D and CWT 2D models)
 
 For full parameter tables and advanced recipes, see [Advanced CLI Guide](docs/CLI_ADVANCED.md).
 
@@ -265,6 +265,14 @@ python -m stlar prepare-dl --eoi-file detections.txt --egf-file recording.egf --
 python -m stlar train-dl --train training_data/manifest_train.csv --val training_data/manifest_val.csv --epochs 15 --out-dir models
 python -m stlar export-dl --ckpt models/best.pt --ts models/model.pt --onnx models/model.onnx
 python -m stlar dl-batch -f new_recordings/ --model-path models/model.pt --threshold 0.5
+```
+
+**CWT models:** If you trained with `--use-cwt`, you must use `--use-cwt --fs <Hz>` during detection:
+
+```bash
+python -m stlar train-dl --train data/manifest_train.csv --val data/manifest_val.csv --use-cwt --fs 4800 --epochs 15 --out-dir models
+python -m stlar export-dl --ckpt models/best.pt --ts models/cwt_model.pt
+python -m stlar dl-batch -f new_recordings/ --model-path models/cwt_model.pt --use-cwt --fs 4800 --threshold 0.5
 ```
 
 Advanced training topics (CWT, batch training, GUI monitoring, tuning, troubleshooting):
@@ -335,6 +343,7 @@ For developer-oriented APIs and internals:
 <a id="recent-changes"></a>
 ## Recent Changes
 
+- **Fixed:** `dl-batch` now supports CWT mode via `--use-cwt --fs <Hz>` flags (matches training pipeline)
 - README simplified for quicker onboarding
 - Advanced CLI details moved to [docs/CLI_ADVANCED.md](docs/CLI_ADVANCED.md)
 - Advanced DL workflow details moved to [docs/DL_TRAINING_ADVANCED.md](docs/DL_TRAINING_ADVANCED.md)

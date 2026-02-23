@@ -148,6 +148,32 @@ python -m stlar train-dl \
 
 This will save scalograms from all sessions in the `all_scalograms` directory.
 
+### Inference Debug Mode (CLI)
+
+You can also debug CWT preprocessing during **inference** with `dl-batch`:
+
+```bash
+python -m stlar dl-batch \
+  -f recordings/test_data.egf \
+  --model-path models/cwt_model.pt \
+  --use-cwt \
+  --fs 4800 \
+  --debug-cwt ./inference_scalograms \
+  --threshold 0.5 \
+  -v
+```
+
+**Key argument:**
+- `--debug-cwt ./inference_scalograms` - Save CWT scalograms during detection
+
+**Use cases:**
+- Verify preprocessing matches training configuration
+- Debug why certain segments are/aren't detected
+- Visually inspect model input features
+- Quality-check new recording data
+
+**Important:** The `--fs` and `--use-cwt` flags must match your training configuration, otherwise scalograms will look different and model performance will degrade.
+
 ## Technical Details
 
 ### CWT Parameters
