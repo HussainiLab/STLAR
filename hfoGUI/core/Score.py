@@ -4221,9 +4221,9 @@ def DLDetection(self):
                     next_start = detected_events[i][0]
                     next_stop = detected_events[i][1]
                     
-                    # If windows overlap or are adjacent (within small gap), merge them
+                    # Use configurable gap threshold for merging nearby detections
                     gap_ms = next_start - current_stop
-                    merge_threshold_ms = window_size * 1000.0 * (1 - overlap) * 1.5  # 1.5x step size
+                    merge_threshold_ms = getattr(self, 'dl_gap_threshold', 0.05) * 1000.0  # Convert to ms
                     
                     if gap_ms <= merge_threshold_ms:
                         # Merge: extend current event
@@ -4383,6 +4383,7 @@ def DLDetection(self):
                 batch_size=self.dl_batch_size,
                 window_size=getattr(self, 'dl_window_size', 0.1),
                 overlap=getattr(self, 'dl_overlap', 0.5),
+                gap_threshold=getattr(self, 'dl_gap_threshold', 0.05),
                 progress_callback=dl_progress
             )
             
@@ -5420,6 +5421,8 @@ class DLParametersWindow(QtWidgets.QWidget):
         self.batch_size_edit = QtWidgets.QLineEdit("32")
         self.window_size_edit = QtWidgets.QLineEdit("0.1")
         self.overlap_edit = QtWidgets.QLineEdit("0.5")
+        self.gap_threshold_edit = QtWidgets.QLineEdit("0.05")
+        self.gap_threshold_edit.setToolTip("Gap in seconds for merging nearby detections (0.05 = 50ms for ripples; 0.5 for longer epileptic events)")
         
         self.cwt_check = QtWidgets.QCheckBox("Use CWT (Scalogram) Preprocessing")
         self.cwt_check.setToolTip("Enable if using the 2D CNN model trained on CWT Scalograms (model type: HFO_2D_CNN)")
@@ -5429,6 +5432,7 @@ class DLParametersWindow(QtWidgets.QWidget):
         layout.addRow("Batch Size:", self.batch_size_edit)
         layout.addRow("Window Size (s):", self.window_size_edit)
         layout.addRow("Overlap (0-1):", self.overlap_edit)
+        layout.addRow("Gap Threshold (s):", self.gap_threshold_edit)
         layout.addRow("", self.cwt_check)
         
         # Peak Validation section
@@ -5488,6 +5492,7 @@ class DLParametersWindow(QtWidgets.QWidget):
             self.scoreWindow.dl_batch_size = int(self.batch_size_edit.text())
             self.scoreWindow.dl_window_size = float(self.window_size_edit.text())
             self.scoreWindow.dl_overlap = float(self.overlap_edit.text())
+            self.scoreWindow.dl_gap_threshold = float(self.gap_threshold_edit.text())
             self.scoreWindow.dl_use_cwt = self.cwt_check.isChecked()
             self.scoreWindow.dl_enable_peak_validation = self.enable_peaks_check.isChecked()
             self.scoreWindow.dl_required_peaks = self.required_peaks_spin.value()
@@ -5502,6 +5507,7 @@ class DLParametersWindow(QtWidgets.QWidget):
             'batch_size': self.scoreWindow.dl_batch_size,
             'window_size': self.scoreWindow.dl_window_size,
             'overlap': self.scoreWindow.dl_overlap,
+            'gap_threshold': self.scoreWindow.dl_gap_threshold,
             'use_cwt': self.scoreWindow.dl_use_cwt,
             'enable_peak_validation': self.scoreWindow.dl_enable_peak_validation,
             'required_peaks': self.scoreWindow.dl_required_peaks,
