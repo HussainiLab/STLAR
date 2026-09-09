@@ -89,5 +89,8 @@ Examples:
     parser.print_help()
     return 1
 
+# Alias for console_scripts entry point in pyproject.toml (points to :main)
+main = main_cli
+
 if __name__ == '__main__':
     sys.exit(main_cli())

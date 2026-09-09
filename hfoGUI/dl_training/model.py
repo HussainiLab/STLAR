@@ -283,6 +283,23 @@ def build_model(model_type=2, num_classes=1):
     elif model_type == 5:
         return Spectrogram2DCNN(n_channels=1, num_classes=num_classes)
     elif model_type == 6:
+        # HFO_2D_CNN requires pre-computed CWT scalograms via scipy.signal.cwt,
+        # which was removed in scipy 1.12. Check before instantiating.
+        import importlib, scipy
+        from packaging.version import Version
+        if Version(scipy.__version__) >= Version('1.12'):
+            raise RuntimeError(
+                f"Model type 6 (HFO_2D_CNN) requires scipy.signal.cwt, which was removed "
+                f"in scipy 1.12 (you have scipy {scipy.__version__}). "
+                f"Use model type 5 (Spectrogram2DCNN) instead — it computes an STFT "
+                f"internally and does not require pre-computed scalograms. "
+                f"Re-run with --model-type 5."
+            )
         return HFO_2D_CNN(n_channels=1, num_classes=num_classes)
     else:
-        raise ValueError(f"Unknown model type: {model_type}. Options: 1=SimpleCNN, 2=ResNet1D, 3=InceptionTime, 4=Transformer, 5=2D_CNN, 6=HFO_2D_CNN")
+        raise ValueError(
+            f"Unknown model type: {model_type}. "
+            f"Options: 1=Simple1DCNN, 2=ResNet1D, 3=InceptionTime, "
+            f"4=HFOTransformer, 5=Spectrogram2DCNN (recommended), "
+            f"6=HFO_2D_CNN (requires scipy <1.12 and pre-computed CWT scalograms)"
+        )
