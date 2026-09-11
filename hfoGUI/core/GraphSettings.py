@@ -701,8 +701,9 @@ class GraphSettingsWindows(QtWidgets.QWidget):
                         if 'N/A' not in value:
                             self.mainWindow.choice = ''
                             self.mainWindow.ErrorDialogue.myGUI_signal.emit("InvalidCutoff")
-                            while self.mainWindow.choice == '':
-                                time.sleep(0.1)
+                            deadline = QtCore.QDeadlineTimer(5000)
+                            while self.mainWindow.choice == '' and not deadline.hasExpired():
+                                QtWidgets.QApplication.processEvents()
                             return
                         else:
                             # don't need to subject to further validation since the cutoff is N/A
@@ -711,22 +712,25 @@ class GraphSettingsWindows(QtWidgets.QWidget):
                     if value < 0:
                         self.mainWindow.choice = ''
                         self.mainWindow.ErrorDialogue.myGUI_signal.emit("NegativeCutoff")
-                        while self.mainWindow.choice == '':
-                            time.sleep(0.1)
+                        deadline = QtCore.QDeadlineTimer(5000)
+                        while self.mainWindow.choice == '' and not deadline.hasExpired():
+                            QtWidgets.QApplication.processEvents()
                         return
                     if 'egf' not in source_filename:
                         if value > 125:
                             self.mainWindow.choice = ''
                             self.mainWindow.ErrorDialogue.myGUI_signal.emit("EGFNecessary")
-                            while self.mainWindow.choice == '':
-                                time.sleep(0.1)
+                            deadline = QtCore.QDeadlineTimer(5000)
+                            while self.mainWindow.choice == '' and not deadline.hasExpired():
+                                QtWidgets.QApplication.processEvents()
                             return
                     else:
                         if value > 2400:
                             self.mainWindow.choice = ''
                             self.mainWindow.ErrorDialogue.myGUI_signal.emit("InvalidEGFCutoff")
-                            while self.mainWindow.choice == '':
-                                time.sleep(0.1)
+                            deadline = QtCore.QDeadlineTimer(5000)
+                            while self.mainWindow.choice == '' and not deadline.hasExpired():
+                                QtWidgets.QApplication.processEvents()
                             return
 
                 if 'Lower' in option:
@@ -737,8 +741,9 @@ class GraphSettingsWindows(QtWidgets.QWidget):
         if lower_cutoff == 0 or upper_cutoff == 0:
             self.mainWindow.choice = ''
             self.mainWindow.ErrorDialogue.myGUI_signal.emit("ZeroCutoffError")
-            while self.mainWindow.choice == '':
-                time.sleep(0.1)
+            deadline = QtCore.QDeadlineTimer(5000)
+            while self.mainWindow.choice == '' and not deadline.hasExpired():
+                QtWidgets.QApplication.processEvents()
             return
 
         if 'add' in action:
@@ -1017,8 +1022,9 @@ class GraphSettingsWindows(QtWidgets.QWidget):
             if not os.path.exists(source_filename):
                 self.mainWindow.choice = ''
                 self.mainWindow.ErrorDialogue.myGUI_signal.emit('InvalidSourceFname')
-                while self.mainWindow.choice == '':
-                    time.sleep(0.1)
+                deadline = QtCore.QDeadlineTimer(5000)
+                while self.mainWindow.choice == '' and not deadline.hasExpired():
+                    QtWidgets.QApplication.processEvents()
                 return
 
             if self.mainWindow.source_duration is None:
@@ -1033,8 +1039,9 @@ class GraphSettingsWindows(QtWidgets.QWidget):
                         # this means there was no set file
                         self.mainWindow.choice = ''
                         self.mainWindow.ErrorDialogue.myGUI_signal.emit('NoSetBits2uV')
-                        while self.mainWindow.choice == '':
-                            time.sleep(0.1)
+                        deadline = QtCore.QDeadlineTimer(5000)
+                        while self.mainWindow.choice == '' and not deadline.hasExpired():
+                            QtWidgets.QApplication.processEvents()
 
                         if self.mainWindow.choice == QtWidgets.QMessageBox.Abort:
                             return
@@ -1046,8 +1053,9 @@ class GraphSettingsWindows(QtWidgets.QWidget):
                             if set_filepath == '':
                                 self.mainWindow.choice = ''
                                 self.mainWindow.ErrorDialogue.myGUI_signal.emit("NoAutoSet")
-                                while self.mainWindow.choice == '':
-                                    time.sleep(0.1)
+                                deadline = QtCore.QDeadlineTimer(5000)
+                                while self.mainWindow.choice == '' and not deadline.hasExpired():
+                                    QtWidgets.QApplication.processEvents()
 
                                 if self.mainWindow.choice == QtWidgets.QMessageBox.Ok:
                                     return
