@@ -1367,20 +1367,12 @@ def ImportSet(main_window, graph_options_window, score_window, tf_plots_window, 
         else:
             graph_combobox.addItem('Speed')
 
-    # Check for profiles (if any) and auto-add first profile
+    # Do NOT auto-apply profiles on import — profiles are session-specific
+    # (different sessions may have different sources, e.g. EGF vs EEG).
+    # Auto-applying a profile from a different session causes InvalidSourceFname
+    # errors when the profile references files that don't exist for this session.
+    # The user can manually load a profile from Graph Settings if desired.
     profile_found = False
-    for option, position in graph_options_window.graph_header_option_positions.items():
-        if 'profile' in option.lower():
-            profile_box = graph_options_window.graph_header_option_fields[position[0], position[1] + 1]
-            if isinstance(profile_box, QtWidgets.QComboBox) and profile_box.count() > 1:
-                profile_box.setCurrentIndex(1)
-                profile_found = True
-                # Auto-click "Load Profile" button
-                for btn in graph_options_window.findChildren(QtWidgets.QPushButton):
-                    if 'load' in btn.text().lower() and 'profile' in btn.text().lower():
-                        QtCore.QTimer.singleShot(1000, btn.click)
-                        break
-            break
 
     if not profile_found:
         # Fallback: Add EGF/EEG and POS manually
@@ -1463,18 +1455,6 @@ def ImportSet(main_window, graph_options_window, score_window, tf_plots_window, 
         timer.timeout.connect(_auto_add_sources)
         timer.start(100)
         main_window._auto_add_timer = timer
-    else:
-        # Even if profile was found, auto-add .pos file (Speed) if available
-        def _add_speed_after_profile():
-            for idx in range(graph_combobox.count()):
-                if graph_combobox.itemText(idx).lower() == 'speed':
-                    graph_combobox.setCurrentIndex(idx)
-                    try:
-                        graph_options_window.validateSource('add')
-                    except Exception:
-                        pass
-                    break
-        QtCore.QTimer.singleShot(1100, _add_speed_after_profile)
 
     # replace the score with a new proper score file
     score_filename = os.path.join(set_directory, 'HFOScores', set_basename, '%s_HFOScores.txt' % set_basename)
