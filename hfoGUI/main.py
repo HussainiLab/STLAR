@@ -225,6 +225,13 @@ class Window(QtWidgets.QWidget):  # defines the window class (main window)
                 layout.addStretch(1)
 
         layout.addStretch(1)  # adds stretch to put the version info at the bottom
+
+        # Status bar label — shows active source info and Nyquist warnings
+        self.source_info_label = QtWidgets.QLabel("")
+        self.source_info_label.setAlignment(QtCore.Qt.AlignCenter)
+        self.source_info_label.setStyleSheet("color: #555; font-size: 11px;")
+        layout.addWidget(self.source_info_label)
+
         layout.addWidget(version_label)  # adds the date modification/version number
 
         self.setLayout(layout)
@@ -638,9 +645,13 @@ class Window(QtWidgets.QWidget):  # defines the window class (main window)
                                                      QtWidgets.QMessageBox.Ok)
 
         elif 'EGFNecessary' in error:
-            self.choice = QtWidgets.QMessageBox.question(self, "Error: Cutoff Too High!",
-                                                     "The EEG files are sampled at 250 Hz thus,\n" +
-                                                     "the cutoff needs to be below 125 Hz!\n",
+            self.choice = QtWidgets.QMessageBox.question(self, "Frequency Too High for EEG",
+                                                     "The cutoff frequency you entered exceeds 125 Hz\n"
+                                                     "(the Nyquist limit for EEG files sampled at 250 Hz).\n\n"
+                                                     "To analyse HFOs (ripple 80–250 Hz, fast ripple 250–500 Hz)\n"
+                                                     "you need an EGF file (sampled at 4800 Hz).\n\n"
+                                                     "This session only has an EEG file. Please use a cutoff\n"
+                                                     "below 125 Hz (e.g. 4–12 Hz for theta, 30–80 Hz for gamma).",
                                                      QtWidgets.QMessageBox.Ok)
 
         elif 'InvalidEGFCutoff' in error:
@@ -1400,6 +1411,34 @@ def ImportSet(main_window, graph_options_window, score_window, tf_plots_window, 
                 except Exception:
                     pass
 
+                # Update status label to inform user of active source limits
+                try:
+                    if ephys_ext == '.eeg':
+                        main_window.source_info_label.setText(
+                            "⚠  EEG loaded (250 Hz sampling — max frequency 125 Hz). "
+                            "HFO bands (ripple 80–250 Hz, fast ripple 250–500 Hz) require EGF (4800 Hz). "
+                            "Use for LFP/theta/gamma inspection only.")
+                        main_window.source_info_label.setStyleSheet(
+                            "color: #B45309; font-size: 11px; background: #FEF3C7; "
+                            "padding: 3px; border-radius: 3px;")
+                    elif ephys_ext == '.egf':
+                        main_window.source_info_label.setText(
+                            "✓  EGF loaded (4800 Hz sampling — HFO detection available: "
+                            "ripple 80–250 Hz, fast ripple 250–500 Hz).")
+                        main_window.source_info_label.setStyleSheet(
+                            "color: #065F46; font-size: 11px; background: #D1FAE5; "
+                            "padding: 3px; border-radius: 3px;")
+                except Exception:
+                    pass
+            else:
+                try:
+                    main_window.source_info_label.setText(
+                        "No EEG/EGF file found for this session.")
+                    main_window.source_info_label.setStyleSheet(
+                        "color: #991B1B; font-size: 11px;")
+                except Exception:
+                    pass
+
             # Add Speed/pos
             for idx in range(graph_combobox.count()):
                 if graph_combobox.itemText(idx).lower() == 'speed':
@@ -1432,6 +1471,13 @@ def ImportSet(main_window, graph_options_window, score_window, tf_plots_window, 
     score_window.setEOIfilename()
 
     clear_all(main_window, graph_options_window, score_window, tf_plots_window)
+
+    # Clear source info label until auto-add completes
+    try:
+        main_window.source_info_label.setText("Loading session...")
+        main_window.source_info_label.setStyleSheet("color: #555; font-size: 11px;")
+    except Exception:
+        pass
 
     # Ensure sensible defaults for plotting parameters if empty
     try:
