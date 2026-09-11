@@ -77,16 +77,26 @@ pip install -r requirements.txt
 - HFO detection (Hilbert, STE, MNI, Consensus, Deep Learning)
 - Scoring and event review workflow
 - Time-frequency analysis (Stockwell transform)
+- **Brain-region presets** — `--region LEC / Hippocampus / MEC` applies validated frequency bands, duration filters, and speed thresholds automatically
 
 ### Spatial Analysis
 - Arena heatmaps and trajectory-aware mapping
 - PSD across positions and chunks
+- **Polar binning for circular arenas** — 2-ring × 8-sector occupancy-normalised maps
+- **Chunk-size optimisation** — 30 s recommended for open-field; 1 s for near-continuous instantaneous frequency mapping
 - Optional binned exports for downstream analysis
 
 ### Deep Learning
 - Prepare training segments from EOIs
-- Train and export custom models
+- Train and export custom models (5 architectures: Simple1DCNN, ResNet1D, InceptionTime, HFOTransformer, Spectrogram2DCNN)
 - Use trained models in `dl-batch`
+- **Export to TorchScript and ONNX** for deployment outside Python
+
+### Input Formats
+- **Axona EGF / EEG** (Tint format, auto gain calibration from `.set`)
+- **Intan RHD2000** — converted automatically to Axona format via `Intan_to_Tint`
+
+> **EEG vs EGF:** EEG files (250 Hz) support frequencies up to 125 Hz (theta, gamma). HFO detection (ripple 80–250 Hz, fast ripple 250–500 Hz) requires EGF files (4800 Hz). STLAR shows a clear warning when an EEG-only session is loaded.
 
 ---
 
@@ -164,12 +174,15 @@ python -m stlar gui
 ```
 
 Basic flow:
-1. Import `.set` / session folder
-2. Open **Graph Settings** and choose source `.eeg` / `.egf`
-3. Open **HFO Detection** → **Automatic Detection** tab
-4. Run detection (Hilbert / STE / MNI / Consensus / DL)
-5. Move selected EOIs to **Score** tab
-6. Label and save scores
+1. Import `.set` / session folder — STLAR auto-loads the EEG or EGF source and speed trace
+2. A status bar shows the active source type and its frequency limit
+3. Open **Graph Settings** to add more sources or change filter settings
+4. Open **HFO Detection** → **Automatic Detection** tab
+5. Run detection (Hilbert / STE / MNI / Consensus / DL)
+6. Move selected EOIs to **Score** tab
+7. Label and save scores
+
+> **EEG-only sessions** load cleanly with a theta-band default (4–12 Hz). To analyse HFOs, use an EGF file.
 
 Spatial GUI:
 
@@ -343,10 +356,22 @@ For developer-oriented APIs and internals:
 <a id="recent-changes"></a>
 ## Recent Changes
 
-- **Fixed:** `dl-batch` now supports CWT mode via `--use-cwt --fs <Hz>` flags (matches training pipeline)
-- README simplified for quicker onboarding
-- Advanced CLI details moved to [docs/CLI_ADVANCED.md](docs/CLI_ADVANCED.md)
-- Advanced DL workflow details moved to [docs/DL_TRAINING_ADVANCED.md](docs/DL_TRAINING_ADVANCED.md)
+**GUI loading fixes**
+- Fixed hang when importing a `.set` file (progress dialog deadlock)
+- Fixed spurious "Invalid source filename" error on EEG-only sessions
+- Status bar now shows whether an EEG or EGF file is loaded and the corresponding frequency limit
+- EEG-only sessions load with safe theta-band defaults (4–12 Hz); a clear warning explains that HFO detection requires EGF
+
+**New features**
+- **Brain-region presets** — `--region LEC / Hippocampus / MEC` on `prepare-dl`, `metrics-batch`, and `filter-scores` applies validated parameters (frequency bands, duration filters, speed threshold) with one flag
+- **Intan RHD2000 support** — `.rhd` files are converted automatically to Axona EGF/EEG format
+- **ONNX and TorchScript export** — `export-dl` produces portable models for use outside Python
+- **Polar spatial mapping** — circular arenas now use 2-ring × 8-sector equal-area polar binning; chunk-size of 30 s recommended for open-field
+- **Model type 6 guard** — requesting `--model-type 6` on scipy ≥ 1.12 now raises a clear error with advice to use `--model-type 5` instead
+
+**Bug fixes**
+- `stlar` console script entry point now works after `pip install` (was broken by a missing alias)
+- `dl-batch` supports CWT mode via `--use-cwt --fs <Hz>` flags (matches training pipeline)
 
 ---
 
