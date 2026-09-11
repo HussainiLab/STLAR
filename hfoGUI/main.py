@@ -1314,7 +1314,9 @@ def ImportSet(main_window, graph_options_window, score_window, tf_plots_window, 
     except PermissionError:
         return
 
-    eeg_files = [file for file in directory_file_list if (set_basename in file)and ('.eeg' in file or '.egf' in file)]
+    eeg_files = [file for file in directory_file_list if (set_basename in file)
+                 and ('.eeg' in file or '.egf' in file)
+                 and not any(file.endswith(x) for x in ['.clu', '.cut', '.fmask', '.fet', '.klg', '.txt'])]
     lfp_files = []
     main_window.active_tetrodes = []
 
@@ -1363,7 +1365,7 @@ def ImportSet(main_window, graph_options_window, score_window, tf_plots_window, 
 
     if not profile_found:
         # Fallback: Add EGF/EEG and POS manually
-        
+
         # Find filter fields
         low_pass_field = None
         high_pass_field = None
@@ -1373,44 +1375,55 @@ def ImportSet(main_window, graph_options_window, score_window, tf_plots_window, 
             elif 'high' in option.lower() and 'pass' in option.lower():
                 high_pass_field = graph_options_window.graph_header_option_fields[position[0], position[1]+1]
 
-        # 1. Add Ephys (EGF preferred, else EEG)
-        ephys_added = False
-        for ext in ['.egf', '.eeg']:
-            for i in range(graph_combobox.count()):
-                if ext in graph_combobox.itemText(i).lower():
-                    graph_combobox.setCurrentIndex(i)
-                    # Set filters
-                    if low_pass_field: low_pass_field.setText('4')
-                    if high_pass_field: high_pass_field.setText('12')
+        # Build ordered list of preferred extensions: EGF first, then EEG (exact match only)
+        # Use exact extension matching to avoid .eeg matching .eeg2, .eeg3 etc.
+        ephys_ext = None
+        for preferred in ['.egf', '.eeg']:
+            for idx in range(graph_combobox.count()):
+                item_text = graph_combobox.itemText(idx)
+                # Exact match only — item text IS the extension (e.g. '.eeg', '.egf')
+                if item_text.lower() == preferred:
+                    ephys_ext = preferred
+                    ephys_idx = idx
+                    break
+            if ephys_ext is not None:
+                break
+
+        def _auto_add_sources():
+            """Add ephys and speed sources sequentially after event loop settles."""
+            if ephys_ext is not None:
+                graph_combobox.setCurrentIndex(ephys_idx)
+                if low_pass_field: low_pass_field.setText('4')
+                if high_pass_field: high_pass_field.setText('12')
+                try:
+                    graph_options_window.validateSource('add')
+                except Exception:
+                    pass
+
+            # Add Speed/pos
+            for idx in range(graph_combobox.count()):
+                if graph_combobox.itemText(idx).lower() == 'speed':
+                    graph_combobox.setCurrentIndex(idx)
                     try:
-                        # Defer to allow event loop to process before plotting
-                        QtCore.QTimer.singleShot(0, lambda: graph_options_window.validateSource('add'))
-                        ephys_added = True
+                        graph_options_window.validateSource('add')
                     except Exception:
                         pass
                     break
-            if ephys_added:
-                break
 
-        # 2. Add Position (Speed) — defer after ephys add settles
-        for i in range(graph_combobox.count()):
-            if 'speed' == graph_combobox.itemText(i).lower():
-                graph_combobox.setCurrentIndex(i)
-                try:
-                    QtCore.QTimer.singleShot(50, lambda: graph_options_window.validateSource('add'))
-                except Exception:
-                    pass
-                break
+        # Defer to after the event loop processes the file import
+        QtCore.QTimer.singleShot(100, _auto_add_sources)
     else:
         # Even if profile was found, auto-add .pos file (Speed) if available
-        for i in range(graph_combobox.count()):
-            if 'speed' == graph_combobox.itemText(i).lower():
-                graph_combobox.setCurrentIndex(i)
-                try:
-                    QtCore.QTimer.singleShot(50, lambda: graph_options_window.validateSource('add'))
-                except Exception:
-                    pass
-                break
+        def _add_speed_after_profile():
+            for idx in range(graph_combobox.count()):
+                if graph_combobox.itemText(idx).lower() == 'speed':
+                    graph_combobox.setCurrentIndex(idx)
+                    try:
+                        graph_options_window.validateSource('add')
+                    except Exception:
+                        pass
+                    break
+        QtCore.QTimer.singleShot(1100, _add_speed_after_profile)
 
     # replace the score with a new proper score file
     score_filename = os.path.join(set_directory, 'HFOScores', set_basename, '%s_HFOScores.txt' % set_basename)
