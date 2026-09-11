@@ -870,15 +870,22 @@ class GraphSettingsWindows(QtWidgets.QWidget):
 
         self.mainWindow.get_parameters()
 
-        self.progress_signal.start_signal.emit('start')
-
-        while not hasattr(self, 'progdialog'):
-            time.sleep(0.1)
+        # Create progress dialog directly on the main thread (avoids signal/slot deadlock)
+        self.progress_value = 0
+        self.progdialog = QtWidgets.QProgressDialog(
+            "Plotting Sources...", "Cancel", 0, 100, self)
+        self.progdialog.setWindowTitle("Plotting")
+        self.progdialog.setWindowModality(QtCore.Qt.WindowModal)
+        self.progdialog.show()
+        self.progdialog.setValue(0)
+        QtWidgets.QApplication.processEvents()
 
         graph_axis = self.mainWindow.Graph_axis
 
-        while self.plotting:
-            time.sleep(0.1)
+        # If already plotting, cancel the previous plot rather than deadlocking
+        if self.plotting:
+            self.plotting = False
+            QtWidgets.QApplication.processEvents()
 
         self.plotting = True
         # clear the current graph
@@ -916,6 +923,7 @@ class GraphSettingsWindows(QtWidgets.QWidget):
 
         # iterate through each graph added
         self.progress_signal.mysignal.emit('setText', {'text': 'Collecting Source Information'})
+        QtWidgets.QApplication.processEvents()
 
         while iterator.value():
             graph_item = iterator.value()  # define the current graph + data within the graph item
@@ -1383,9 +1391,13 @@ class GraphSettingsWindows(QtWidgets.QWidget):
             self.source_index = np.where(self.source_lengths == self.mainWindow.SourceLength)[0][0]
         except UnboundLocalError:
             self.plotting = False
+            try: self.progdialog.close()
+            except Exception: pass
             return
         except ValueError:
             self.plotting = False
+            try: self.progdialog.close()
+            except Exception: pass
             return
 
         Fs = self.source_values[self.source_index][1]
@@ -1403,7 +1415,13 @@ class GraphSettingsWindows(QtWidgets.QWidget):
         # update the iterator to continue with the next graph
 
         self.progress_signal.mysignal.emit('setValue', {'value': 100})
+        QtWidgets.QApplication.processEvents()
 
+        # Close the progress dialog directly (avoids signal/slot deadlock)
+        try:
+            self.progdialog.close()
+        except Exception:
+            pass
         self.progress_signal.close_signal.emit('emit')
 
     def PlotSlice(self):

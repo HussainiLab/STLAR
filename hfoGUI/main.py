@@ -1383,20 +1383,21 @@ def ImportSet(main_window, graph_options_window, score_window, tf_plots_window, 
                     if low_pass_field: low_pass_field.setText('4')
                     if high_pass_field: high_pass_field.setText('12')
                     try:
-                        graph_options_window.validateSource('add')
+                        # Defer to allow event loop to process before plotting
+                        QtCore.QTimer.singleShot(0, lambda: graph_options_window.validateSource('add'))
                         ephys_added = True
                     except Exception:
                         pass
                     break
             if ephys_added:
                 break
-        
-        # 2. Add Position (Speed)
+
+        # 2. Add Position (Speed) — defer after ephys add settles
         for i in range(graph_combobox.count()):
             if 'speed' == graph_combobox.itemText(i).lower():
                 graph_combobox.setCurrentIndex(i)
                 try:
-                    graph_options_window.validateSource('add')
+                    QtCore.QTimer.singleShot(50, lambda: graph_options_window.validateSource('add'))
                 except Exception:
                     pass
                 break
@@ -1406,7 +1407,7 @@ def ImportSet(main_window, graph_options_window, score_window, tf_plots_window, 
             if 'speed' == graph_combobox.itemText(i).lower():
                 graph_combobox.setCurrentIndex(i)
                 try:
-                    graph_options_window.validateSource('add')
+                    QtCore.QTimer.singleShot(50, lambda: graph_options_window.validateSource('add'))
                 except Exception:
                     pass
                 break
