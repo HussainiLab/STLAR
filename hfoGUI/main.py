@@ -1275,6 +1275,14 @@ def ImportSet(main_window, graph_options_window, score_window, tf_plots_window, 
     if hasattr(main_window, 'scrollbar_thread'):
         main_window.scrollbar_thread.terminate()
 
+    # Cancel any pending auto-add timer from a previous (partial) ImportSet call
+    if hasattr(main_window, '_auto_add_timer') and main_window._auto_add_timer is not None:
+        try:
+            main_window._auto_add_timer.stop()
+        except Exception:
+            pass
+        main_window._auto_add_timer = None
+
     main_window.set_current_filename()  # update the new filename
 
     # update the parameters from the Main Window
@@ -1450,7 +1458,11 @@ def ImportSet(main_window, graph_options_window, score_window, tf_plots_window, 
                     break
 
         # Defer to after the event loop processes the file import
-        QtCore.QTimer.singleShot(100, _auto_add_sources)
+        timer = QtCore.QTimer()
+        timer.setSingleShot(True)
+        timer.timeout.connect(_auto_add_sources)
+        timer.start(100)
+        main_window._auto_add_timer = timer
     else:
         # Even if profile was found, auto-add .pos file (Speed) if available
         def _add_speed_after_profile():
