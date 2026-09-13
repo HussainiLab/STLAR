@@ -129,6 +129,8 @@ def getpos(pos_fpath, ppm, method='', flip_y=True):
     ---------------------------------------------
     variables:
     -pos_fpath: the full path (C:\example\session.pos)
+    -ppm: pixels per metre. When provided (non-None), this value is used
+          and the header value is ignored. Pass None to use the header value.
 
     output:
     t: column numpy array of the time stamps
@@ -188,7 +190,9 @@ def getpos(pos_fpath, ppm, method='', flip_y=True):
                 timebase = (_safe_decode(line)[len('timebase '):]).split(' ')[0]
                 headers += _safe_decode(line)
             elif 'pixels_per_metre' in str(line):
-                ppm = _parse_header_value(line, line_iter, float, 'pixels_per_metre')
+                _header_ppm = _parse_header_value(line, line_iter, float, 'pixels_per_metre')
+                if ppm is None:
+                    ppm = _header_ppm  # only use header value when caller didn't specify
                 headers += _safe_decode(line)
             elif 'min_x' in str(line) and 'window' not in str(line):
                 min_x = _parse_header_value(line, line_iter, int, 'min_x')
