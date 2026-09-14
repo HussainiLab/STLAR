@@ -76,7 +76,11 @@ def compute_polar_binned_analysis(pos_x, pos_y, pos_t, fs, chunks, chunk_size, c
     x = np.array(pos_x)
     y = np.array(pos_y)
     t = np.array(pos_t)
-    
+
+    # Note: y-axis flip (camera top/bottom inversion) is already applied upstream
+    # by getpos() via arena_config(flip_y=True) in data_loaders.grab_position_data.
+    # Do NOT flip y here — it would double-flip and revert the correction.
+
     # Center and normalize to [-1, 1]
     min_x, max_x = np.min(x), np.max(x)
     min_y, max_y = np.min(y), np.max(y)
