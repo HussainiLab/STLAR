@@ -84,6 +84,7 @@ pip install -r requirements.txt
 - PSD across positions and chunks
 - **Polar binning for circular arenas** — 2-ring × 8-sector occupancy-normalised maps
 - **Chunk-size optimisation** — 30 s recommended for open-field; 1 s for near-continuous instantaneous frequency mapping
+- **Speed gating** — `--speed-min` and `--speed-max` allow filtering by movement speed (e.g., rest <5 cm/s, active ≥5 cm/s)
 - Optional binned exports for downstream analysis
 
 ### Deep Learning
@@ -244,17 +245,23 @@ Advanced options (presets, behavior gating, custom speed thresholds):
 
 ## Spatial Mapping (batch-ssm)
 
+> **PPM (Pixels Per Meter):** Camera-dependent calibration value. Common values: 400-600. Verify with your lab's calibration data.
+
 Basic examples:
 
 ```bash
-python -m stlar batch-ssm data/session.egf --ppm 595
-python -m stlar batch-ssm data/ --ppm 595 --chunk-size 60
+python -m stlar batch-ssm data/session.egf --ppm 485
+python -m stlar batch-ssm data/ --ppm 485 --chunk-size 30
+
+# Speed-gated analysis (rest vs active)
+python -m stlar batch-ssm data/ --ppm 485 --speed-min 0 --speed-max 5    # rest only (<5 cm/s)
+python -m stlar batch-ssm data/ --ppm 485 --speed-min 5 --speed-max 100  # active only (≥5 cm/s)
 ```
 
 Optional exports:
 
 ```bash
-python -m stlar batch-ssm data/ --ppm 595 --export-binned-csvs --plot-trajectory
+python -m stlar batch-ssm data/ --ppm 485 --export-binned-csvs --plot-trajectory --eoi-file detections/
 ```
 
 Advanced spatial mapping usage and output details:

@@ -612,7 +612,7 @@ Examples:
   python batch_ssm.py data/recordings/
   
   # With custom parameters
-  python batch_ssm.py data/recording.eeg --ppm 500 --chunk-size 5 --speed-min 5 --speed-max 20
+  python batch_ssm.py data/recording.eeg --ppm 485 --chunk-size 30 --speed-min 5 --speed-max 20
   
   # Batch directory with custom output
   python batch_ssm.py data/recordings/ --ppm 600 --speed-min 0 --speed-max 100 -o results/
@@ -640,8 +640,8 @@ Examples:
     parser.add_argument(
         "--chunk-size",
         type=int,
-        default=60,
-        help="Chunk size in seconds for analysis (default: 60)"
+        default=30,
+        help="Chunk size in seconds for analysis (default: 30, recommended for open-field)"
     )
     
     parser.add_argument(
