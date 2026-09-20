@@ -245,7 +245,7 @@ Advanced options (presets, behavior gating, custom speed thresholds):
 
 ## Spatial Mapping (batch-ssm)
 
-> **PPM (Pixels Per Meter):** Camera-dependent calibration value. Common values: 400-600. Verify with your lab's calibration data.
+> **PPM (Pixels Per Meter):** Depends on camera height and arena dimensions. Must be recalibrated if setup changes. Calculate from a known distance in your video (e.g., arena diameter).
 
 Basic examples:
 
